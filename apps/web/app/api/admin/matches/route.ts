@@ -77,16 +77,44 @@ export async function POST(req: Request) {
             draw: drawOdds ? String(drawOdds) : undefined,
         } : undefined;
 
-        // Build AI prediction if any prediction fields provided
-        const aiPrediction = prediction ? {
-            prediction: String(prediction),
-            confidence: Number(confidence) || 70,
-            reasoning: reasoning
-                ? (Array.isArray(reasoning) ? reasoning : String(reasoning).split('\n').filter(Boolean))
-                : [],
-            suggestedBet: suggestedBet ? String(suggestedBet) : undefined,
-            generatedAt: new Date().toISOString(),
-        } : undefined;
+        // Build an AI prediction only when at least one prediction field has
+        // content. The client omits all of them when the form is empty; passing
+        // `aiPrediction: null` to Convex is invalid for an optional field.
+        const aiReasoning = (readReasoning(reasoning) ?? [])
+            .map(line => line.trim())
+            .filter(Boolean);
+        const aiPredictionText = readString(prediction).trim();
+        const aiSuggestedBet = readOptionalString(suggestedBet);
+        const confidenceText = readString(confidence).trim();
+        const hasAiPrediction = Boolean(
+            aiPredictionText || aiReasoning.length || aiSuggestedBet || confidenceText
+        );
+
+        let aiPrediction: {
+            prediction: string;
+            confidence: number;
+            reasoning: string[];
+            suggestedBet?: string;
+            generatedAt: string;
+        } | undefined;
+
+        if (hasAiPrediction) {
+            // Confidence is a 0–100 percentage; existing data is never converted.
+            const numericConfidence = confidenceText ? Number(confidenceText) : 70;
+            if (!Number.isFinite(numericConfidence) || numericConfidence < 1 || numericConfidence > 100) {
+                return NextResponse.json(
+                    { error: 'confidence must be between 1 and 100' },
+                    { status: 400 }
+                );
+            }
+            aiPrediction = {
+                prediction: aiPredictionText,
+                confidence: numericConfidence,
+                reasoning: aiReasoning,
+                ...(aiSuggestedBet ? { suggestedBet: aiSuggestedBet } : {}),
+                generatedAt: new Date().toISOString(),
+            };
+        }
 
         await convex.mutation(api.matches.create, {
             match: {
@@ -143,7 +171,7 @@ interface MatchUpdateFields {
         reasoning: string[];
         suggestedBet?: string;
         generatedAt: string;
-    } | null;
+    };
     result?: MatchResult;
     isHistory?: boolean;
     matchDate?: string;
@@ -252,16 +280,23 @@ export async function PUT(req: Request) {
                 ? readOptionalString(payload.generatedAt)
                 : prior?.generatedAt;
 
-            // Clearing every AI field removes the prediction entirely.
-            updates.aiPrediction = (!prediction && reasoning.length === 0 && !suggestedBet)
-                ? null
-                : {
+            // When every AI field is empty, omit aiPrediction rather than
+            // sending null (Convex rejects null for v.optional fields). An
+            // omitted key also guarantees an edit never erases stored fields
+            // the user did not touch.
+            const hasAiContent = Boolean(
+                prediction || reasoning.length || suggestedBet ||
+                (has('confidence') && readString(payload.confidence).trim())
+            );
+            if (hasAiContent) {
+                updates.aiPrediction = {
                     prediction,
                     confidence,
                     reasoning,
                     ...(suggestedBet ? { suggestedBet } : {}),
                     generatedAt: generatedAt || new Date().toISOString(),
                 };
+            }
         }
 
         await convex.mutation(api.matches.update, { matchId, updates });

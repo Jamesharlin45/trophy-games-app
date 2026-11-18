@@ -271,9 +271,10 @@ export const create = mutation({
 
 // ADMIN — Update match details from the admin dashboard. Every editable admin
 // field is validated here (including the AI prediction and the recorded
-// result). `null` is accepted for fields that can be cleared: Convex removes a
-// field when it is patched with `undefined`, so an explicit null is translated
-// into a removal below.
+// result). `null` is accepted for numeric scores and odds that can be cleared:
+// Convex removes a field when it is patched with `undefined`, so an explicit
+// null is translated into a removal below. `aiPrediction` is never null — omit
+// the key to leave a stored prediction untouched.
 export const update = mutation({
     args: {
         matchId: v.string(),
@@ -301,16 +302,15 @@ export const update = mutation({
                 }),
                 v.null(),
             )),
-            aiPrediction: v.optional(v.union(
-                v.object({
-                    prediction: v.string(),
-                    confidence: v.number(),
-                    reasoning: v.array(v.string()),
-                    suggestedBet: v.optional(v.string()),
-                    generatedAt: v.string(),
-                }),
-                v.null(),
-            )),
+            // Optional but never null: omit the key to leave a stored
+            // prediction untouched. Sending null is rejected by the validator.
+            aiPrediction: v.optional(v.object({
+                prediction: v.string(),
+                confidence: v.number(),
+                reasoning: v.array(v.string()),
+                suggestedBet: v.optional(v.string()),
+                generatedAt: v.string(),
+            })),
             result: v.optional(v.union(v.literal('pending'), v.literal('win'), v.literal('lose'), v.literal('draw'))),
             isHistory: v.optional(v.boolean()),
             matchDate: v.optional(v.string()),
@@ -385,23 +385,19 @@ export const update = mutation({
         // A partial edit that omits `aiPrediction` leaves the stored object
         // (and all of its fields) untouched.
         if (edits.aiPrediction !== undefined) {
-            if (edits.aiPrediction === null) {
-                patch.aiPrediction = undefined;
-            } else {
-                const ai = edits.aiPrediction;
-                const prediction = ai.prediction.trim();
-                const reasoning = ai.reasoning
-                    .map((line: string) => line.trim())
-                    .filter((line: string) => line.length > 0);
-                const suggestedBet = ai.suggestedBet?.trim() || undefined;
-                patch.aiPrediction = {
-                    prediction,
-                    confidence: ai.confidence,
-                    reasoning,
-                    generatedAt: ai.generatedAt || new Date().toISOString(),
-                    ...(suggestedBet ? { suggestedBet } : {}),
-                };
-            }
+            const ai = edits.aiPrediction;
+            const prediction = ai.prediction.trim();
+            const reasoning = ai.reasoning
+                .map((line: string) => line.trim())
+                .filter((line: string) => line.length > 0);
+            const suggestedBet = ai.suggestedBet?.trim() || undefined;
+            patch.aiPrediction = {
+                prediction,
+                confidence: ai.confidence,
+                reasoning,
+                generatedAt: ai.generatedAt || new Date().toISOString(),
+                ...(suggestedBet ? { suggestedBet } : {}),
+            };
         }
 
         // Keep the derived date in sync with an edited kickoff.
