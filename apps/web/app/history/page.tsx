@@ -16,6 +16,7 @@ interface Match {
     status: string;
     matchType?: 'free' | 'paid' | 'vip' | 'unassigned';
     aiPrediction?: { prediction: string; confidence: number };
+    isHistory?: boolean;
 }
 
 type OutcomeFilter = 'all' | 'home' | 'away' | 'draw';
@@ -44,9 +45,11 @@ export default function HistoryPage() {
         try {
             const res = await fetch('/api/admin/matches');
             const data = await res.json();
-            // Finished matches only — same source the mobile Wins screen uses.
+            // Decisive results only — matches with a recorded win/lose/draw are
+            // flagged isHistory by the Convex update mutation. The mobile Wins
+            // screen reads the same Convex history feed via getHistory.
             const finished = Array.isArray(data)
-                ? data.filter((m: Match) => m.status === 'Finished' || m.status === 'FT' || (m.homeScore !== undefined && m.awayScore !== undefined))
+                ? data.filter((m: Match) => m.isHistory === true || m.status === 'Finished' || m.status === 'FT' || (m.homeScore !== undefined && m.awayScore !== undefined))
                 : [];
             setMatches(finished);
         } catch (e) {

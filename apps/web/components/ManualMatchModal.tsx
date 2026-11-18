@@ -24,8 +24,15 @@ interface FormState {
     homeTeam: string;
     awayTeam: string;
     league: string;
+    leagueLogo: string;
+    homeTeamLogo: string;
+    awayTeamLogo: string;
     country: string;
+    countryFlag: string;
     timestamp: string;
+    status: string;
+    homeScore: string;
+    awayScore: string;
     matchType: MatchType;
     homeOdds: string;
     drawOdds: string;
@@ -34,6 +41,7 @@ interface FormState {
     confidence: string;
     suggestedBet: string;
     reasoning: string;
+    generatedAt: string;
     isTrending: boolean;
     result: MatchResult;
 }
@@ -52,6 +60,10 @@ const MATCH_RESULTS = [
     { value: 'win', label: 'Won' },
     { value: 'lose', label: 'Lost' },
     { value: 'draw', label: 'Draw' },
+] as const;
+
+const MATCH_STATUSES = [
+    'Scheduled', 'Live', 'HT', 'Finished', 'FT', 'Postponed', 'Cancelled', 'Abandoned',
 ] as const;
 
 const getDefaultTimestamp = () => {
@@ -73,8 +85,15 @@ const formFromMatch = (match?: MatchData | null): FormState => ({
     homeTeam: match?.homeTeam ?? '',
     awayTeam: match?.awayTeam ?? '',
     league: match?.league ?? '',
+    leagueLogo: match?.leagueLogo ?? '',
+    homeTeamLogo: match?.homeTeamLogo ?? '',
+    awayTeamLogo: match?.awayTeamLogo ?? '',
     country: match?.country ?? '',
+    countryFlag: match?.countryFlag ?? '',
     timestamp: match ? toDateTimeLocal(match.timestamp) : getDefaultTimestamp(),
+    status: match?.status ?? 'Scheduled',
+    homeScore: match?.homeScore !== undefined ? String(match.homeScore) : '',
+    awayScore: match?.awayScore !== undefined ? String(match.awayScore) : '',
     matchType: match?.matchType ?? 'unassigned',
     homeOdds: match?.odds?.home ?? '',
     drawOdds: match?.odds?.draw ?? '',
@@ -83,6 +102,7 @@ const formFromMatch = (match?: MatchData | null): FormState => ({
     confidence: match?.aiPrediction ? String(match.aiPrediction.confidence) : '75',
     suggestedBet: match?.aiPrediction?.suggestedBet ?? '',
     reasoning: match?.aiPrediction?.reasoning.join('\n') ?? '',
+    generatedAt: match?.aiPrediction?.generatedAt ?? '',
     isTrending: match?.isTrending ?? false,
     result: match?.result ?? 'pending',
 });
@@ -97,7 +117,7 @@ export function ManualMatchModal({ isOpen, onClose, onSuccess, match }: ManualMa
     // target changes, so the initializer always seeds the latest match data.
 
     const setText = (key: TextField) => (
-        e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
+        e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
     ) => setForm(prev => ({ ...prev, [key]: e.target.value }));
 
     const handleSave = async (e: React.FormEvent) => {
@@ -128,6 +148,23 @@ export function ManualMatchModal({ isOpen, onClose, onSuccess, match }: ManualMa
             return;
         }
 
+        if (!form.status.trim()) {
+            setError('Status is required.');
+            return;
+        }
+
+        const parseScore = (value: string, label: string): number | null => {
+            if (!value.trim()) return null;
+            const number = Number(value);
+            if (!Number.isInteger(number) || number < 0) {
+                setError(`${label} must be a non-negative whole number.`);
+                return null;
+            }
+            return number;
+        };
+        if (form.homeScore.trim() && parseScore(form.homeScore, 'Home score') === null) return;
+        if (form.awayScore.trim() && parseScore(form.awayScore, 'Away score') === null) return;
+
         const numericConfidence = form.confidence.trim() ? Number(form.confidence) : undefined;
         if (numericConfidence !== undefined &&
             (!Number.isFinite(numericConfidence) || numericConfidence < 1 || numericConfidence > 100)) {
@@ -145,18 +182,25 @@ export function ManualMatchModal({ isOpen, onClose, onSuccess, match }: ManualMa
                     homeTeam: form.homeTeam.trim(),
                     awayTeam: form.awayTeam.trim(),
                     league: form.league.trim(),
-                    country: form.country.trim() || undefined,
+                    leagueLogo: form.leagueLogo.trim(),
+                    homeTeamLogo: form.homeTeamLogo.trim(),
+                    awayTeamLogo: form.awayTeamLogo.trim(),
+                    country: form.country.trim(),
+                    countryFlag: form.countryFlag.trim(),
                     timestamp: kickoff.toISOString(),
-                    ...(isEdit ? {} : { status: 'Scheduled' }),
+                    status: form.status.trim(),
+                    homeScore: form.homeScore.trim() || null,
+                    awayScore: form.awayScore.trim() || null,
                     matchType: form.matchType,
-                    homeOdds: form.homeOdds.trim() || undefined,
-                    drawOdds: form.drawOdds.trim() || undefined,
-                    awayOdds: form.awayOdds.trim() || undefined,
+                    homeOdds: form.homeOdds.trim(),
+                    drawOdds: form.drawOdds.trim(),
+                    awayOdds: form.awayOdds.trim(),
                     isTrending: form.isTrending,
-                    prediction: form.prediction.trim() || undefined,
+                    prediction: form.prediction.trim(),
                     confidence: numericConfidence,
-                    suggestedBet: form.suggestedBet.trim() || undefined,
-                    reasoning: form.reasoning.trim() || undefined,
+                    suggestedBet: form.suggestedBet.trim(),
+                    reasoning: form.reasoning.trim(),
+                    generatedAt: form.generatedAt || undefined,
                     result: form.result,
                 }),
             });
@@ -264,7 +308,53 @@ export function ManualMatchModal({ isOpen, onClose, onSuccess, match }: ManualMa
                             />
                         </div>
 
-                        <div className="flex items-center pt-5">
+                        <div>
+                            <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
+                                Status <span className="text-red-500">*</span>
+                            </label>
+                            <select
+                                value={form.status}
+                                onChange={setText('status')}
+                                className="w-full px-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-sm text-zinc-900 dark:text-zinc-50 outline-none focus:ring-2 focus:ring-blue-500"
+                            >
+                                {!MATCH_STATUSES.some(status => status === form.status) && (
+                                    <option value={form.status}>{form.status}</option>
+                                )}
+                                {MATCH_STATUSES.map(status => (
+                                    <option key={status} value={status}>{status}</option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                        <div>
+                            <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
+                                Home Score
+                            </label>
+                            <input
+                                type="number"
+                                min="0"
+                                value={form.homeScore}
+                                onChange={setText('homeScore')}
+                                placeholder="—"
+                                className="w-full px-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-sm text-zinc-900 dark:text-zinc-50 outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
+                                Away Score
+                            </label>
+                            <input
+                                type="number"
+                                min="0"
+                                value={form.awayScore}
+                                onChange={setText('awayScore')}
+                                placeholder="—"
+                                className="w-full px-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-sm text-zinc-900 dark:text-zinc-50 outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                        </div>
+                        <div className="flex items-center">
                             <label className="flex items-center gap-2 cursor-pointer text-sm font-medium text-zinc-700 dark:text-zinc-300">
                                 <input
                                     type="checkbox"
@@ -272,8 +362,40 @@ export function ManualMatchModal({ isOpen, onClose, onSuccess, match }: ManualMa
                                     onChange={(e) => setForm(prev => ({ ...prev, isTrending: e.target.checked }))}
                                     className="h-4 w-4 rounded border-zinc-300 text-blue-600 focus:ring-blue-500"
                                 />
-                                <span>Mark as Trending Match 🔥</span>
+                                <span>Mark as Trending 🔥</span>
                             </label>
+                        </div>
+                    </div>
+
+                    {/* Media / branding URLs — empty values clear the stored field. */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-zinc-100 dark:border-zinc-800">
+                        <div>
+                            <label className="block text-xs font-semibold text-zinc-600 dark:text-zinc-400 mb-1">
+                                League Logo URL
+                            </label>
+                            <input type="text" value={form.leagueLogo} onChange={setText('leagueLogo')} placeholder="https://..."
+                                className="w-full px-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-sm text-zinc-900 dark:text-zinc-50 outline-none focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-semibold text-zinc-600 dark:text-zinc-400 mb-1">
+                                Country Flag URL
+                            </label>
+                            <input type="text" value={form.countryFlag} onChange={setText('countryFlag')} placeholder="https://..."
+                                className="w-full px-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-sm text-zinc-900 dark:text-zinc-50 outline-none focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-semibold text-zinc-600 dark:text-zinc-400 mb-1">
+                                Home Team Logo URL
+                            </label>
+                            <input type="text" value={form.homeTeamLogo} onChange={setText('homeTeamLogo')} placeholder="https://..."
+                                className="w-full px-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-sm text-zinc-900 dark:text-zinc-50 outline-none focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-semibold text-zinc-600 dark:text-zinc-400 mb-1">
+                                Away Team Logo URL
+                            </label>
+                            <input type="text" value={form.awayTeamLogo} onChange={setText('awayTeamLogo')} placeholder="https://..."
+                                className="w-full px-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-sm text-zinc-900 dark:text-zinc-50 outline-none focus:ring-2 focus:ring-blue-500" />
                         </div>
                     </div>
                 </div>

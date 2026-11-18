@@ -64,7 +64,7 @@ export default function MatchesPage() {
 
     // Filter State
     const [searchQuery, setSearchQuery] = useState('');
-    const [statusFilter, setStatusFilter] = useState<'All' | 'Live' | 'Scheduled'>('All');
+    const [statusFilter, setStatusFilter] = useState<'All' | 'Live' | 'Scheduled' | 'Finished'>('All');
     const [typeFilter, setTypeFilter] = useState<'All' | 'free' | 'paid' | 'vip' | 'unassigned'>('All');
     const [selectedLeague, setSelectedLeague] = useState(getPrefillLeague() || 'All');
     const [dateFilter, setDateFilter] = useState(new Date().toISOString().split('T')[0]);
@@ -167,22 +167,22 @@ export default function MatchesPage() {
         setIsDetailModalOpen(true);
     };
 
-    // Filter Logic
-    // Finished matches can't be tipped — they're excluded here and only shown
-    // on the History page. Base filter = everything except the match-type
-    // filter, so the type-chip counts always agree with the visible list.
+    // Filter Logic. Finished / history matches are kept in the list so they can
+    // still be edited (including reverting their result to pending). Base
+    // filter = everything except the match-type filter, so the type-chip
+    // counts always agree with the visible list.
     const baseMatches = matches.filter(match => {
-        if (isFinished(match.status)) return false;
-
         const matchesSearch =
             match.homeTeam.toLowerCase().includes(searchQuery.toLowerCase()) ||
             match.awayTeam.toLowerCase().includes(searchQuery.toLowerCase()) ||
             match.league.toLowerCase().includes(searchQuery.toLowerCase());
 
+        const inHistory = isFinished(match.status) || match.isHistory === true;
         const matchesStatus =
             statusFilter === 'All' ||
             (statusFilter === 'Live' && isLive(match.status)) ||
-            (statusFilter === 'Scheduled' && !isLive(match.status));
+            (statusFilter === 'Scheduled' && !inHistory && !isLive(match.status)) ||
+            (statusFilter === 'Finished' && inHistory);
 
         const matchesLeague = selectedLeague === 'All' || match.league === selectedLeague;
         const matchesDate = !dateFilter || match.timestamp.includes(dateFilter);
@@ -301,7 +301,7 @@ export default function MatchesPage() {
                         {/* Match Type Buttons — only for matches that can still be tipped */}
                         {finished ? (
                             <div className="pt-2 text-xs text-zinc-400 italic">
-                                Finished — view in History.
+                                Finished — also shown in History. Edit to change the result.
                             </div>
                         ) : (
                             <div className="pt-2">
@@ -453,7 +453,7 @@ export default function MatchesPage() {
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                 <div className="flex flex-col gap-2">
                     <h1 className="text-3xl font-bold text-zinc-900 dark:text-zinc-50 tracking-tight">Matches</h1>
-                    <p className="text-zinc-500 dark:text-zinc-400">Live matches from the data feed. Tag tips and generate AI predictions — these sync to mobile.</p>
+                    <p className="text-zinc-500 dark:text-zinc-400">Manage every match — edit teams, scores, status, result and AI predictions. Changes sync to mobile.</p>
                 </div>
                 <div className="flex gap-2">
                     <button
@@ -535,7 +535,7 @@ export default function MatchesPage() {
                 </div>
 
                 <div className="flex gap-1 overflow-x-auto pb-1">
-                    {(['All', 'Live', 'Scheduled'] as const).map((s) => (
+                    {(['All', 'Live', 'Scheduled', 'Finished'] as const).map((s) => (
                         <button
                             key={s}
                             onClick={() => setStatusFilter(s)}

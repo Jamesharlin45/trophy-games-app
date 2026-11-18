@@ -31,7 +31,7 @@ export interface MatchData {
         confidence: number;
         reasoning: string[];
         suggestedBet?: string;
-        generatedAt?: string;
+        generatedAt: string;
     };
     odds?: {
         home: string;

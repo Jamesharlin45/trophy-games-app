@@ -120,9 +120,39 @@ export async function POST(req: Request) {
     }
 }
 
-// PUT — Edit an existing match from the admin dashboard. This is the only
-// write path the admin match form uses for updates; it forwards to the
-// validated Convex `matches.update` mutation.
+interface MatchUpdateFields {
+    league?: string;
+    leagueLogo?: string;
+    homeTeam?: string;
+    homeTeamLogo?: string;
+    awayTeam?: string;
+    awayTeamLogo?: string;
+    country?: string;
+    countryFlag?: string;
+    timestamp?: string;
+    status?: string;
+    score?: string;
+    homeScore?: number | null;
+    awayScore?: number | null;
+    matchType?: MatchType;
+    isTrending?: boolean;
+    odds?: { home: string; away: string; draw?: string } | null;
+    aiPrediction?: {
+        prediction: string;
+        confidence: number;
+        reasoning: string[];
+        suggestedBet?: string;
+        generatedAt: string;
+    } | null;
+    result?: MatchResult;
+    isHistory?: boolean;
+    matchDate?: string;
+}
+
+// PUT — Edit an existing match from the admin dashboard. Every field the form
+// can change is forwarded to the validated Convex `matches.update` mutation.
+// Only keys present in the payload are sent, so a partial edit leaves the
+// other stored fields (including every aiPrediction field) intact.
 export async function PUT(req: Request) {
     const convex = getConvex();
 
@@ -132,73 +162,109 @@ export async function PUT(req: Request) {
             return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
         }
         const payload = body as Record<string, unknown>;
+        const has = (key: string): boolean => Object.prototype.hasOwnProperty.call(payload, key);
 
         const matchId = readString(payload.matchId).trim();
-        const homeTeam = readString(payload.homeTeam).trim();
-        const awayTeam = readString(payload.awayTeam).trim();
-        const league = readString(payload.league).trim();
-        const timestamp = readString(payload.timestamp).trim();
-
-        if (!matchId || !homeTeam || !awayTeam || !league || !timestamp) {
-            return NextResponse.json(
-                { error: 'matchId, homeTeam, awayTeam, league, and timestamp are required' },
-                { status: 400 }
-            );
+        if (!matchId) {
+            return NextResponse.json({ error: 'matchId is required' }, { status: 400 });
         }
 
-        const matchTypeValue = readString(payload.matchType) || 'unassigned';
-        const matchType: MatchType = MATCH_TYPES.find(type => type === matchTypeValue) ?? 'unassigned';
+        const updates: MatchUpdateFields = {};
 
-        const resultValue = readString(payload.result) || 'pending';
-        const result: MatchResult = MATCH_RESULTS.find(option => option === resultValue) ?? 'pending';
-
-        const confidenceValue = payload.confidence;
-        const confidence = confidenceValue === undefined || confidenceValue === null || confidenceValue === ''
-            ? undefined
-            : Number(confidenceValue);
-        if (confidence !== undefined && (!Number.isFinite(confidence) || confidence < 1 || confidence > 100)) {
-            return NextResponse.json(
-                { error: 'confidence must be between 1 and 100' },
-                { status: 400 }
-            );
-        }
-
-        const homeOdds = readOptionalString(payload.homeOdds);
-        const drawOdds = readOptionalString(payload.drawOdds);
-        const awayOdds = readOptionalString(payload.awayOdds);
-        const odds = homeOdds || drawOdds || awayOdds
-            ? { home: homeOdds || '', away: awayOdds || '', draw: drawOdds }
-            : undefined;
-
-        const prediction = readOptionalString(payload.prediction);
-        const suggestedBet = readOptionalString(payload.suggestedBet);
-        const reasoning = readReasoning(payload.reasoning);
-        const aiPrediction = prediction || suggestedBet || (reasoning && reasoning.length > 0)
-            ? {
-                prediction: prediction || '',
-                confidence: confidence ?? 70,
-                reasoning: reasoning ?? [],
-                suggestedBet,
-                generatedAt: new Date().toISOString(),
+        // Non-empty core fields. Validated when supplied so that omitting one
+        // keeps this a genuine partial edit.
+        for (const key of ['homeTeam', 'awayTeam', 'league', 'timestamp', 'status', 'score'] as const) {
+            if (!has(key)) continue;
+            const value = readString(payload[key]).trim();
+            if (!value) {
+                return NextResponse.json({ error: `${key} cannot be empty` }, { status: 400 });
             }
-            : undefined;
+            updates[key] = value;
+        }
 
-        await convex.mutation(api.matches.update, {
-            matchId,
-            updates: {
-                homeTeam,
-                awayTeam,
-                league,
-                country: readOptionalString(payload.country),
-                timestamp,
-                matchType,
-                isTrending: payload.isTrending === true,
-                odds,
-                aiPrediction,
-                result,
-            },
-        });
+        // Optional text fields — an empty value clears the stored field.
+        for (const key of ['leagueLogo', 'homeTeamLogo', 'awayTeamLogo', 'country', 'countryFlag'] as const) {
+            if (has(key)) updates[key] = readString(payload[key]).trim();
+        }
 
+        if (has('matchType')) {
+            const value = readString(payload.matchType);
+            updates.matchType = MATCH_TYPES.find(type => type === value) ?? 'unassigned';
+        }
+        if (has('result')) {
+            const value = readString(payload.result);
+            updates.result = MATCH_RESULTS.find(option => option === value) ?? 'pending';
+        }
+        if (has('isTrending')) updates.isTrending = payload.isTrending === true;
+        if (has('isHistory')) updates.isHistory = payload.isHistory === true;
+
+        for (const key of ['homeScore', 'awayScore'] as const) {
+            if (!has(key)) continue;
+            const value = payload[key];
+            if (value === null || value === '') {
+                updates[key] = null;
+                continue;
+            }
+            const number = Number(value);
+            if (!Number.isFinite(number)) {
+                return NextResponse.json({ error: `${key} must be a number` }, { status: 400 });
+            }
+            updates[key] = number;
+        }
+        if (typeof updates.homeScore === 'number' && typeof updates.awayScore === 'number') {
+            updates.score = `${updates.homeScore}-${updates.awayScore}`;
+        }
+
+        if (has('homeOdds') || has('drawOdds') || has('awayOdds')) {
+            const home = readString(payload.homeOdds).trim();
+            const draw = readString(payload.drawOdds).trim();
+            const away = readString(payload.awayOdds).trim();
+            updates.odds = (home || draw || away)
+                ? { home, away, ...(draw ? { draw } : {}) }
+                : null;
+        }
+
+        const aiKeys = ['prediction', 'confidence', 'suggestedBet', 'reasoning', 'generatedAt'] as const;
+        if (aiKeys.some(has)) {
+            // Merge with what is stored so a partial edit never wipes AI
+            // fields the caller didn't include.
+            const existing = await convex.query(api.matches.getById, { matchId });
+            const prior = existing?.aiPrediction;
+
+            const prediction = has('prediction')
+                ? readString(payload.prediction).trim()
+                : prior?.prediction ?? '';
+            const confidenceRaw = has('confidence') ? payload.confidence : prior?.confidence;
+            const confidence = confidenceRaw === undefined || confidenceRaw === null || confidenceRaw === ''
+                ? 70
+                : Number(confidenceRaw);
+            if (!Number.isFinite(confidence) || confidence < 1 || confidence > 100) {
+                return NextResponse.json(
+                    { error: 'confidence must be between 1 and 100' },
+                    { status: 400 }
+                );
+            }
+            const reasoning = readReasoning(has('reasoning') ? payload.reasoning : prior?.reasoning) ?? [];
+            const suggestedBet = has('suggestedBet')
+                ? readOptionalString(payload.suggestedBet)
+                : prior?.suggestedBet;
+            const generatedAt = has('generatedAt')
+                ? readOptionalString(payload.generatedAt)
+                : prior?.generatedAt;
+
+            // Clearing every AI field removes the prediction entirely.
+            updates.aiPrediction = (!prediction && reasoning.length === 0 && !suggestedBet)
+                ? null
+                : {
+                    prediction,
+                    confidence,
+                    reasoning,
+                    ...(suggestedBet ? { suggestedBet } : {}),
+                    generatedAt: generatedAt || new Date().toISOString(),
+                };
+        }
+
+        await convex.mutation(api.matches.update, { matchId, updates });
         return NextResponse.json({ success: true, matchId });
     } catch (error) {
         console.error('[Admin Matches API] Failed to update match:', error);
