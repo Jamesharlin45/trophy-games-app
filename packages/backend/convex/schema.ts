@@ -35,7 +35,7 @@ export default defineSchema({
             confidence: v.number(),
             reasoning: v.array(v.string()),
             suggestedBet: v.optional(v.string()),
-            generatedAt: v.optional(v.string()),
+            generatedAt: v.string(),
         })),
         odds: v.optional(v.object({
             home: v.string(),
