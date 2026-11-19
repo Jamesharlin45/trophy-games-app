@@ -1,15 +1,11 @@
 import { NextResponse } from 'next/server';
-import { ConvexHttpClient } from "convex/browser";
-import { api } from "@trophy-games/backend";
 import { MatchData } from '@trophy-games/shared';
 import { deriveLeaguesFromMatches } from '@/lib/footystats';
+import { createDb } from '@/lib/db/client';
+import { getAll } from '@/lib/db/matches';
+import { getAllUsers } from '@/lib/db/users';
 
 export const dynamic = 'force-dynamic';
-
-function getConvex() {
-    const url = process.env.NEXT_PUBLIC_CONVEX_URL;
-    return url ? new ConvexHttpClient(url) : null;
-}
 
 const empty = {
     totalLeagues: 0,
@@ -21,16 +17,16 @@ const empty = {
     lastUpdated: new Date().toISOString(),
 };
 
-// Stats computed from Convex matches (kept in sync with the proxy by the cron).
+// Stats computed from the matches table (kept in sync by the data sync jobs).
 export async function GET() {
-    try {
-        const convex = getConvex();
-        if (!convex) {
-            return NextResponse.json(empty);
-        }
+    const db = createDb();
+    if (!db) {
+        return NextResponse.json(empty);
+    }
 
-        const matchesList = await convex.query(api.matches.getAll, { limit: 1000 }) as MatchData[];
-        const leaguesList = deriveLeaguesFromMatches(matchesList);
+    try {
+        const matchesList = await getAll(db, 1000);
+        const leaguesList = deriveLeaguesFromMatches(matchesList as MatchData[]);
 
         const totalMatches = matchesList.length;
         const totalLeagues = leaguesList.length;
@@ -43,8 +39,7 @@ export async function GET() {
         const homeWins = finished.filter((m) => (m.homeScore as number) > (m.awayScore as number)).length;
         const winRate = finished.length > 0 ? Math.round((homeWins / finished.length) * 100) : 0;
 
-        const usersList = await convex.query(api.users.getAllUsers, {});
-        const totalUsers = usersList.length;
+        const totalUsers = (await getAllUsers(db)).length;
 
         return NextResponse.json({
             totalLeagues,

@@ -1,22 +1,15 @@
 import { NextResponse } from 'next/server';
 import { fetchFootyStatsMatchStats } from '@/lib/footystats';
-import { ConvexHttpClient } from "convex/browser";
-import { api } from "@trophy-games/backend";
+import { createDb } from '@/lib/db/client';
+import { enrichMatch, getById } from '@/lib/db/matches';
 
 export const dynamic = 'force-dynamic';
 
-const FALLBACK_CONVEX_URL = 'https://grateful-eel-253.eu-west-1.convex.cloud';
-
-function getConvex() {
-    const url = process.env.NEXT_PUBLIC_CONVEX_URL || FALLBACK_CONVEX_URL;
-    return new ConvexHttpClient(url);
-}
-
 // Rich per-match details (form, H2H, corners, detailed odds, standings, logos)
-// come from the proxy /match-stats endpoint on demand. Runs server-side, so the
-// HTTP (cleartext) call is fine.
-// After fetching, we write the rich data back to Convex so mobile can read it
-// without calling the FootyStats API directly.
+// come from the proxy /match-stats endpoint on demand. Runs server-side, so
+// the HTTP (cleartext) call is fine.
+// After fetching, we write the rich data back to the matches table so the web
+// admin can display them without hitting the FootyStats API directly.
 export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const id = searchParams.get('id');
@@ -26,11 +19,11 @@ export async function GET(req: Request) {
     }
 
     try {
-        const convex = getConvex();
+        const db = createDb();
 
-        // For manual matches, return data from Convex directly
+        // For manual matches, return data from the database directly
         if (id.startsWith('manual-')) {
-            const match = await convex.query(api.matches.getById, { matchId: id });
+            const match = db ? await getById(db, id) : null;
             if (!match) {
                 return NextResponse.json({ error: 'Match not found' }, { status: 404 });
             }
@@ -57,8 +50,8 @@ export async function GET(req: Request) {
 
         const stats = await fetchFootyStatsMatchStats(id);
 
-        // Write rich data back to Convex so mobile can access it
-        if (convex) {
+        // Write rich data back so the web admin can access it
+        if (db) {
             try {
                 // Extract only the rich fields we want to store
                 const enrichData = {
@@ -91,10 +84,10 @@ export async function GET(req: Request) {
                     referee: stats.referee,
                     weather: stats.weather,
                 };
-                await convex.mutation(api.matches.enrichMatch, { matchId: id, data: enrichData });
-                console.log(`[Match Stats API] Enriched match ${id} in Convex`);
+                await enrichMatch(db, id, enrichData);
+                console.log(`[Match Stats API] Enriched match ${id} in the database`);
             } catch (enrichError) {
-                console.warn(`[Match Stats API] Failed to enrich match ${id} in Convex:`, enrichError);
+                console.warn(`[Match Stats API] Failed to enrich match ${id}:`, enrichError);
                 // Non-fatal: still return the stats to the web client
             }
         }

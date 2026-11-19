@@ -1,33 +1,38 @@
 import { NextResponse } from 'next/server';
-import { ConvexHttpClient } from 'convex/browser';
-import { api } from '@trophy-games/backend';
+import { createDb } from '@/lib/db/client';
+import { sanitizeProxyMatch, saveAIPrediction } from '@/lib/db/matches';
 
-const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
-const convex = convexUrl ? new ConvexHttpClient(convexUrl) : null;
+export const dynamic = 'force-dynamic';
 
 export async function POST(req: Request) {
-    try {
-        if (!convex) {
-            return NextResponse.json({ error: 'Convex not configured' }, { status: 500 });
-        }
+    const db = createDb();
+    if (!db) {
+        return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
+    }
 
-        const { matchId, aiPrediction, match } = await req.json();
+    try {
+        const { matchId, aiPrediction, match } = (await req.json()) as {
+            matchId?: string;
+            aiPrediction?: {
+                prediction?: string;
+                confidence?: number;
+                reasoning?: string[];
+                suggestedBet?: string;
+            };
+            match?: Record<string, unknown>;
+        };
 
         if (!matchId || !aiPrediction) {
             return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
         }
 
-        // Upsert the proxy match into Convex (if needed), then store the prediction.
-        await convex.mutation(api.matches.saveAIPrediction, {
-            matchId,
-            aiPrediction: {
-                prediction: aiPrediction.prediction,
-                confidence: aiPrediction.confidence,
-                reasoning: aiPrediction.reasoning,
-                suggestedBet: aiPrediction.suggestedBet,
-            },
-            match: match ? sanitizeMatch(match) : undefined,
-        });
+        // Upsert the proxy match if needed, then store the prediction.
+        await saveAIPrediction(db, matchId, {
+            prediction: String(aiPrediction.prediction ?? ''),
+            confidence: Number(aiPrediction.confidence),
+            reasoning: Array.isArray(aiPrediction.reasoning) ? aiPrediction.reasoning : [],
+            suggestedBet: aiPrediction.suggestedBet,
+        }, match ? sanitizeProxyMatch(match) : undefined);
 
         return NextResponse.json({ success: true });
     } catch (error) {
@@ -37,34 +42,4 @@ export async function POST(req: Request) {
             details: error instanceof Error ? error.message : 'Unknown error',
         }, { status: 500 });
     }
-}
-
-// Keep only the fields the Convex proxyMatchInput validator accepts.
-function sanitizeMatch(m: any) {
-    return {
-        id: String(m.id),
-        league: String(m.league ?? ''),
-        leagueId: m.leagueId,
-        leagueLogo: m.leagueLogo,
-        homeTeam: String(m.homeTeam ?? ''),
-        homeTeamId: m.homeTeamId,
-        homeTeamLogo: m.homeTeamLogo,
-        awayTeam: String(m.awayTeam ?? ''),
-        awayTeamId: m.awayTeamId,
-        awayTeamLogo: m.awayTeamLogo,
-        country: m.country,
-        countryFlag: m.countryFlag,
-        timestamp: String(m.timestamp ?? new Date().toISOString()),
-        status: String(m.status ?? 'Scheduled'),
-        score: m.score,
-        homeScore: typeof m.homeScore === 'number' ? m.homeScore : undefined,
-        awayScore: typeof m.awayScore === 'number' ? m.awayScore : undefined,
-        matchType: m.matchType,
-        isTrending: m.isTrending,
-        odds: m.odds && m.odds.home ? {
-            home: String(m.odds.home),
-            away: String(m.odds.away ?? ''),
-            draw: m.odds.draw != null ? String(m.odds.draw) : undefined,
-        } : undefined,
-    };
 }

@@ -1,33 +1,28 @@
 import { NextResponse } from 'next/server';
-import { ConvexHttpClient } from "convex/browser";
-import { api } from "@trophy-games/backend";
+import { createDb } from '@/lib/db/client';
+import { getByDate } from '@/lib/db/analysis';
 
 export const dynamic = 'force-dynamic';
 
-function getConvex() {
-    const url = process.env.NEXT_PUBLIC_CONVEX_URL;
-    return url ? new ConvexHttpClient(url) : null;
-}
-
 // GET /api/analysis?date=YYYY-MM-DD - Get analysis for a specific date
 export async function GET(req: Request) {
-  const convex = getConvex();
-  if (!convex) {
-    return NextResponse.json({ error: 'Convex not configured' }, { status: 500 });
-  }
-
-  try {
-    const { searchParams } = new URL(req.url);
-    const date = searchParams.get('date');
-
-    if (!date) {
-      return NextResponse.json({ error: 'Missing date parameter' }, { status: 400 });
+    const db = createDb();
+    if (!db) {
+        return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
     }
 
-    const result = await convex.query(api.analysis.getByDate, { date });
-    return NextResponse.json(result || { notFound: true });
-  } catch (error: any) {
-    console.error('[Analysis API] Get failed:', error);
-    return NextResponse.json({ error: error.message || 'Failed to fetch analysis' }, { status: 500 });
-  }
+    try {
+        const { searchParams } = new URL(req.url);
+        const date = searchParams.get('date');
+
+        if (!date) {
+            return NextResponse.json({ error: 'Missing date parameter' }, { status: 400 });
+        }
+
+        const result = await getByDate(db, date);
+        return NextResponse.json(result || { notFound: true });
+    } catch (error) {
+        console.error('[Analysis API] Get failed:', error);
+        return NextResponse.json({ error: error instanceof Error ? error.message : 'Failed to fetch analysis' }, { status: 500 });
+    }
 }
