@@ -10,7 +10,7 @@
     },
     "apps/mobile": {
       "name": "@trophy-games/mobile",
-      "version": "1.0.1",
+      "version": "1.0.0",
       "dependencies": {
         "@react-native-async-storage/async-storage": "^2.2.0",
         "@react-navigation/native": "^7.1.0",
