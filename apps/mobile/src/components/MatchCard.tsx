@@ -5,6 +5,7 @@ import { getCountryFlagUrl } from '../lib/flags';
 import { useTheme } from '../context/ThemeContext';
 import { typography } from '../theme/typography';
 import { useRouter } from 'expo-router';
+import type { ApiMatch } from '../api/client';
 
 const TeamBadge = ({ uri, name }: { uri?: string; name: string }) => {
     const [failed, setFailed] = useState(false);
@@ -56,7 +57,7 @@ interface MatchCardProps {
         reasoning: string[];
     };
     matchId?: string;
-    matchData?: any;
+    matchData?: ApiMatch;
 }
 
 export const MatchCard = ({
@@ -105,7 +106,7 @@ export const MatchCard = ({
             if (matchData) {
                 params.matchData = encodeURIComponent(JSON.stringify(matchData));
             }
-            router.push({ pathname: '/match/[id]', params } as any);
+            router.push({ pathname: '/match/[id]', params });
         }
     };
 

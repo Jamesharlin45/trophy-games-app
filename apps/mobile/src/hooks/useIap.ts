@@ -1,32 +1,63 @@
 /**
  * useIap — Google Play Billing hook wrapper for Trophy Games.
  *
- * Wraps react-native-iap's built-in useIAP hook (v15+) to integrate
- * with Convex purchase recording.
+ * Wraps react-native-iap's built-in useIAP hook (v15+) and keeps the API's
+ * active-subscription state in sync. Restoring subscriptions that already
+ * exist on the Google Play account happens once at app start in
+ * `useRestorePurchases`.
  *
  * IMPORTANT: Requires a dev client or production build (native code).
  * Expo Go will gracefully show a notice.
  */
 
-import { useEffect, useState, useCallback, useRef } from 'react';
-import { Platform, Alert } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Platform } from 'react-native';
+import type {
+    Product,
+    ProductSubscription as IapProductSubscription,
+    Purchase,
+    PurchaseError,
+    RequestPurchaseProps,
+} from 'react-native-iap';
 import { ALL_PRODUCT_IDS } from '@trophy-games/shared/subscriptions';
-import { useQuery } from 'convex/react';
-import { api } from '@trophy-games/backend';
+import { api } from '../api/client';
+import { useScreenQuery } from './useLiveQuery';
 
 // ══════════════════════════════════════════════════════════════════
 // Lazy-load react-native-iap (may fail in Expo Go / non-native)
 // ══════════════════════════════════════════════════════════════════
 
-let iapModule: any = null;
-let iapLoadError: string | null = null;
+interface IapUseIapOptions {
+    onPurchaseSuccess?: (purchase: Purchase) => void;
+    onPurchaseError?: (error: PurchaseError) => void;
+}
 
-function getIapModule() {
-    if (iapModule !== null) return iapModule;
+interface IapUseIapResult {
+    connected: boolean;
+    products: Product[];
+    subscriptions: IapProductSubscription[];
+    fetchProducts: (params: { skus: string[]; type?: 'in-app' | 'subs' | 'all' | null }) => Promise<void>;
+    getAvailablePurchases: () => Promise<void>;
+    requestPurchase: (params: RequestPurchaseProps) => Promise<void>;
+}
+
+interface IapModule {
+    useIAP: (options?: IapUseIapOptions) => IapUseIapResult;
+    getAvailablePurchases: () => Promise<Purchase[]>;
+    finishTransaction: (args: { purchase: Purchase; isConsumable: boolean }) => Promise<void>;
+}
+
+let iapModule: IapModule | null = null;
+let iapLoadError: string | null = null;
+let iapLoaded = false;
+
+function getIapModule(): IapModule | null {
+    if (iapLoaded) return iapModule;
+    iapLoaded = true;
     try {
-        iapModule = require('react-native-iap');
-    } catch (e: any) {
-        iapLoadError = e?.message || String(e);
+        iapModule = require('react-native-iap') as IapModule;
+    } catch (e) {
+        iapLoadError = e instanceof Error ? e.message : String(e);
         console.warn('[useIap] react-native-iap not available:', iapLoadError);
         iapModule = null;
     }
@@ -59,7 +90,7 @@ interface UseIapOptions {
         tier: 'vip' | 'paid',
         purchaseToken: string,
         productId: string,
-    ) => void;
+    ) => void | Promise<void>;
     onPurchaseError?: (error: string) => void;
 }
 
@@ -95,16 +126,26 @@ export function useIap({
     // State for no-op fallback
     const [fallbackLoading, setFallbackLoading] = useState(true);
 
+    // API query for the active subscription (works regardless of IAP)
+    const {
+        data: activeSub,
+        refetch: refetchActiveSub,
+    } = useScreenQuery(
+        () => (deviceId ? api.purchases.getActiveSubscription(deviceId) : Promise.resolve(null)),
+        [deviceId],
+        { enabled: Boolean(deviceId) },
+    );
+
     // ── Call the real useIAP if available ──
     const iapResult = useIAP
         ? useIAP({
-            onPurchaseSuccess: async (purchase: any) => {
+            onPurchaseSuccess: async (purchase: Purchase) => {
                 const tier = purchase.productId?.includes('.vip.')
                     ? ('vip' as const)
                     : ('paid' as const);
 
                 try {
-                    onPurchaseSuccessRef.current?.(
+                    await onPurchaseSuccessRef.current?.(
                         tier,
                         purchase.purchaseToken || '',
                         purchase.productId || '',
@@ -114,17 +155,29 @@ export function useIap({
                 }
 
                 try {
-                    // Dynamic import to avoid static reference
-                    const { finishTransaction: ft } = getIapModule();
-                    if (ft) {
-                        await ft({ purchase, isConsumable: false });
+                    if (mod) {
+                        await mod.finishTransaction({ purchase, isConsumable: false });
                     }
-                } catch (err: any) {
-                    console.warn('[useIap] finishTransaction:', err?.message);
+                } catch (err) {
+                    console.warn(
+                        '[useIap] finishTransaction:',
+                        err instanceof Error ? err.message : String(err),
+                    );
+                }
+
+                // The purchase was recorded by the success handler; refresh so
+                // the screen reflects the new entitlement without a remount.
+                try {
+                    await refetchActiveSub();
+                } catch (err) {
+                    console.warn(
+                        '[useIap] Subscription refresh failed:',
+                        err instanceof Error ? err.message : String(err),
+                    );
                 }
             },
-            onPurchaseError: (err: any) => {
-                onPurchaseErrorRef.current?.(err?.message || String(err));
+            onPurchaseError: (err: PurchaseError) => {
+                onPurchaseErrorRef.current?.(err.message || String(err));
             },
         })
         : null;
@@ -135,12 +188,6 @@ export function useIap({
     const fetchProductsFn = iapResult?.fetchProducts;
     const getAvailablePurchasesFn = iapResult?.getAvailablePurchases;
     const requestPurchaseFn = iapResult?.requestPurchase;
-
-    // Convex query for active subscription (works regardless of IAP)
-    const activeSub = useQuery(
-        api.purchases.getActiveSubscription,
-        deviceId ? { deviceId } : 'skip',
-    );
 
     // ── Simulate loading complete for no-op path ──
     useEffect(() => {
@@ -158,7 +205,10 @@ export function useIap({
             setConnectTimedOut(false);
             if (Platform.OS === 'android' && fetchProductsFn) {
                 fetchProductsFn({ skus: ALL_PRODUCT_IDS, type: 'subs' }).catch(
-                    (e: any) => console.warn('[useIap] fetchProducts failed (SKUs not in Play Console yet?):', e?.message),
+                    (e: unknown) => console.warn(
+                        '[useIap] fetchProducts failed (SKUs not in Play Console yet?):',
+                        e instanceof Error ? e.message : String(e),
+                    ),
                 );
             }
         }
@@ -193,13 +243,13 @@ export function useIap({
             try {
                 // Use the requestPurchase from the module (not via useIAP return,
                 // because it's event-based and we handle results via callbacks)
-                await requestPurchaseFn({
+                await requestPurchaseFn?.({
                     request: { google: { skus: [productId] } },
                     type: 'subs',
                 });
                 return { success: true };
-            } catch (err: any) {
-                const msg = err?.message || String(err);
+            } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
                 if (
                     msg.includes('cancelled') ||
                     msg.includes('cancel') ||
@@ -215,14 +265,18 @@ export function useIap({
 
     // ── Refresh ──
     const refresh = useCallback(async () => {
+        await refetchActiveSub();
         if (!iapAvailable || !fetchProductsFn) return;
         try {
             await fetchProductsFn({ skus: ALL_PRODUCT_IDS, type: 'subs' });
             if (getAvailablePurchasesFn) await getAvailablePurchasesFn();
-        } catch (err: any) {
-            console.warn('[useIap] Refresh error:', err?.message);
+        } catch (err) {
+            console.warn(
+                '[useIap] Refresh error:',
+                err instanceof Error ? err.message : String(err),
+            );
         }
-    }, [iapAvailable, fetchProductsFn, getAvailablePurchasesFn]);
+    }, [iapAvailable, fetchProductsFn, getAvailablePurchasesFn, refetchActiveSub]);
 
     // ── Computed state ──
     // If IAP module loaded but never connected within timeout, treat as unavailable
@@ -244,7 +298,13 @@ export function useIap({
 
     const iapProducts: ProductSubscription[] = (
         subscriptions.length > 0 ? subscriptions : products
-    ) as any;
+    ).map((p) => ({
+        id: p.id,
+        displayPrice: p.displayPrice,
+        title: p.title,
+        description: p.description,
+        type: p.type,
+    }));
 
     return {
         products: iapProducts,

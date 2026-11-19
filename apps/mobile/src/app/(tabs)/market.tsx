@@ -1,14 +1,15 @@
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, ActivityIndicator, Alert, TextInput, Platform } from 'react-native';
 import { useState, useCallback, useEffect } from 'react';
 import { Crown, CheckCircle2, Zap, Trophy, ShieldCheck, CreditCard, ChevronRight, Sparkles, Key, Send, Clock, ShoppingCart } from 'lucide-react-native';
+import type { LucideIcon } from 'lucide-react-native';
 import { useTheme } from '../../context/ThemeContext';
 import { useUser } from '../../context/UserContext';
 import { typography } from '../../theme/typography';
-import { useQuery, useMutation } from 'convex/react';
-import { api } from '@trophy-games/backend';
-import { SUBSCRIPTION_PRODUCTS, getTierForProduct } from '@trophy-games/shared/subscriptions';
+import { SUBSCRIPTION_PRODUCTS } from '@trophy-games/shared/subscriptions';
 import { useIap, ProductSubscription } from '../../hooks/useIap';
 import * as Application from 'expo-application';
+import { api } from '../../api/client';
+import { useScreenQuery } from '../../hooks/useLiveQuery';
 
 type MemberStatus = 'none' | 'pending' | 'approved' | 'active' | 'loading';
 
@@ -23,11 +24,6 @@ export default function MembershipStoreScreen() {
     const [purchasing, setPurchasing] = useState<string | null>(null);
     const { username } = useUser();
 
-    // Convex mutations
-    const requestMembership = useMutation(api.tokens.requestMembership);
-    const verifyTokenMutation = useMutation(api.tokens.verifyToken);
-    const recordPurchase = useMutation(api.purchases.recordPurchase);
-
     // ── IAP hook (Google Play Billing) ──
     const {
         products: iapProducts,
@@ -40,7 +36,7 @@ export default function MembershipStoreScreen() {
         deviceId,
         onPurchaseSuccess: async (_tier: 'vip' | 'paid', purchaseToken: string, productId: string) => {
             try {
-                const result = await recordPurchase({
+                const result = await api.purchases.recordPurchase({
                     deviceId,
                     productId,
                     purchaseToken,
@@ -65,32 +61,45 @@ export default function MembershipStoreScreen() {
         setDeviceId(id);
     }, []);
 
-    // Convex queries for membership status
-    const vipStatusData = useQuery(
-        api.tokens.getMembershipStatus,
-        deviceId ? { deviceId, username: username || undefined, type: 'vip' } : 'skip'
+    // Membership status for each tier.
+    const {
+        data: vipStatusData,
+        loaded: vipLoaded,
+        refetch: refetchVip,
+    } = useScreenQuery(
+        () => api.tokens.getMembershipStatus(deviceId, 'vip', username || undefined),
+        [deviceId, username],
+        { enabled: Boolean(deviceId) },
     );
-    const paidStatusData = useQuery(
-        api.tokens.getMembershipStatus,
-        deviceId ? { deviceId, username: username || undefined, type: 'paid' } : 'skip'
+    const {
+        data: paidStatusData,
+        loaded: paidLoaded,
+        refetch: refetchPaid,
+    } = useScreenQuery(
+        () => api.tokens.getMembershipStatus(deviceId, 'paid', username || undefined),
+        [deviceId, username],
+        { enabled: Boolean(deviceId) },
     );
 
-    // Map Convex status to local status
-    const getLocalStatus = (data: typeof vipStatusData): MemberStatus => {
-        if (!data) return 'loading';
+    // Map API status to local status
+    const getLocalStatus = (
+        data: typeof vipStatusData,
+        loaded: boolean,
+    ): MemberStatus => {
+        if (!loaded) return 'loading';
+        if (!data) return 'none';
         if (data.status === 'active') return 'active';
         if (data.status === 'pending') return 'pending';
         if (data.status === 'approved') return 'approved';
         return 'none';
     };
 
-    const vipTokenStatus = getLocalStatus(vipStatusData);
-    const paidTokenStatus = getLocalStatus(paidStatusData);
+    const vipTokenStatus = getLocalStatus(vipStatusData, vipLoaded);
+    const paidTokenStatus = getLocalStatus(paidStatusData, paidLoaded);
 
     // Status priority: real IAP purchase > manually granted access.
     // If Google Play is connected but there is no active matching subscription,
     // keep the user's manually issued/pending/approved access visible instead of hiding it as `none`.
-    const iapConnected = !iapLoading && iapError === null;
 
     // VIP status is shared across weekly and monthly (same tier)
     const vipStatus: MemberStatus = iapActiveSub?.tier === 'vip'
@@ -102,16 +111,19 @@ export default function MembershipStoreScreen() {
 
     const onRefresh = useCallback(async () => {
         setRefreshing(true);
-        await new Promise(r => setTimeout(r, 500));
-        iapRefresh();
+        await Promise.all([refetchVip(), refetchPaid(), iapRefresh()]);
         setRefreshing(false);
-    }, [iapRefresh]);
+    }, [refetchVip, refetchPaid, iapRefresh]);
 
     const handleRequest = async (type: 'vip' | 'paid') => {
         if (!deviceId) return;
         setRequesting(type);
         try {
-            const result = await requestMembership({ deviceId, username: username || undefined, type });
+            const result = await api.tokens.requestMembership(
+                deviceId,
+                type,
+                username || undefined,
+            );
             if (result.success) {
                 Alert.alert('Success!', `Your ${type.toUpperCase()} request has been sent to admin.`);
             } else {
@@ -127,15 +139,16 @@ export default function MembershipStoreScreen() {
         if (!tokenInput.trim() || !deviceId) return;
         setVerifyingToken(true);
         try {
-            const result = await verifyTokenMutation({
-                token: tokenInput.trim(),
+            const result = await api.tokens.verifyToken(
+                tokenInput.trim(),
                 deviceId,
-                username: username || undefined,
-            });
+                username || undefined,
+            );
             if (result.valid) {
                 Alert.alert('Success!', 'Your token has been verified. Access granted.');
                 setShowTokenInput(false);
                 setTokenInput('');
+                await Promise.all([refetchVip(), refetchPaid()]);
             } else {
                 Alert.alert('Invalid Token', result.reason || 'Token is invalid or already used.');
             }
@@ -156,10 +169,10 @@ export default function MembershipStoreScreen() {
                     Alert.alert('Purchase Failed', result.reason);
                 }
             }
-            // On success, the onPurchaseSuccess callback above handles
-            // recording the purchase in Convex.
-        } catch (e: any) {
-            Alert.alert('Error', e?.message || 'Subscription purchase failed.');
+            // On success, the onPurchaseSuccess callback above records the purchase.
+        } catch (e) {
+            const message = e instanceof Error ? e.message : 'Subscription purchase failed.';
+            Alert.alert('Error', message);
         }
         setPurchasing(null);
     };
@@ -171,7 +184,7 @@ export default function MembershipStoreScreen() {
     /** Format price string from v15 ProductSubscription */
     const formatPrice = (product: ProductSubscription | undefined): string | null => {
         if (!product) return null;
-        return (product as any).displayPrice || (product as any).price || null;
+        return product.displayPrice || product.price || null;
     };
 
     // Individual product lookups — each card gets its own product
@@ -451,7 +464,7 @@ export default function MembershipStoreScreen() {
     );
 }
 
-function InfoSection({ icon: Icon, title, desc }: { icon: any, title: string, desc: string }) {
+function InfoSection({ icon: Icon, title, desc }: { icon: LucideIcon, title: string, desc: string }) {
     const { themeColors } = useTheme();
     return (
         <View style={styles.infoSection}>

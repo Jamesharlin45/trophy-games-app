@@ -1,15 +1,15 @@
 import { View, Text, ScrollView, ActivityIndicator, TouchableOpacity, StyleSheet, RefreshControl, TextInput } from 'react-native';
 import { Zap, Search } from 'lucide-react-native';
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useQuery } from "convex/react";
-import { api } from '@trophy-games/backend';
+import { useState, useCallback, useMemo } from 'react';
 import { MatchCard } from '../../components/MatchCard';
 import { DatePickerStrip } from '../../components/DatePickerStrip';
 import { useTheme } from '../../context/ThemeContext';
 import { typography } from '../../theme/typography';
 import i18n from '../../locales';
-// Mobile reads ONLY from Convex — the background cron sync fetches FootyStats
-// data every 5 minutes and upserts it into Convex. No direct API calls from mobile.
+import { api } from '../../api/client';
+import { useScreenQuery } from '../../hooks/useLiveQuery';
+// Matches are read from the web API — the background cron sync fetches
+// FootyStats data every 5 minutes and upserts it there.
 
 
 const toTitleCase = (str: string) =>
@@ -18,14 +18,17 @@ const toTitleCase = (str: string) =>
 export default function FreeTipsScreen() {
     const [selectedLeague, setSelectedLeague] = useState('All');
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
-    const matchesQuery = useQuery(api.matches.getByTypeAndDate, {
-        matchType: 'free',
-        date: selectedDate,
-        limit: 100
-    });
-    
-    const matches = matchesQuery || [];
-    const loading = matchesQuery === undefined;
+    const {
+        data: matchesData,
+        loading,
+        refetch,
+    } = useScreenQuery(
+        () => api.matches.byTypeAndDate('free', selectedDate, 100),
+        [selectedDate],
+        { pollMs: 60000 },
+    );
+
+    const matches = matchesData ?? [];
 
     const [refreshing, setRefreshing] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
@@ -50,10 +53,9 @@ export default function FreeTipsScreen() {
 
     const onRefresh = useCallback(async () => {
         setRefreshing(true);
-        // Convex queries auto-update, but we add a small delay for UX
-        await new Promise(r => setTimeout(r, 500));
+        await refetch();
         setRefreshing(false);
-    }, []);
+    }, [refetch]);
 
     const dates = useMemo(() => {
         const d: string[] = [];
@@ -160,7 +162,7 @@ export default function FreeTipsScreen() {
                     </View>
                 ) : filteredMatches.length > 0 ? (
                     <View style={styles.fixtureGrid}>
-                        {filteredMatches.map((match: any) => (
+                        {filteredMatches.map((match) => (
                             <MatchCard
                                 key={match.id}
                                 matchId={match.id}

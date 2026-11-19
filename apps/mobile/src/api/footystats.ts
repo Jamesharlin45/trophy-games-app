@@ -1,5 +1,6 @@
-import { ConvexHttpClient } from 'convex/browser';
-import { api } from '@trophy-games/backend';
+import type { MatchData } from '@trophy-games/shared';
+import { api } from './client';
+import type { ApiMatch } from './client';
 
 const FOOTYSTATS_BASE_URL = 'http://us3.bot-hosting.net:20562';
 
@@ -8,11 +9,8 @@ const FOOTYSTATS_BASE_URL = 'http://us3.bot-hosting.net:20562';
 // "teams/oman.png" (in home_image) — normalize both to an absolute CDN URL.
 const FOOTYSTATS_CDN = 'https://cdn.footystats.org/img';
 
-// Match lists are read from Convex (kept fresh by a server-side sync job), which
-// is far faster than hitting the proxy on every screen. Match *details* are
-// still fetched on demand from the proxy below.
-const convexUrl = process.env.EXPO_PUBLIC_CONVEX_URL;
-const convexClient = convexUrl ? new ConvexHttpClient(convexUrl) : null;
+// Match lists are read from the web API (kept fresh by the server-side sync
+// job). Match *details* are still fetched on demand from the proxy below.
 
 function resolveLogo(...candidates: (unknown)[]): string | undefined {
   for (const c of candidates) {
@@ -43,6 +41,8 @@ export interface AppMatch {
   };
   homePPG?: number;
   awayPPG?: number;
+  aiPrediction?: MatchData['aiPrediction'];
+  matchType?: MatchData['matchType'];
 }
 
 export interface TeamStat {
@@ -147,8 +147,8 @@ export interface MatchDetailData {
   };
 }
 
-// Map a Convex match document to the AppMatch shape used across the screens.
-function convexToAppMatch(d: any): AppMatch {
+// Map an API match document to the AppMatch shape used across the screens.
+function toAppMatch(d: ApiMatch): AppMatch {
   return {
     id: d.id,
     league: d.league,
@@ -170,19 +170,17 @@ function convexToAppMatch(d: any): AppMatch {
     homePPG: undefined,
     awayPPG: undefined,
     // Overlay fields the screens also read (win rate / AI insight / tier).
-    ...(d.aiPrediction ? { aiPrediction: d.aiPrediction } : {}),
-    ...(d.matchType ? { matchType: d.matchType } : {}),
-  } as AppMatch;
+    aiPrediction: d.aiPrediction,
+    matchType: d.matchType,
+  };
 }
 
 export async function fetchMatches(date?: string): Promise<AppMatch[]> {
-  if (!convexClient) throw new Error('Convex client not initialized');
-
   const docs = date
-    ? await convexClient.query(api.matches.getByDate, { date })
-    : await convexClient.query(api.matches.getAll, { limit: 500 });
+    ? await api.matches.byDate(date)
+    : await api.matches.all(500);
 
-  return (docs ?? []).map(convexToAppMatch);
+  return docs.map(toAppMatch);
 }
 
 export async function fetchMatchStats(matchId: string): Promise<MatchDetailData> {
@@ -203,8 +201,12 @@ export async function fetchMatchStats(matchId: string): Promise<MatchDetailData>
   const rawH2h = (d.h2h ?? {}) as Record<string, unknown>;
   const h2hSummary = (rawH2h.previous_matches_results ?? {}) as Record<string, unknown>;
 
-  const teamAResults = (d.teamAResults ?? []) as any[];
-  const teamBResults = (d.teamBResults ?? []) as any[];
+  const teamAResults: Record<string, unknown>[] = Array.isArray(d.teamAResults)
+    ? (d.teamAResults as Record<string, unknown>[])
+    : [];
+  const teamBResults: Record<string, unknown>[] = Array.isArray(d.teamBResults)
+    ? (d.teamBResults as Record<string, unknown>[])
+    : [];
 
   const timestamp = typeof d.date_unix === 'number'
     ? new Date((d.date_unix as number) * 1000).toISOString()
@@ -213,10 +215,9 @@ export async function fetchMatchStats(matchId: string): Promise<MatchDetailData>
   const scoresAvailable = d.status !== 'incomplete' && d.status !== '';
 
   // Derive form from last 5 results (W/D/L)
-  const deriveForm = (results: any[], teamId: number): string => {
-    return results.slice(0, 5).map((r: any) => {
+  const deriveForm = (results: Record<string, unknown>[], teamId: number): string => {
+    return results.slice(0, 5).map((r) => {
       if (r.winningTeam === 0) return 'D';
-      const isHome = r.homeID === teamId;
       const won = r.winningTeam === teamId;
       return won ? 'W' : 'L';
     }).join('');
@@ -228,8 +229,8 @@ export async function fetchMatchStats(matchId: string): Promise<MatchDetailData>
   const awayForm = deriveForm(teamBResults, awayId);
 
   // Parse H2H history from team results (last 5 meetings between these teams)
-  const h2hHistory = teamAResults.slice(0, 5).map((r: any) => ({
-    date: new Date((r.date_unix as number) * 1000).toISOString().split('T')[0],
+  const h2hHistory = teamAResults.slice(0, 5).map((r) => ({
+    date: new Date(Number(r.date_unix ?? 0) * 1000).toISOString().split('T')[0],
     league: String(r.home_name ?? '') + ' vs ' + String(r.away_name ?? ''),
     home: String(r.home_name ?? ''),
     away: String(r.away_name ?? ''),
@@ -325,7 +326,9 @@ export async function fetchMatchStats(matchId: string): Promise<MatchDetailData>
   }
 
   // --- Goal timeline ---
-  const rawGoals = (d.goal_events ?? []) as any[];
+  const rawGoals: Record<string, unknown>[] = Array.isArray(d.goal_events)
+    ? (d.goal_events as Record<string, unknown>[])
+    : [];
   const goals: GoalEvent[] = rawGoals
     .filter(g => g && g.known_as)
     .map(g => ({
@@ -338,17 +341,26 @@ export async function fetchMatchStats(matchId: string): Promise<MatchDetailData>
 
   // --- Lineups ---
   const rawLineups = (d.lineups ?? {}) as Record<string, unknown>;
-  const mapLineup = (arr: unknown): LineupPlayer[] =>
-    (Array.isArray(arr) ? arr : [])
-      .filter((p: any) => p && p.known_as)
-      .map((p: any) => ({
-        name: String(p.known_as),
-        number: Number(p.shirt_number ?? 0) || undefined,
-        events: (Array.isArray(p.player_events) ? p.player_events : []).map((e: any) => ({
-          type: String(e.event_type ?? ''),
-          time: String(e.event_time ?? ''),
-        })),
-      }));
+  const mapLineup = (arr: unknown): LineupPlayer[] => {
+    const players: Record<string, unknown>[] = Array.isArray(arr)
+      ? (arr as Record<string, unknown>[])
+      : [];
+    return players
+      .filter((p) => p && p.known_as)
+      .map((p) => {
+        const playerEvents: Record<string, unknown>[] = Array.isArray(p.player_events)
+          ? (p.player_events as Record<string, unknown>[])
+          : [];
+        return {
+          name: String(p.known_as),
+          number: Number(p.shirt_number ?? 0) || undefined,
+          events: playerEvents.map((e) => ({
+            type: String(e.event_type ?? ''),
+            time: String(e.event_time ?? ''),
+          })),
+        };
+      });
+  };
   const homeLineup = mapLineup(rawLineups.team_a);
   const awayLineup = mapLineup(rawLineups.team_b);
 
@@ -369,7 +381,8 @@ export async function fetchMatchStats(matchId: string): Promise<MatchDetailData>
   const htAway = Number(d.ht_goals_team_b ?? -1);
 
   // --- Venue / broadcast / preview ---
-  const competitionName = String((d.competition_stats as any)?.english_name ?? (d.competition_stats as any)?.name ?? '');
+  const competitionStats = (d.competition_stats ?? {}) as Record<string, unknown>;
+  const competitionName = String(competitionStats.english_name ?? competitionStats.name ?? '');
   const stadium = String(d.stadium_name ?? '').trim();
   const stadiumLoc = String(d.stadium_location ?? '').trim();
   const attendance = Number(d.attendance ?? -1);

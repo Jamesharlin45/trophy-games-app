@@ -9,7 +9,7 @@
       "distribution": "internal",
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_CONVEX_URL": "https://grateful-eel-253.eu-west-1.convex.cloud"
+        "EXPO_PUBLIC_API_URL": "https://trophy-games-app.vercel.app"
       },
       "android": {
         "buildType": "apk"
@@ -22,7 +22,7 @@
       "distribution": "internal",
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_CONVEX_URL": "https://grateful-eel-253.eu-west-1.convex.cloud"
+        "EXPO_PUBLIC_API_URL": "https://trophy-games-app.vercel.app"
       },
       "android": {
         "buildType": "apk"
@@ -32,7 +32,7 @@
       "distribution": "store",
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_CONVEX_URL": "https://grateful-eel-253.eu-west-1.convex.cloud"
+        "EXPO_PUBLIC_API_URL": "https://trophy-games-app.vercel.app"
       },
       "android": {
         "buildType": "app-bundle"

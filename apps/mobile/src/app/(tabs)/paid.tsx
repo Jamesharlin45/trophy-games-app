@@ -1,19 +1,17 @@
 import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, StyleSheet, RefreshControl, TextInput, Alert, KeyboardAvoidingView, Platform } from 'react-native';
 import { DollarSign, Zap, CheckCircle2, Clock, Send, Key } from 'lucide-react-native';
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useQuery, useMutation } from "convex/react";
-import { api } from '@trophy-games/backend';
-
 import { MatchCard } from '../../components/MatchCard';
 import { DatePickerStrip } from '../../components/DatePickerStrip';
 import { useTheme } from '../../context/ThemeContext';
 import { useUser } from '../../context/UserContext';
 import { typography } from '../../theme/typography';
-// Mobile reads ONLY from Convex — no direct FootyStats API calls.
+import { api } from '../../api/client';
+import { useScreenQuery } from '../../hooks/useLiveQuery';
 import * as Application from 'expo-application';
 
 
-type MemberStatus = 'none' | 'pending' | 'approved' | 'active' | 'loading';
+type MemberStatus = 'none' | 'pending' | 'approved' | 'rejected' | 'active' | 'loading';
 
 const toTitleCase = (str: string) =>
     str.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
@@ -30,29 +28,37 @@ export default function PaidTipsScreen() {
     const [deviceId, setDeviceId] = useState('');
     const { username } = useUser();
 
-    // Mutations
-    const requestMembershipMut = useMutation(api.tokens.createMembershipRequest);
-    const verifyTokenMut = useMutation(api.tokens.claimToken);
-
     useEffect(() => {
         const id = Application.applicationId + '_' + (Application.nativeApplicationVersion || 'v1');
         setDeviceId(id);
     }, []);
 
-    const membershipStatusData = useQuery(
-        api.tokens.getMembershipStatus,
-        deviceId ? { deviceId, username: username || undefined, type: 'paid' } : 'skip'
+    const {
+        data: membershipStatusData,
+        loaded: membershipLoaded,
+        refetch: refetchMembership,
+    } = useScreenQuery(
+        () => api.tokens.getMembershipStatus(deviceId, 'paid', username || undefined),
+        [deviceId, username],
+        { enabled: Boolean(deviceId), pollMs: 60000 },
     );
 
-    const memberStatus = membershipStatusData ? membershipStatusData.status as MemberStatus : 'loading';
+    const memberStatus: MemberStatus = membershipLoaded
+        ? (membershipStatusData?.status ?? 'none')
+        : 'loading';
 
-    const matchesQuery = useQuery(
-        api.matches.getByTypeAndDate,
-        memberStatus === 'active' ? { matchType: 'paid', date: selectedDate, limit: 100 } : 'skip'
+    const {
+        data: matchesData,
+        loading: matchesLoading,
+        refetch: refetchMatches,
+    } = useScreenQuery(
+        () => api.matches.byTypeAndDate('paid', selectedDate, 100),
+        [selectedDate, memberStatus],
+        { enabled: memberStatus === 'active', pollMs: 60000 },
     );
 
-    const matches = matchesQuery || [];
-    const loading = matchesQuery === undefined && memberStatus === 'active';
+    const matches = matchesData ?? [];
+    const loading = matchesLoading && memberStatus === 'active';
 
     const dates = useMemo(() => {
         const d = [];
@@ -78,20 +84,17 @@ export default function PaidTipsScreen() {
 
     const onRefresh = useCallback(async () => {
         setRefreshing(true);
-        await new Promise(r => setTimeout(r, 500));
+        await Promise.all([refetchMembership(), refetchMatches()]);
         setRefreshing(false);
-    }, []);
+    }, [refetchMembership, refetchMatches]);
 
     const requestMembership = async () => {
         if (!deviceId) return;
         setRequesting(true);
         try {
-            await requestMembershipMut({
-                deviceId,
-                username: username || undefined,
-                type: 'paid'
-            });
+            await api.tokens.createMembershipRequest(deviceId, 'paid', username || undefined);
             Alert.alert('Request Sent!', 'Your Premium membership request has been submitted.');
+            await refetchMembership();
         } catch {
             Alert.alert('Error', 'Failed to send request. Please try again.');
         }
@@ -102,15 +105,16 @@ export default function PaidTipsScreen() {
         if (!tokenInput.trim() || !deviceId) return;
         setVerifyingToken(true);
         try {
-            const result = await verifyTokenMut({
-                token: tokenInput.trim(),
+            const result = await api.tokens.claimToken(
+                tokenInput.trim(),
                 deviceId,
-                username: username || undefined
-            });
+                username || undefined,
+            );
             if (result.success) {
                 setEnteringToken(false);
                 setTokenInput('');
                 Alert.alert('Access Granted!', 'Welcome to Premium!');
+                await refetchMembership();
             } else {
                 Alert.alert('Invalid Token', result.reason || 'This token is not valid for your account.');
             }
@@ -128,7 +132,7 @@ export default function PaidTipsScreen() {
         );
     }
 
-    if (memberStatus === 'none' || memberStatus === 'pending' || memberStatus === 'approved') {
+    if (memberStatus === 'none' || memberStatus === 'pending' || memberStatus === 'approved' || memberStatus === 'rejected') {
         return (
             <KeyboardAvoidingView
                 style={[styles.container, { backgroundColor: themeColors.background }]}
@@ -284,7 +288,7 @@ export default function PaidTipsScreen() {
                     </View>
                 ) : filteredMatches.length > 0 ? (
                     <View style={styles.fixtureGrid}>
-                        {filteredMatches.map((match: any) => (
+                        {filteredMatches.map((match) => (
                             <MatchCard
                                 key={match.id}
                                 matchId={match.id}
