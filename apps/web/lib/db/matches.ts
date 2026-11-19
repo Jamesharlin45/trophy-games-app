@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { LeagueInfo, MatchData } from '@trophy-games/shared';
+import { createAlert } from './alerts';
 import type {
     AiPrediction,
     CreateMatchInput,
@@ -328,7 +329,43 @@ export async function createMatch(db: SupabaseClient, match: CreateMatchInput): 
         })
         .select('id');
     if (error) throw new Error(error.message);
+
+    // Port of Convex matches.create: inserting a match with a tip tier also
+    // fires the corresponding "New ... Tip" alert and pushes to every
+    // registered device. Convex scheduled these via the scheduler and
+    // logged failures without failing the caller — same behavior here.
+    try {
+        await fireCreateAlerts(db, match);
+    } catch (alertError) {
+        console.error('[createMatch] Failed to fire alerts for new match:', alertError);
+    }
+
     return match.id;
+}
+
+/** Alerts fired by Convex matches.create when a match is created with a
+ * tip tier ('unassigned' fires nothing). */
+async function fireCreateAlerts(db: SupabaseClient, match: CreateMatchInput): Promise<void> {
+    switch (match.matchType) {
+        case 'free':
+            await createAlert(db, {
+                title: 'New Free Tip Added!',
+                body: `Check out the new match: ${match.homeTeam} vs ${match.awayTeam}`,
+            });
+            break;
+        case 'vip':
+            await createAlert(db, {
+                title: '🔥 New VIP Tip Available',
+                body: 'Exclusive VIP prediction just dropped! Unlock premium access to win big today.',
+            });
+            break;
+        case 'paid':
+            await createAlert(db, {
+                title: '💰 New Paid Tip Available',
+                body: 'High-confidence paid prediction added! Get access now for expert insights.',
+            });
+            break;
+    }
 }
 
 /** api.matches.deleteMatch. */
@@ -352,7 +389,50 @@ export async function updateMatchType(
         existing = await insertProxyMatch(db, { ...match, matchType: 'unassigned' });
     }
     if (existing) {
+        // Pre-change type. Convex compared the new type against the
+        // pre-patch document value before firing alerts.
+        const previousTier = existing.matchType;
         await db.from('matches').update({ tier: matchType }).eq('id', existing._id);
+
+        // Port of Convex matches.updateMatchType: when the type changes to
+        // a tip tier, the corresponding "New ... Prediction" alert is fired
+        // and pushed to every registered device ('unassigned' fires nothing).
+        if (matchType !== previousTier) {
+            try {
+                await fireMatchTypeChangeAlerts(db, matchType, existing);
+            } catch (alertError) {
+                console.error('[updateMatchType] Failed to fire alerts for tier change:', alertError);
+            }
+        }
+    }
+}
+
+/** Alerts fired by Convex matches.updateMatchType when the tier changes
+ * ('unassigned' fires nothing). */
+async function fireMatchTypeChangeAlerts(
+    db: SupabaseClient,
+    matchType: MatchTier,
+    existing: DbMatch,
+): Promise<void> {
+    switch (matchType) {
+        case 'free':
+            await createAlert(db, {
+                title: 'Free Tip Added!',
+                body: `A new high-confidence free tip has been added: ${existing.homeTeam} vs ${existing.awayTeam}. Check it out now!`,
+            });
+            break;
+        case 'vip':
+            await createAlert(db, {
+                title: '🔥 New VIP Prediction',
+                body: 'Exclusive VIP tip now available! Upgrade to premium for expert predictions.',
+            });
+            break;
+        case 'paid':
+            await createAlert(db, {
+                title: '💰 New Paid Prediction',
+                body: 'Premium paid tip just added! Unlock access for professional insights.',
+            });
+            break;
     }
 }
 
