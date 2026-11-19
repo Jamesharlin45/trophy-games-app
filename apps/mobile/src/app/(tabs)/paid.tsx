@@ -8,6 +8,7 @@ import { useUser } from '../../context/UserContext';
 import { typography } from '../../theme/typography';
 import { api } from '../../api/client';
 import { useScreenQuery } from '../../hooks/useLiveQuery';
+import { useRouter } from 'expo-router';
 import * as Application from 'expo-application';
 
 
@@ -18,6 +19,7 @@ const toTitleCase = (str: string) =>
 
 export default function PaidTipsScreen() {
     const { themeColors } = useTheme();
+    const router = useRouter();
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
     const [selectedLeague, setSelectedLeague] = useState('All');
     const [tokenInput, setTokenInput] = useState('');
@@ -194,6 +196,14 @@ export default function PaidTipsScreen() {
                             </Text>
                         </View>
                     )}
+
+                    {/* Get Premium access - navigate to Store tab */}
+                    <TouchableOpacity
+                        style={[styles.primaryBtn, { backgroundColor: themeColors.primary }]}
+                        onPress={() => router.push('/market')}
+                    >
+                        <Text style={styles.primaryBtnText}>Get Premium access</Text>
+                    </TouchableOpacity>
 
                     {!enteringToken ? (
                         <TouchableOpacity
