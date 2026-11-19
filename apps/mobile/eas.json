@@ -37,7 +37,8 @@
       "android": {
         "buildType": "app-bundle"
       },
-      "credentialsSource": "remote"
+      "credentialsSource": "remote",
+      "bun": "1.4.4"
     }
   },
   "submit": {
