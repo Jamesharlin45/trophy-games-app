@@ -54,7 +54,15 @@ CREATE TABLE IF NOT EXISTS matches (
     trending boolean NULL,
     is_history boolean NULL,
     match_date text NULL,
-    ai_prediction jsonb NULL
+    ai_prediction jsonb NULL,
+    -- Web-created matches keep their external string id here (e.g. the
+    -- `manual-<timestamp>` ids the admin dashboard generates) — the schema's
+    -- `id` column alone cannot hold non-UUID external ids.
+    external_id text NULL UNIQUE,
+    -- Rich per-match detail fields written back by the web dashboard
+    -- (enrichMatch: homeForm, potentials, h2h, detailedOdds, ...). No
+    -- dedicated columns exist for them, so they live in this jsonb.
+    details jsonb NULL
 );
 
 CREATE INDEX IF NOT EXISTS matches_by_tier ON matches (tier);

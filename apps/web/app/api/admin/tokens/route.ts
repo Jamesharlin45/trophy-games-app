@@ -1,13 +1,9 @@
 import { NextResponse } from 'next/server';
-import { ConvexHttpClient } from 'convex/browser';
-import { api } from '@trophy-games/backend';
+import { createDb } from '@/lib/db/client';
+import { createToken, getAllTokens, reactivateToken, revokeToken } from '@/lib/db/tokens';
+import type { TokenType } from '@/lib/db/tokens';
 
 export const dynamic = 'force-dynamic';
-
-function getConvex() {
-    const url = process.env.NEXT_PUBLIC_CONVEX_URL;
-    return url ? new ConvexHttpClient(url) : null;
-}
 
 function generateToken(type: string): string {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -23,10 +19,10 @@ function generateToken(type: string): string {
 }
 
 export async function GET() {
+    const db = createDb();
+    if (!db) return NextResponse.json([]);
     try {
-        const convex = getConvex();
-        if (!convex) return NextResponse.json([]);
-        const tokens = await convex.query(api.tokens.getAllTokens, {});
+        const tokens = await getAllTokens(db);
         return NextResponse.json(tokens);
     } catch (error) {
         console.error('[API] Get tokens failed:', error);
@@ -35,10 +31,16 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+    const db = createDb();
+    if (!db) return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
     try {
-        const convex = getConvex();
-        if (!convex) return NextResponse.json({ error: 'Convex not configured' }, { status: 500 });
-        const { deviceId, username, type, matchId, expiresAt } = await request.json();
+        const { deviceId, username, type, matchId, expiresAt } = (await request.json()) as {
+            deviceId?: string;
+            username?: string;
+            type?: TokenType;
+            matchId?: string;
+            expiresAt?: string;
+        };
 
         if (!deviceId || !type) {
             return NextResponse.json({ error: 'deviceId and type required' }, { status: 400 });
@@ -46,14 +48,7 @@ export async function POST(request: Request) {
 
         const token = generateToken(type);
 
-        await convex.mutation(api.tokens.createToken, {
-            token,
-            deviceId,
-            username,
-            type,
-            matchId,
-            expiresAt,
-        });
+        await createToken(db, { token, deviceId, username, type, matchId, expiresAt });
 
         return NextResponse.json({ success: true, token });
     } catch (error) {
@@ -63,11 +58,11 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+    const db = createDb();
+    if (!db) return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
     try {
-        const convex = getConvex();
-        if (!convex) return NextResponse.json({ error: 'Convex not configured' }, { status: 500 });
-        const { token } = await request.json();
-        await convex.mutation(api.tokens.revokeToken, { token });
+        const { token } = (await request.json()) as { token?: string };
+        await revokeToken(db, token as string);
         return NextResponse.json({ success: true });
     } catch (error) {
         console.error('[API] Revoke token failed:', error);
@@ -76,11 +71,11 @@ export async function DELETE(request: Request) {
 }
 
 export async function PUT(request: Request) {
+    const db = createDb();
+    if (!db) return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
     try {
-        const convex = getConvex();
-        if (!convex) return NextResponse.json({ error: 'Convex not configured' }, { status: 500 });
-        const { token } = await request.json();
-        await convex.mutation(api.tokens.reactivateToken, { token });
+        const { token } = (await request.json()) as { token?: string };
+        await reactivateToken(db, token as string);
         return NextResponse.json({ success: true });
     } catch (error) {
         console.error('[API] Reactivate token failed:', error);

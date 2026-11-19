@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.119.1",
     "@trophy-games/backend": "workspace:*",
     "@trophy-games/shared": "workspace:*",
     "cheerio": "^1.2.0",

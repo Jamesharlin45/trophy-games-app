@@ -1,13 +1,9 @@
 import { NextResponse } from 'next/server';
-import { ConvexHttpClient } from 'convex/browser';
-import { api } from '@trophy-games/backend';
+import { createDb } from '@/lib/db/client';
+import { approveMembershipRequest, getAllRequests, rejectMembershipRequest } from '@/lib/db/tokens';
+import type { TokenType } from '@/lib/db/tokens';
 
 export const dynamic = 'force-dynamic';
-
-function getConvex() {
-    const url = process.env.NEXT_PUBLIC_CONVEX_URL;
-    return url ? new ConvexHttpClient(url) : null;
-}
 
 function generateToken(type: string): string {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -23,10 +19,10 @@ function generateToken(type: string): string {
 }
 
 export async function GET() {
+    const db = createDb();
+    if (!db) return NextResponse.json([]);
     try {
-        const convex = getConvex();
-        if (!convex) return NextResponse.json([]);
-        const requests = await convex.query(api.tokens.getAllRequests, {});
+        const requests = await getAllRequests(db);
         return NextResponse.json(requests);
     } catch (error) {
         console.error('[API] Get requests failed:', error);
@@ -35,10 +31,15 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+    const db = createDb();
+    if (!db) return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
     try {
-        const convex = getConvex();
-        if (!convex) return NextResponse.json({ error: 'Convex not configured' }, { status: 500 });
-        const { requestId, action, matchId, expiresAt } = await request.json();
+        const { requestId, action, matchId, expiresAt } = (await request.json()) as {
+            requestId?: string;
+            action?: string;
+            matchId?: string;
+            expiresAt?: string;
+        };
 
         if (!requestId || !action) {
             return NextResponse.json({ error: 'requestId and action required' }, { status: 400 });
@@ -46,24 +47,17 @@ export async function POST(request: Request) {
 
         if (action === 'approve') {
             // Get the request to know the type
-            const allRequests = await convex.query(api.tokens.getAllRequests, {});
-            const req = allRequests.find((r: any) => r._id === requestId);
+            const allRequests = await getAllRequests(db);
+            const req = allRequests.find((r) => r._id === requestId);
             if (!req) return NextResponse.json({ error: 'Request not found' }, { status: 404 });
 
             const token = generateToken(req.type);
-            await convex.mutation(api.tokens.approveMembershipRequest, {
-                requestId,
-                token,
-                matchId,
-                expiresAt,
-            });
+            await approveMembershipRequest(db, { requestId, token, matchId, expiresAt });
             return NextResponse.json({ success: true, token });
         }
 
         if (action === 'reject') {
-            await convex.mutation(api.tokens.rejectMembershipRequest, {
-                requestId,
-            });
+            await rejectMembershipRequest(db, { requestId });
             return NextResponse.json({ success: true });
         }
 
