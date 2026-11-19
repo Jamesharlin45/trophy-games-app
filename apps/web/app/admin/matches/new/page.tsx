@@ -1,13 +1,15 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
     Swords, ArrowLeft, Loader2, CheckCircle2, AlertCircle,
     Star, DollarSign, Crown, Filter, Brain, PlusCircle, ExternalLink,
-    Flame,
+    Flame, Flag,
 } from 'lucide-react';
 import Link from 'next/link';
+import Image from 'next/image';
+import type { ApiFootballFixture } from '@/lib/api-football';
 
 const MATCH_TYPES = [
     { value: 'unassigned', label: 'Unassigned', icon: Filter, color: 'bg-zinc-500' },
@@ -17,6 +19,38 @@ const MATCH_TYPES = [
 ] as const;
 
 const STATUS_OPTIONS = ['Scheduled', 'Live', 'Finished', 'Postponed', 'Cancelled'];
+
+function pad2(n: number): string {
+    return String(n).padStart(2, '0');
+}
+
+function utcDateOffset(offsetDays: number): string {
+    const now = new Date();
+    return new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + offsetDays)
+    ).toISOString().slice(0, 10);
+}
+
+// The three dates the fixtures API allows: yesterday, today and tomorrow (UTC).
+const FIXTURE_DATES = [utcDateOffset(-1), utcDateOffset(0), utcDateOffset(1)];
+
+function formatDateLabel(iso: string): string {
+    const d = new Date(`${iso}T00:00:00Z`);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: '2-digit' });
+}
+
+function toDatetimeLocal(iso: string): string {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+function formatFixtureTime(iso: string): string {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return `${d.toLocaleDateString([], { month: 'short', day: '2-digit' })} · ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+}
 
 function cn(...classes: (string | boolean | undefined)[]) {
     return classes.filter(Boolean).join(' ');
@@ -80,11 +114,77 @@ export default function AddMatchPage() {
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState(false);
 
+    // Fixtures state (API-Football "pick from fixtures").
+    const [fixtures, setFixtures] = useState<ApiFootballFixture[]>([]);
+    const [fixturesDate, setFixturesDate] = useState<string>(utcDateOffset(0));
+    const [fixturesLoading, setFixturesLoading] = useState(true);
+    const [fixturesError, setFixturesError] = useState<string | null>(null);
+    const [fixtureSearch, setFixtureSearch] = useState('');
+    const [leagueFilter, setLeagueFilter] = useState('');
+
     const set = (key: keyof FormState) => (
         e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
     ) => setForm(prev => ({ ...prev, [key]: e.target.value }));
 
     const toggleTrending = () => setForm(prev => ({ ...prev, isTrending: !prev.isTrending }));
+
+    const handleFixturesDateChange = (date: string) => {
+        setFixturesDate(date);
+        setFixturesLoading(true);
+        setFixturesError(null);
+        setFixtures([]);
+    };
+
+    // Load fixtures for the selected date. All setState calls happen after
+    // awaits (like app/admin/requests), so the effect body starts the async
+    // work without synchronous state updates.
+    useEffect(() => {
+        let cancelled = false;
+        async function load() {
+            try {
+                const res = await fetch(`/api/admin/fixtures?date=${encodeURIComponent(fixturesDate)}`);
+                const data = (await res.json()) as { error?: string; fixtures?: ApiFootballFixture[] };
+                if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+                if (!cancelled) setFixtures(Array.isArray(data.fixtures) ? data.fixtures : []);
+            } catch (err: any) {
+                if (!cancelled) setFixturesError(err.message || 'Failed to load fixtures');
+            } finally {
+                if (!cancelled) setFixturesLoading(false);
+            }
+        }
+        void load();
+        return () => { cancelled = true; };
+    }, [fixturesDate]);
+
+    const prefillFromFixture = (f: ApiFootballFixture) => {
+        setForm(prev => ({
+            ...prev,
+            homeTeam: f.homeTeam.name.trim(),
+            awayTeam: f.awayTeam.name.trim(),
+            league: f.league.name.trim(),
+            country: f.league.country || prev.country,
+            status: 'Scheduled',
+            timestamp: toDatetimeLocal(f.date),
+            leagueLogo: f.league.logo || '',
+            homeTeamLogo: f.homeTeam.logo || '',
+            awayTeamLogo: f.awayTeam.logo || '',
+        }));
+    };
+
+    const leagueOptions = useMemo(() => {
+        const seen = new Set<string>();
+        for (const f of fixtures) seen.add(f.league.name);
+        return [...seen];
+    }, [fixtures]);
+
+    const visibleFixtures = useMemo(() => {
+        const q = fixtureSearch.trim().toLowerCase();
+        return fixtures.filter(f => {
+            if (leagueFilter && f.league.name !== leagueFilter) return false;
+            if (!q) return true;
+            return `${f.homeTeam.name} ${f.awayTeam.name} ${f.league.name} ${f.league.country}`.toLowerCase().includes(q);
+        });
+    }, [fixtures, fixtureSearch, leagueFilter]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -197,6 +297,114 @@ export default function AddMatchPage() {
                     <span className="text-sm">{error}</span>
                 </div>
             )}
+
+            {/* Pick from fixtures — API-Football real upcoming games */}
+            <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/50 p-5 space-y-4">
+                <h2 className="font-semibold text-zinc-900 dark:text-zinc-100 text-sm uppercase tracking-wider flex items-center gap-2">
+                    <Flag size={16} className="text-blue-600" />
+                    Pick from Fixtures
+                    <span className="text-zinc-400 font-normal normal-case">(real upcoming games from API-Football)</span>
+                </h2>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div>
+                        <label className={labelClass}>Fixture Date</label>
+                        <select value={fixturesDate} onChange={e => handleFixturesDateChange(e.target.value)} className={inputClass}>
+                            {FIXTURE_DATES.map(d => (
+                                <option key={d} value={d}>{formatDateLabel(d)}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div>
+                        <label className={labelClass}>League</label>
+                        <select value={leagueFilter} onChange={e => setLeagueFilter(e.target.value)} className={inputClass}>
+                            <option value="">All Leagues</option>
+                            {leagueOptions.map(name => (
+                                <option key={name} value={name}>{name}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div>
+                        <label className={labelClass}>Search Team or League</label>
+                        <input
+                            type="search"
+                            value={fixtureSearch}
+                            onChange={e => setFixtureSearch(e.target.value)}
+                            placeholder="e.g. Manchester United"
+                            className={inputClass}
+                        />
+                    </div>
+                </div>
+
+                {fixturesError && (
+                    <div className="flex items-center gap-3 rounded-2xl bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 px-5 py-4 text-red-600 dark:text-red-400">
+                        <AlertCircle size={18} />
+                        <span className="text-sm">{fixturesError}</span>
+                    </div>
+                )}
+
+                {fixturesLoading && (
+                    <div className="flex items-center gap-3 text-zinc-500 dark:text-zinc-400">
+                        <Loader2 size={16} className="animate-spin" />
+                        <span className="text-sm">Loading fixtures…</span>
+                    </div>
+                )}
+
+                {!fixturesLoading && !fixturesError && fixtures.length === 0 && (
+                    <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                        No fixtures found for {formatDateLabel(fixturesDate)}.
+                    </p>
+                )}
+
+                {!fixturesLoading && !fixturesError && fixtures.length > 0 && visibleFixtures.length === 0 && (
+                    <p className="text-sm text-zinc-500 dark:text-zinc-400">No matches for your filters.</p>
+                )}
+
+                {visibleFixtures.length > 0 && (
+                    <ul className="space-y-1">
+                        {visibleFixtures.map(f => (
+                            <li key={f.id}>
+                                <button
+                                    type="button"
+                                    onClick={() => prefillFromFixture(f)}
+                                    className="w-full flex items-center gap-3.5 py-2.5 rounded-xl text-left hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors"
+                                >
+                                    {f.league.logo ? (
+                                        <Image src={f.league.logo} alt="" width={36} height={36} unoptimized className="h-9 w-9 rounded-md object-contain shrink-0" />
+                                    ) : (
+                                        <div className="h-9 w-9 rounded-md bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center shrink-0">
+                                            <Flag size={16} className="text-zinc-400" />
+                                        </div>
+                                    )}
+                                    <div className="min-w-0">
+                                        <div className="flex items-center gap-2.5">
+                                            {f.homeTeam.logo ? (
+                                                <Image src={f.homeTeam.logo} alt="" width={20} height={20} unoptimized className="h-5 w-5 rounded-full object-contain shrink-0" />
+                                            ) : (
+                                                <span className="h-5 w-5 rounded-full bg-zinc-100 dark:bg-zinc-800 shrink-0" />
+                                            )}
+                                            <span className="font-semibold text-zinc-900 dark:text-zinc-50 text-sm">{f.homeTeam.name}</span>
+                                            <span className="text-zinc-300 dark:text-zinc-600 text-sm">vs</span>
+                                            {f.awayTeam.logo ? (
+                                                <Image src={f.awayTeam.logo} alt="" width={20} height={20} unoptimized className="h-5 w-5 rounded-full object-contain shrink-0" />
+                                            ) : (
+                                                <span className="h-5 w-5 rounded-full bg-zinc-100 dark:bg-zinc-800 shrink-0" />
+                                            )}
+                                            <span className="font-semibold text-zinc-900 dark:text-zinc-50 text-sm">{f.awayTeam.name}</span>
+                                        </div>
+                                        <div className="mt-1 flex flex-wrap items-center gap-x-1.5 text-xs text-zinc-500 dark:text-zinc-400">
+                                            <span>{f.league.name}</span>
+                                            {f.league.country && <span>· {f.league.country}</span>}
+                                            <span>· {formatFixtureTime(f.date)}</span>
+                                            {f.status && <span>· {f.status}</span>}
+                                        </div>
+                                    </div>
+                                </button>
+                            </li>
+                        ))}
+                    </ul>
+                )}
+                <p className="text-[10px] text-zinc-400">Tap a fixture to prefill the form — teams, league, and kickoff are filled in. Manual entry still works as before.</p>
+            </section>
 
             <form onSubmit={handleSubmit} className="space-y-6">
                 {/* Teams */}
