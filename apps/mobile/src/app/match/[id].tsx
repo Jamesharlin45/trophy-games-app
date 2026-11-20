@@ -2,7 +2,7 @@ import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Image, ActivityIn
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ChevronLeft, Zap, ShieldCheck, Goal } from 'lucide-react-native';
+import { ChevronLeft, Zap, ShieldCheck, Goal, Lock, Sparkles } from 'lucide-react-native';
 import { useTheme } from '../../context/ThemeContext';
 import type { ThemeColors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
@@ -11,6 +11,8 @@ import { fetchMatchStats } from '../../api/footystats';
 import type { MatchDetailData } from '../../api/footystats';
 import { api } from '../../api/client';
 import type { ApiMatch } from '../../api/client';
+import i18n from '../../locales';
+import { useMembershipAccess } from '../../hooks/useMembershipAccess';
 
 type MatchViewModel = Omit<
     ApiMatch,
@@ -53,6 +55,7 @@ export default function MatchDetailScreen() {
     const router = useRouter();
     const { themeColors } = useTheme();
     const styles = getStyles(themeColors);
+    const access = useMembershipAccess();
 
     const [match, setMatch] = useState<MatchViewModel | null>(null);
     const [loading, setLoading] = useState(true);
@@ -141,16 +144,48 @@ export default function MatchDetailScreen() {
     if (!match) {
         return (
             <SafeAreaView style={[styles.container, { backgroundColor: themeColors.background, justifyContent: 'center', alignItems: 'center' }]} edges={['left', 'right']}>
-                <Text style={{ color: themeColors.mutedText }}>Match details unavailable</Text>
-                <TouchableOpacity onPress={() => router.back()} style={{ marginTop: 20 }}>
-                    <Text style={{ color: themeColors.accent, fontWeight: '700' }}>GO BACK</Text>
+                <Text style={{ color: themeColors.mutedText, fontSize: 16, textAlign: 'center', paddingHorizontal: 24 }}>
+                    {i18n.t('matchDetail.unavailable')}
+                </Text>
+                <TouchableOpacity onPress={() => router.back()} style={styles.backCta} accessibilityRole="button">
+                    <Text style={{ color: themeColors.accent, fontWeight: '700', fontSize: 16 }}>{i18n.t('matchDetail.goBack')}</Text>
                 </TouchableOpacity>
             </SafeAreaView>
         );
     }
 
-    const isLive = match.status?.includes('Live') || match.status === 'Halftime';
+    const isLive = match.status?.includes('Live') || match.status === 'Halftime' || match.status === 'HT';
     const isFinished = match.status === 'Finished' || match.status === 'FT';
+
+    const ai = match.aiPrediction;
+    const pickText = ai?.pick || ai?.suggestedBet || ai?.prediction;
+    const hasPrediction = typeof pickText === 'string' && pickText.trim().length > 0;
+    const isLocked =
+        (match.matchType === 'paid' && !access.paid) || (match.matchType === 'vip' && !access.vip);
+    const lockTier = match.matchType === 'vip' ? 'vip' : 'paid';
+    const confidence = typeof ai?.confidence === 'number' ? Math.max(0, Math.min(100, ai.confidence)) : undefined;
+    const risk = ai?.risk;
+    const reasoningLines = Array.isArray(ai?.reasoning) ? ai.reasoning.filter(Boolean) : [];
+    const sources = Array.isArray(ai?.sources) ? ai.sources.filter(Boolean) : [];
+    const oddsLabel = (() => {
+        if (match.odds?.home || match.odds?.draw || match.odds?.away) {
+            const parts = [match.odds.home, match.odds.draw, match.odds.away].filter(
+                (v): v is string => Boolean(v && v !== ''),
+            );
+            if (parts.length > 0) return parts.join(' / ');
+        }
+        const h = match.detailedOdds?.ft?.['1x2']?.home;
+        const d = match.detailedOdds?.ft?.['1x2']?.draw;
+        const a = match.detailedOdds?.ft?.['1x2']?.away;
+        const parts = [h, d, a].filter((v): v is string => Boolean(v && v !== ''));
+        return parts.length > 0 ? parts.join(' / ') : '—';
+    })();
+    const riskColor = (() => {
+        if (risk === 'low') return themeColors.success;
+        if (risk === 'medium') return themeColors.warning;
+        if (risk === 'high') return themeColors.danger;
+        return themeColors.mutedText;
+    })();
 
     return (
         <SafeAreaView style={[styles.container, { backgroundColor: themeColors.background }]} edges={['left', 'right']}>
@@ -160,7 +195,9 @@ export default function MatchDetailScreen() {
                     <ChevronLeft size={24} color={themeColors.text} />
                 </TouchableOpacity>
                 <Text style={[styles.headerTitle, { color: themeColors.text }]}>
-                    {match.league ? match.league.replace(/\w\S*/g, (w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()) : 'Match Details'}
+                    {match.league
+                        ? match.league.replace(/\w\S*/g, (w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+                        : i18n.t('matchDetail.matchDetails')}
                 </Text>
                 <View style={styles.headerRight} />
             </View>
@@ -187,11 +224,14 @@ export default function MatchDetailScreen() {
                         }
                     ]}>
                         {isLive && <View style={styles.liveDot} />}
-                        <Text style={[
-                            styles.statusText,
-                            { color: isLive ? 'white' : themeColors.mutedText }
-                        ]}>
-                            {isLive ? match.status?.toUpperCase() : isFinished ? 'FULL TIME' : 'UPCOMING'}
+                        <Text
+                            style={[styles.statusText, { color: isLive ? 'white' : themeColors.mutedText }]}
+                        >
+                            {isLive
+                                ? match.status?.toUpperCase()
+                                : isFinished
+                                    ? i18n.t('matchDetail.fullTime')
+                                    : i18n.t('matchDetail.upcoming')}
                         </Text>
                     </View>
 
@@ -243,6 +283,130 @@ export default function MatchDetailScreen() {
                                 <Text style={[styles.standingText, { color: themeColors.mutedText }]}>#{match.awayStanding}</Text>
                             )}
                         </View>
+                    </View>
+                </View>
+
+                {/* AI Prediction */}
+                <View style={styles.outerPad}>
+                    <Text style={[styles.sectionLabel, { color: themeColors.mutedText }]}>{i18n.t('matchDetail.pick').toUpperCase()}</Text>
+                    <View style={[styles.predictionSection, { backgroundColor: themeColors.surface, borderColor: themeColors.border }]}>
+                        {isLocked ? (
+                            <View style={styles.predictionLocked}>
+                                <View style={styles.predictionLockedHeader}>
+                                    <Lock size={18} color={themeColors.accent} />
+                                    <Text style={[styles.predictionLockedTitle, { color: themeColors.text }]}>
+                                        {i18n.t('matchDetail.lockedTitle')}
+                                    </Text>
+                                </View>
+                                <View style={[styles.maskLine, { backgroundColor: themeColors.surfaceElevated }]} />
+                                <View style={[styles.maskLine, styles.maskLineShort, { backgroundColor: themeColors.surfaceElevated }]} />
+                                <Text style={[styles.predictionEmptyBody, { color: themeColors.mutedText }]}>
+                                    {i18n.t('matchDetail.lockedBody')}
+                                </Text>
+                                <TouchableOpacity
+                                    style={[styles.unlockBtn, { backgroundColor: themeColors.accent }]}
+                                    onPress={() => router.push(lockTier === 'vip' ? '/(tabs)/vip' : '/(tabs)/paid')}
+                                    activeOpacity={0.85}
+                                    accessibilityRole="button"
+                                >
+                                    <Text style={[styles.unlockBtnText, { color: themeColors.accentText }]}>
+                                        {lockTier === 'vip' ? i18n.t('matchDetail.unlockVip') : i18n.t('matchDetail.unlockPremium')}
+                                    </Text>
+                                </TouchableOpacity>
+                            </View>
+                        ) : hasPrediction ? (
+                            <View style={styles.predictionBody}>
+                                <View style={styles.predictionPickRow}>
+                                    <Sparkles size={18} color={themeColors.accent} />
+                                    <Text style={[styles.predictionPickLabel, { color: themeColors.mutedText }]}>
+                                        {i18n.t('matchDetail.pick')}
+                                    </Text>
+                                </View>
+                                <Text style={[styles.predictionPickValue, { color: themeColors.text }]}>{String(pickText)}</Text>
+
+                                <View style={styles.predictionField}>
+                                    <Text style={[styles.predictionFieldLabel, { color: themeColors.mutedText }]}>
+                                        {i18n.t('matchDetail.confidence')}
+                                    </Text>
+                                    <View style={styles.confidenceRow}>
+                                        <View style={[styles.confTrack, { backgroundColor: themeColors.surfaceElevated }]}>
+                                            <View
+                                                style={[
+                                                    styles.confFill,
+                                                    { width: `${confidence ?? 0}%`, backgroundColor: themeColors.accent },
+                                                ]}
+                                            />
+                                        </View>
+                                        <Text style={[styles.confPct, { color: themeColors.text }]}>
+                                            {confidence !== undefined ? `${confidence}%` : '—'}
+                                        </Text>
+                                    </View>
+                                </View>
+
+                                <View style={styles.predictionInline}>
+                                    <Text style={[styles.predictionFieldLabel, { color: themeColors.mutedText }]}>
+                                        {i18n.t('matchDetail.risk')}
+                                    </Text>
+                                    <View
+                                        style={[
+                                            styles.riskBadge,
+                                            { backgroundColor: `${riskColor}22`, borderColor: `${riskColor}55` },
+                                        ]}
+                                    >
+                                        <Text style={[styles.riskText, { color: riskColor }]}>
+                                            {risk ? i18n.t(`risk.${risk}`) : '—'}
+                                        </Text>
+                                    </View>
+                                </View>
+
+                                <View style={styles.predictionField}>
+                                    <Text style={[styles.predictionFieldLabel, { color: themeColors.mutedText }]}>
+                                        {i18n.t('matchDetail.odds')}
+                                    </Text>
+                                    <Text style={[styles.predictionFieldValue, { color: themeColors.text }]}>{oddsLabel}</Text>
+                                </View>
+
+                                {reasoningLines.length > 0 ? (
+                                    <View style={styles.predictionField}>
+                                        <Text style={[styles.predictionFieldLabel, { color: themeColors.mutedText }]}>
+                                            {i18n.t('matchDetail.reasoning')}
+                                        </Text>
+                                        <View style={styles.reasoningList}>
+                                            {reasoningLines.map((line, idx) => (
+                                                <Text key={`${idx}-${line.slice(0, 12)}`} style={[styles.reasoningItem, { color: themeColors.text }]}>
+                                                    • {line}
+                                                </Text>
+                                            ))}
+                                        </View>
+                                    </View>
+                                ) : null}
+
+                                {sources.length > 0 ? (
+                                    <View style={styles.predictionField}>
+                                        <Text style={[styles.predictionFieldLabel, { color: themeColors.mutedText }]}>
+                                            {i18n.t('matchDetail.sources')}
+                                        </Text>
+                                        <View style={styles.reasoningList}>
+                                            {sources.map((source, idx) => (
+                                                <Text key={`${idx}-${source.slice(0, 12)}`} style={[styles.sourceItem, { color: themeColors.mutedText }]}>
+                                                    • {source}
+                                                </Text>
+                                            ))}
+                                        </View>
+                                    </View>
+                                ) : null}
+                            </View>
+                        ) : (
+                            <View style={styles.predictionEmpty}>
+                                <Sparkles size={20} color={themeColors.mutedText} />
+                                <Text style={[styles.predictionEmptyTitle, { color: themeColors.text }]}>
+                                    {i18n.t('matchDetail.noPredictionTitle')}
+                                </Text>
+                                <Text style={[styles.predictionEmptyBody, { color: themeColors.mutedText }]}>
+                                    {i18n.t('matchDetail.noPredictionBody')}
+                                </Text>
+                            </View>
+                        )}
                     </View>
                 </View>
 
@@ -1004,5 +1168,51 @@ function getStyles(themeColors: ThemeColors) {
     ocChip: { minWidth: 54, paddingHorizontal: 8, paddingVertical: 6, borderRadius: 10, alignItems: 'center', borderWidth: 1 },
     ocBookie: { fontSize: 8, fontWeight: '600', marginBottom: 2, maxWidth: 56 },
     ocValue: { fontSize: 14, fontWeight: '800' },
+
+    // Prediction
+    backCta: { minHeight: 44, paddingHorizontal: 20, justifyContent: 'center', marginTop: 12 },
+    predictionSection: { padding: 16, borderRadius: 18, borderWidth: 1 },
+    predictionBody: { gap: 14 },
+    predictionLocked: { gap: 12 },
+    predictionLockedHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    predictionLockedTitle: { fontSize: 16, fontWeight: '700' },
+    maskLine: { height: 14, borderRadius: 6, width: '100%' },
+    maskLineShort: { width: '65%' },
+    unlockBtn: {
+        minHeight: 44,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 16,
+        marginTop: 4,
+    },
+    unlockBtnText: { fontSize: 14, fontWeight: '700', textAlign: 'center' },
+    predictionPickRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    predictionPickLabel: { fontSize: 14, fontWeight: '600' },
+    predictionPickValue: { fontSize: 22, fontWeight: '800', lineHeight: 28 },
+    predictionField: { gap: 6 },
+    predictionFieldLabel: { fontSize: 14, fontWeight: '600' },
+    predictionFieldValue: { fontSize: 16, fontWeight: '600' },
+    confidenceRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    confTrack: { flex: 1, height: 8, borderRadius: 4, overflow: 'hidden' },
+    confFill: { height: 8, borderRadius: 4 },
+    confPct: { fontSize: 14, fontWeight: '700', minWidth: 44, textAlign: 'right' },
+    predictionInline: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    riskBadge: {
+        minHeight: 32,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 10,
+        borderWidth: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    riskText: { fontSize: 14, fontWeight: '700' },
+    reasoningList: { gap: 8 },
+    reasoningItem: { fontSize: 14, lineHeight: 22 },
+    sourceItem: { fontSize: 14, lineHeight: 22 },
+    predictionEmpty: { alignItems: 'center', gap: 8, paddingVertical: 12 },
+    predictionEmptyTitle: { fontSize: 16, fontWeight: '700', textAlign: 'center' },
+    predictionEmptyBody: { fontSize: 14, lineHeight: 20, textAlign: 'center' },
     });
 }

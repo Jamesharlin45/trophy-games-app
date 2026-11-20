@@ -9,6 +9,7 @@ import { typography } from '../../theme/typography';
 import { api } from '../../api/client';
 import type { ApiMatch } from '../../api/client';
 import { useScreenQuery } from '../../hooks/useLiveQuery';
+import { useMembershipAccess } from '../../hooks/useMembershipAccess';
 
 const toTitleCase = (str: string) =>
     str.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
@@ -29,6 +30,8 @@ export default function WinsScreen() {
     const [refreshing, setRefreshing] = useState(false);
     const [selectedLeague, setSelectedLeague] = useState('All');
     const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
+    const [expandedId, setExpandedId] = useState<string | null>(null);
+    const access = useMembershipAccess();
 
     const {
         data: historyData,
@@ -78,7 +81,10 @@ export default function WinsScreen() {
                 <DatePickerStrip
                     dates={dates}
                     selectedDate={selectedDate}
-                    onSelectDate={setSelectedDate}
+                    onSelectDate={(date) => {
+                        setSelectedDate(date);
+                        setExpandedId(null);
+                    }}
                     labelOverrides={{
                         [new Date().toISOString().split('T')[0]]: 'TODAY',
                     }}
@@ -91,10 +97,13 @@ export default function WinsScreen() {
                     {uniqueLeagues.map(league => (
                         <TouchableOpacity
                             key={league}
-                            onPress={() => setSelectedLeague(league)}
+                            onPress={() => {
+                                setSelectedLeague(league);
+                                setExpandedId(null);
+                            }}
                             style={[
                                 styles.leagueChip,
-                                { backgroundColor: selectedLeague === league ? themeColors.accent : themeColors.surfaceElevated }
+                                { backgroundColor: selectedLeague === league ? themeColors.accent : themeColors.surfaceElevated },
                             ]}
                         >
                             <Text style={[
@@ -154,20 +163,10 @@ export default function WinsScreen() {
                         {filteredMatches.map((match) => (
                             <MatchCard
                                 key={match._id || match.id}
-                                matchId={match.id}
-                                matchData={match}
-                                leagueName={match.league}
-                                leagueLogo={match.leagueLogo}
-                                time="FT"
-                                homeTeam={match.homeTeam}
-                                homeTeamLogo={match.homeTeamLogo}
-                                awayTeam={match.awayTeam}
-                                awayTeamLogo={match.awayTeamLogo}
-                                prediction={match.result ? match.result.toUpperCase() : (match.aiPrediction?.prediction || 'FT')}
-                                odds={match.odds?.home || '—'}
-                                homeScore={match.homeScore}
-                                awayScore={match.awayScore}
-                                aiInsight={match.aiPrediction}
+                                match={match}
+                                expanded={expandedId === match.id}
+                                onToggle={() => setExpandedId((prev) => (prev === match.id ? null : match.id))}
+                                access={{ paid: access.paid, vip: access.vip }}
                             />
                         ))}
                     </View>

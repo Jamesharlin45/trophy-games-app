@@ -12,7 +12,6 @@ import { useScreenQuery } from '../../hooks/useLiveQuery';
 import { useRouter } from 'expo-router';
 import * as Application from 'expo-application';
 
-
 type MemberStatus = 'none' | 'pending' | 'approved' | 'rejected' | 'active' | 'loading';
 
 const toTitleCase = (str: string) =>
@@ -24,6 +23,7 @@ export default function PaidTipsScreen() {
     const router = useRouter();
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
     const [selectedLeague, setSelectedLeague] = useState('All');
+    const [expandedId, setExpandedId] = useState<string | null>(null);
     const [tokenInput, setTokenInput] = useState('');
     const [enteringToken, setEnteringToken] = useState(false);
     const [verifyingToken, setVerifyingToken] = useState(false);
@@ -75,12 +75,12 @@ export default function PaidTipsScreen() {
     }, []);
 
     const uniqueLeagues = useMemo(() => {
-        const leagues = Array.from(new Set(matches.map(m => m.league))).sort();
+        const leagues = Array.from(new Set(matches.map((m) => m.league))).sort();
         return ['All', ...leagues];
     }, [matches]);
 
     const filteredMatches = useMemo(() => {
-        return matches.filter(match => {
+        return matches.filter((match) => {
             const leagueMatch = selectedLeague === 'All' || match.league === selectedLeague;
             return leagueMatch;
         });
@@ -258,17 +258,26 @@ export default function PaidTipsScreen() {
                 <DatePickerStrip
                     dates={dates}
                     selectedDate={selectedDate}
-                    onSelectDate={setSelectedDate}
+                    onSelectDate={(date) => {
+                        setSelectedDate(date);
+                        setExpandedId(null);
+                    }}
                 />
             </View>
 
             <View style={styles.filterSection}>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.leaguesScroll}>
-                    {uniqueLeagues.map(league => (
+                    {uniqueLeagues.map((league) => (
                         <TouchableOpacity
                             key={league}
-                            onPress={() => setSelectedLeague(league)}
-                            style={[styles.leagueChip, { backgroundColor: selectedLeague === league ? themeColors.accent : themeColors.surfaceElevated }]}
+                            onPress={() => {
+                                setSelectedLeague(league);
+                                setExpandedId(null);
+                            }}
+                            style={[
+                                styles.leagueChip,
+                                { backgroundColor: selectedLeague === league ? themeColors.accent : themeColors.surfaceElevated },
+                            ]}
                         >
                             <Text style={[styles.leagueChipText, { color: selectedLeague === league ? 'white' : themeColors.mutedText }]}>
                                 {league === 'All' ? 'All' : toTitleCase(league)}
@@ -303,19 +312,10 @@ export default function PaidTipsScreen() {
                         {filteredMatches.map((match) => (
                             <MatchCard
                                 key={match.id}
-                                matchId={match.id}
-                                matchData={match}
-                                leagueName={match.league}
-                                leagueLogo={match.leagueLogo}
-                                time={new Date(match.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                homeTeam={match.homeTeam}
-                                homeTeamLogo={match.homeTeamLogo}
-                                awayTeam={match.awayTeam}
-                                awayTeamLogo={match.awayTeamLogo}
-                                isLocked={false}
-                                aiInsight={match.aiPrediction}
-                                prediction={match.aiPrediction?.prediction}
-                                odds={match.odds?.home}
+                                match={match}
+                                expanded={expandedId === match.id}
+                                onToggle={() => setExpandedId((prev) => (prev === match.id ? null : match.id))}
+                                access={{ paid: memberStatus === 'active', vip: false }}
                             />
                         ))}
                     </View>

@@ -9,9 +9,7 @@ import { typography } from '../../theme/typography';
 import i18n from '../../locales';
 import { api } from '../../api/client';
 import { useScreenQuery } from '../../hooks/useLiveQuery';
-// Matches are read from the web API — the background cron sync fetches
-// FootyStats data every 5 minutes and upserts it there.
-
+import { useMembershipAccess } from '../../hooks/useMembershipAccess';
 
 const toTitleCase = (str: string) =>
     str.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
@@ -19,6 +17,8 @@ const toTitleCase = (str: string) =>
 export default function FreeTipsScreen() {
     const [selectedLeague, setSelectedLeague] = useState('All');
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+    const [expandedId, setExpandedId] = useState<string | null>(null);
+    const access = useMembershipAccess();
     const {
         data: matchesData,
         loading,
@@ -44,10 +44,11 @@ export default function FreeTipsScreen() {
             .map(([name]) => ({ name, id: name }));
     }, [matches]);
 
-    const filteredMatches = matches.filter(m => {
+    const filteredMatches = matches.filter((m) => {
         const leagueMatch = selectedLeague === 'All' || m.league === selectedLeague;
-        const searchMatch = !searchQuery || 
-            m.homeTeam.toLowerCase().includes(searchQuery.toLowerCase()) || 
+        const searchMatch =
+            !searchQuery ||
+            m.homeTeam.toLowerCase().includes(searchQuery.toLowerCase()) ||
             m.awayTeam.toLowerCase().includes(searchQuery.toLowerCase()) ||
             m.league.toLowerCase().includes(searchQuery.toLowerCase());
         return leagueMatch && searchMatch;
@@ -88,9 +89,12 @@ export default function FreeTipsScreen() {
                                     borderColor: themeColors.accent,
                                     shadowColor: themeColors.accent,
                                     ...styles.leagueChipActiveShadow,
-                                }
+                                },
                             ]}
-                            onPress={() => setSelectedLeague('All')}
+                            onPress={() => {
+                                setSelectedLeague('All');
+                                setExpandedId(null);
+                            }}
                         >
                             <Text style={[styles.leagueChipText, selectedLeague === 'All' ? { color: themeColors.accentText } : { color: themeColors.mutedText }]}>
                                 All
@@ -108,9 +112,12 @@ export default function FreeTipsScreen() {
                                         borderColor: themeColors.accent,
                                         shadowColor: themeColors.accent,
                                         ...styles.leagueChipActiveShadow,
-                                    }
+                                    },
                                 ]}
-                                onPress={() => setSelectedLeague(league.name)}
+                                onPress={() => {
+                                    setSelectedLeague(league.name);
+                                    setExpandedId(null);
+                                }}
                             >
                                 <Text style={[styles.leagueChipText, selectedLeague === league.name ? { color: themeColors.accentText } : { color: themeColors.mutedText }]}>
                                     {toTitleCase(league.name)}
@@ -137,7 +144,10 @@ export default function FreeTipsScreen() {
                     <DatePickerStrip
                         dates={dates}
                         selectedDate={selectedDate}
-                        onSelectDate={setSelectedDate}
+                        onSelectDate={(date) => {
+                            setSelectedDate(date);
+                            setExpandedId(null);
+                        }}
                     />
                 </View>
             </View>
@@ -167,30 +177,21 @@ export default function FreeTipsScreen() {
                         {filteredMatches.map((match) => (
                             <MatchCard
                                 key={match.id}
-                                matchId={match.id}
-                                matchData={match}
-                                leagueName={match.league}
-                                leagueLogo={match.leagueLogo}
-                                countryFlag={match.countryFlag}
-                                time={new Date(match.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                homeTeam={match.homeTeam}
-                                homeTeamLogo={match.homeTeamLogo}
-                                awayTeam={match.awayTeam}
-                                awayTeamLogo={match.awayTeamLogo}
-                                prediction={match.aiPrediction?.prediction || "TIPS"}
-                                odds={match.odds?.home || "1.85"}
-                                homeScore={match.homeScore}
-                                awayScore={match.awayScore}
-                                aiInsight={match.aiPrediction}
+                                match={match}
+                                expanded={expandedId === match.id}
+                                onToggle={() => setExpandedId((prev) => (prev === match.id ? null : match.id))}
+                                access={{ paid: access.paid, vip: access.vip }}
                             />
                         ))}
                     </View>
                 ) : (
                     <View style={styles.emptyContainer}>
-                        <View style={[
-                            styles.emptyIconWrapper,
-                            { backgroundColor: themeColors.surfaceElevated, borderColor: themeColors.border }
-                        ]}>
+                        <View
+                            style={[
+                                styles.emptyIconWrapper,
+                                { backgroundColor: themeColors.surfaceElevated, borderColor: themeColors.border },
+                            ]}
+                        >
                             <Zap size={36} color={themeColors.accent} />
                         </View>
                         <View style={styles.emptyTextGroup}>
