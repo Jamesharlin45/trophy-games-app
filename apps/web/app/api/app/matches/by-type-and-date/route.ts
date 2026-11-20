@@ -40,7 +40,9 @@ export async function GET(request: Request) {
     if (!db) return NextResponse.json([]);
 
     try {
-        return NextResponse.json(await getByTypeAndDate(db, matchType, date, limit));
+        return NextResponse.json(await getByTypeAndDate(db, matchType, date, limit, {
+            excludeUnpublishedPicks: matchType === 'unassigned',
+        }));
     } catch (error) {
         console.error('[API App Matches ByTypeAndDate] Error:', error);
         return NextResponse.json({ error: 'Failed to load matches' }, { status: 500 });

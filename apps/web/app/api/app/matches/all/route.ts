@@ -21,7 +21,7 @@ export async function GET(request: Request) {
     }
 
     try {
-        return NextResponse.json(await getAll(db, limit));
+        return NextResponse.json(await getAll(db, limit, { excludeUnpublishedPicks: true }));
     } catch (error) {
         console.error('[API App Matches All] Error:', error);
         return NextResponse.json({ error: 'Failed to load matches' }, { status: 500 });

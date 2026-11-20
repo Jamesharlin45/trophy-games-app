@@ -23,6 +23,18 @@ export interface ApiFootballFixture {
     status: string;
 }
 
+/** Fixture reduced to what result settlement needs: status, the 90-minute
+ * score (`score.fulltime`, used for grading) and the final score (`goals`,
+ * which includes extra time but not penalties, used for display). */
+export interface ApiFootballFixtureResult {
+    id: number;
+    status: string;
+    homeScore: number | null;
+    awayScore: number | null;
+    finalHomeScore: number | null;
+    finalAwayScore: number | null;
+}
+
 export type ApiFootballErrorCode = 'MISSING_KEY' | 'PLAN_LIMIT' | 'API_FAILURE';
 
 export class ApiFootballError extends Error {
@@ -48,8 +60,24 @@ interface RawFixture {
     };
 }
 
+interface RawFixtureResult {
+    fixture: {
+        id: number;
+        status: { short?: string };
+    };
+    goals?: { home?: number | null; away?: number | null };
+    score?: {
+        fulltime?: { home?: number | null; away?: number | null };
+    };
+}
+
 interface RawApiResponse {
     response?: RawFixture[];
+    errors?: unknown;
+}
+
+interface RawResultApiResponse {
+    response?: RawFixtureResult[];
     errors?: unknown;
 }
 
@@ -162,4 +190,72 @@ export async function fetchFixtures(date: string): Promise<ApiFootballFixture[]>
 
     inflight.set(date, promise);
     return promise;
+}
+
+function toFixtureResult(f: RawFixtureResult): ApiFootballFixtureResult {
+    const home = f.score?.fulltime?.home;
+    const away = f.score?.fulltime?.away;
+    const finalHome = f.goals?.home;
+    const finalAway = f.goals?.away;
+    return {
+        id: f.fixture?.id ?? 0,
+        status: f.fixture?.status?.short ?? '',
+        homeScore: typeof home === 'number' ? home : null,
+        awayScore: typeof away === 'number' ? away : null,
+        finalHomeScore: typeof finalHome === 'number' ? finalHome : (typeof home === 'number' ? home : null),
+        finalAwayScore: typeof finalAway === 'number' ? finalAway : (typeof away === 'number' ? away : null),
+    };
+}
+
+function chunk<T>(items: T[], size: number): T[][] {
+    const out: T[][] = [];
+    for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+    return out;
+}
+
+/**
+ * Fetch fixtures by id (`/fixtures?ids=id1-id2-...`). The API accepts at most
+ * 20 ids per request, so larger lists are split into sequential batches.
+ * Returns status + 90-minute score for each fixture the API knows about.
+ */
+export async function fetchFixtureResults(ids: number[]): Promise<ApiFootballFixtureResult[]> {
+    const key = process.env.API_FOOTBALL_KEY;
+    if (!key) throw new ApiFootballError('API_FOOTBALL_KEY is not configured', 'MISSING_KEY');
+
+    const unique = [...new Set(ids)].filter((id) => Number.isInteger(id) && id > 0);
+    const results: ApiFootballFixtureResult[] = [];
+
+    for (const batch of chunk(unique, 20)) {
+        let res: Response;
+        try {
+            res = await fetch(`${BASE_URL}/fixtures?ids=${batch.join('-')}`, {
+                headers: { 'x-apisports-key': key },
+            });
+        } catch (error) {
+            const reason = error instanceof Error ? error.message : 'network error';
+            throw new ApiFootballError(`Failed to reach API-Football: ${reason}`, 'API_FAILURE');
+        }
+        if (!res.ok) {
+            throw new ApiFootballError(`API-Football returned HTTP ${res.status} for fixtures by id`, 'API_FAILURE');
+        }
+
+        let body: RawResultApiResponse;
+        try {
+            body = await res.json();
+        } catch {
+            throw new ApiFootballError('API-Football returned an unparseable response', 'API_FAILURE');
+        }
+
+        const messages = extractErrors(body.errors);
+        if (messages.length > 0) {
+            const code: ApiFootballErrorCode = messages.some((m) => m.toLowerCase().includes('plan'))
+                ? 'PLAN_LIMIT'
+                : 'API_FAILURE';
+            throw new ApiFootballError(messages.join('; '), code);
+        }
+
+        if (Array.isArray(body.response)) results.push(...body.response.map(toFixtureResult));
+    }
+
+    return results;
 }
