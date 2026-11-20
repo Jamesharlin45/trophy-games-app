@@ -144,8 +144,8 @@ export default function AddMatchPage() {
             if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
 
             setSuccess(true);
-        } catch (err: any) {
-            setError(err.message || 'Failed to create match');
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to create match');
         } finally {
             setSubmitting(false);
         }

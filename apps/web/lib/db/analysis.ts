@@ -2,8 +2,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { fetchFixtures, type ApiFootballFixture } from '../api-football';
 import { fetchFixturePrediction, type ApiFixturePrediction } from '../api-football-predictions';
 import { createAlert } from './alerts';
-import { getById } from './matches';
-import type { DbMatch, MatchTier } from './types';
+import { getById, utcMatchDate } from './matches';
+import type { AiPrediction, DbMatch, MatchTier } from './types';
 
 // --- DeepSeek config (ports packages/backend/convex/analysis.ts) ---
 
@@ -131,6 +131,24 @@ Return ONLY valid JSON:
 export type AnalysisType = 'daily' | 'weekly';
 export type AnalysisStatus = 'pending' | 'verified' | 'approved' | 'rejected';
 
+/** Per-match proposal produced by a Run Analysis (web search analyst +
+ * verifier). Stored in analysis_results.proposals while the run is in
+ * progress; matches.ai_prediction is written only by the Approve step. */
+export interface StoredProposal {
+    matchId: string;
+    pick: string;
+    confidence: number;
+    risk: 'low' | 'medium' | 'high';
+    suggestedBet: string;
+    reasoning: string[];
+    sources: string[];
+    homeTeam: string;
+    awayTeam: string;
+    league: string;
+    timestamp: string;
+    oddsScore: number;
+}
+
 export interface Recommendation {
     matchId: string;
     homeTeam?: string;
@@ -143,6 +161,9 @@ export interface Recommendation {
     suggestedBet?: string;
     keyStats?: string[];
     riskLevel?: 'low' | 'medium' | 'high';
+    risk?: 'low' | 'medium' | 'high';
+    sources?: string[];
+    pick?: string;
 }
 
 export interface RemovedMatch {
@@ -158,6 +179,8 @@ export interface AnalysisResult {
     freeRecommendations: Recommendation[];
     paidRecommendations: Recommendation[];
     vipRecommendations: Recommendation[];
+    /** Per-match proposals captured while the run was in progress. */
+    proposals: StoredProposal[];
     verificationNotes?: string[];
     removedMatches?: RemovedMatch[];
     confidenceAdjustment?: number;
@@ -170,7 +193,7 @@ export interface AnalysisResult {
     updatedAt?: string;
 }
 
-interface AnalysisResultRow {
+export interface AnalysisResultRow {
     id: string;
     date: string;
     analysis_type: AnalysisType;
@@ -178,6 +201,7 @@ interface AnalysisResultRow {
     free_recommendations: Recommendation[];
     paid_recommendations: Recommendation[];
     vip_recommendations: Recommendation[];
+    proposals: StoredProposal[] | null;
     verification_notes: string[] | null;
     removed_matches: RemovedMatch[] | null;
     confidence_adjustment: number | null;
@@ -190,7 +214,7 @@ interface AnalysisResultRow {
     updated_at: string | null;
 }
 
-function mapAnalysisResult(row: AnalysisResultRow): AnalysisResult {
+export function mapAnalysisResult(row: AnalysisResultRow): AnalysisResult {
     return {
         _id: row.id,
         date: row.date,
@@ -199,6 +223,7 @@ function mapAnalysisResult(row: AnalysisResultRow): AnalysisResult {
         freeRecommendations: row.free_recommendations ?? [],
         paidRecommendations: row.paid_recommendations ?? [],
         vipRecommendations: row.vip_recommendations ?? [],
+        proposals: row.proposals ?? [],
         verificationNotes: row.verification_notes ?? undefined,
         removedMatches: row.removed_matches ?? undefined,
         confidenceAdjustment: row.confidence_adjustment ?? undefined,
@@ -264,22 +289,34 @@ export async function approveAnalysis(
         for (const rec of recommendations) {
             if (selectedSet && !selectedSet.has(rec.matchId)) continue;
             const existing = await getById(db, rec.matchId);
-            if (existing) {
-                const aiPrediction = {
-                    prediction: `${rec.homeTeam} vs ${rec.awayTeam} — ${rec.suggestedBet}`,
-                    confidence: rec.confidence,
-                    reasoning: rec.reasoning || [],
-                    suggestedBet: rec.suggestedBet,
-                    generatedAt: now,
-                };
-                await db
-                    .from('matches')
-                    .update({ tier: type, ai_prediction: aiPrediction })
-                    .eq('id', existing._id);
-                applied++;
-            } else {
+            if (!existing) {
                 console.warn(`[ApproveAnalysis] Match ${rec.matchId} not found`);
+                continue;
             }
+            // The Approve step is the only writer of ai_prediction and tier on
+            // matches: never touch a match that is not untagged or that
+            // already has a result.
+            if (existing.matchType === 'free' || existing.matchType === 'vip' || existing.matchType === 'paid') continue;
+            if (existing.result) continue;
+            // Merge into the existing aiPrediction so partial updates never
+            // erase existing fields (risk, sources, pick, ...).
+            const previous = existing.aiPrediction ?? {};
+            const aiPrediction: AiPrediction = {
+                ...previous,
+                prediction: `${rec.homeTeam} vs ${rec.awayTeam} — ${rec.suggestedBet}`,
+                confidence: rec.confidence,
+                reasoning: rec.reasoning || [],
+                suggestedBet: rec.suggestedBet,
+                generatedAt: now,
+                ...(rec.risk ? { risk: rec.risk } : {}),
+                ...(rec.sources && rec.sources.length > 0 ? { sources: rec.sources.slice(0, 3) } : {}),
+                ...(rec.pick ? { pick: rec.pick } : {}),
+            };
+            await db
+                .from('matches')
+                .update({ tier: type, ai_prediction: aiPrediction })
+                .eq('id', existing._id);
+            applied++;
         }
     };
 
@@ -712,7 +749,7 @@ async function insertPicks(
             kickoff: fixture.date,
             status: fixture.status,
             score: '0-0',
-            match_date: fixture.date.split('T')[0],
+            match_date: utcMatchDate(fixture.date),
             tier,
             trending: null,
             odds: null,

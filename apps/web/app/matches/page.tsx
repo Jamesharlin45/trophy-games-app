@@ -133,8 +133,8 @@ export default function MatchesPage() {
                 throw new Error(data.error || 'Failed to delete');
             }
             setMatches(prev => prev.filter(m => m.id !== matchId));
-        } catch (err: any) {
-            setErrorMsg(err.message || 'Failed to delete match');
+        } catch (err) {
+            setErrorMsg(err instanceof Error ? err.message : 'Failed to delete match');
         } finally {
             setDeletingId(null);
         }
@@ -157,9 +157,9 @@ export default function MatchesPage() {
             setMatches(prev => prev.map(m =>
                 m.id === matchId ? { ...m, matchType } : m
             ));
-        } catch (e: any) {
+        } catch (e) {
             console.error('Update failed', e);
-            setErrorMsg(e.message || 'Failed to update match type');
+            setErrorMsg(e instanceof Error ? e.message : 'Failed to update match type');
             setTimeout(() => setErrorMsg(null), 4000);
         }
         setUpdatingId(null);

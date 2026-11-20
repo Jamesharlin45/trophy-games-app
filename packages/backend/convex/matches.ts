@@ -33,9 +33,20 @@ const proxyMatchInput = v.object({
     })),
 });
 
+/** Derive the matchDate range-filter value (YYYY-MM-DD, UTC) from a kickoff
+ * timestamp — the same format the Daily/Weekly range filter reads. Offset-less
+ * kickoffs are treated as UTC. */
+function utcMatchDate(timestamp: string): string {
+    const t = timestamp.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+    const parsed = /[Zz]$|[+-]\d{2}:?\d{2}$/.test(t) ? new Date(t) : new Date(`${t}Z`);
+    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+    return t.split('T')[0];
+}
+
 // Insert a proxy match into the matches table, returning the new doc.
 async function insertProxyMatch(ctx: any, match: any) {
-    const matchDate = match.timestamp ? match.timestamp.split('T')[0] : new Date().toISOString().split('T')[0];
+    const matchDate = match.timestamp ? utcMatchDate(match.timestamp) : new Date().toISOString().slice(0, 10);
     const now = new Date().toISOString();
     const _id = await ctx.db.insert("matches", {
         ...match,
@@ -233,7 +244,7 @@ export const create = mutation({
         }),
     },
     handler: async (ctx, args) => {
-        const matchDate = args.match.timestamp ? args.match.timestamp.split('T')[0] : new Date().toISOString().split('T')[0];
+        const matchDate = args.match.timestamp ? utcMatchDate(args.match.timestamp) : new Date().toISOString().slice(0, 10);
         const now = new Date().toISOString();
 
         const newMatch = {
@@ -661,7 +672,7 @@ export const saveAll = mutation({
 
         for (const match of args.matches) {
             // Derive matchDate from timestamp if not set
-            const matchDate = match.matchDate || (match.timestamp ? match.timestamp.split('T')[0] : now.split('T')[0]);
+            const matchDate = match.matchDate || (match.timestamp ? utcMatchDate(match.timestamp) : now.slice(0, 10));
             const matchWithDate = {
                 ...match,
                 matchDate,
@@ -722,7 +733,7 @@ export const bulkUpsert = mutation({
         let updated = 0;
 
         for (const m of args.matches) {
-            const matchDate = m.timestamp ? m.timestamp.split('T')[0] : new Date().toISOString().split('T')[0];
+            const matchDate = m.timestamp ? utcMatchDate(m.timestamp) : new Date().toISOString().slice(0, 10);
             const score = m.score || (m.homeScore != null && m.awayScore != null ? `${m.homeScore}-${m.awayScore}` : '0-0');
             // Per-id index lookup (not a whole-table scan). `.first()` tolerates
             // any legacy duplicates; OCC ensures concurrent syncs don't double-insert.

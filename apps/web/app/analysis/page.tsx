@@ -32,7 +32,18 @@ interface MatchRecommendation {
   reasoning: string[];
   suggestedBet: string;
   keyStats: string[];
-  riskLevel: 'low' | 'medium' | 'high';
+  riskLevel?: 'low' | 'medium' | 'high';
+  risk?: 'low' | 'medium' | 'high';
+  sources?: string[];
+  pick?: string;
+}
+
+type Tier = 'free' | 'vip' | 'paid';
+
+interface TierSplit {
+  free: string[];
+  vip: string[];
+  paid: string[];
 }
 
 interface AnalysisResult {
@@ -52,15 +63,17 @@ interface AnalysisResult {
   model: string;
 }
 
-interface RunReport {
-  fixturesFound: number;
-  shortlisted: number;
-  predictionsOk: number;
-  predictionsFailed: number;
+interface RunProgress {
+  total: number;
   analysed: number;
-  published: { vip: number; paid: number; free: number; unassigned: number };
+}
+
+interface RunReport {
+  state: 'running' | 'complete';
+  total: number;
+  analysed: number;
   errors: string[];
-  autoPublished: boolean;
+  complete?: { ranked: TierSplit; analysed: number };
 }
 
 interface ProposedPick {
@@ -74,9 +87,56 @@ interface ProposedPick {
   suggestedBet: string;
 }
 
-interface RunAnalysisResponse extends RunReport {
-  proposedPicks?: ProposedPick[];
+interface RunAnalysisResponse {
+  state: 'running' | 'complete';
+  total: number;
+  analysed: number;
+  errors: string[];
+  complete?: { ranked: TierSplit; analysed: number };
   error?: string;
+}
+
+class RunApiError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+  }
+}
+
+/** Clear user-facing messages for DeepSeek API errors (401 invalid key,
+ * 402 insufficient balance, timeouts). Never includes the API key. */
+function describeApiError(error: RunApiError): string {
+  switch (error.status) {
+    case 401:
+      return 'DeepSeek API key is invalid (401). Check DEEPSEEK_API_KEY.';
+    case 402:
+      return 'DeepSeek account balance is insufficient (402). Top up your DeepSeek account and try again.';
+    case 408:
+    case 504:
+      return 'DeepSeek request timed out. Please try again.';
+    case 429:
+      return 'DeepSeek rate limit reached (429). Please wait a moment and try again.';
+    default:
+      return error.message || `Analysis failed (HTTP ${error.status}).`;
+  }
+}
+
+function httpSources(urls?: string[]): string[] {
+  return (urls ?? []).filter((u) => {
+    try {
+      const parsed = new URL(u);
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  });
+}
+
+function sourceHost(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
 }
 
 interface SettleReport {
@@ -111,7 +171,8 @@ interface RecommendationCardProps {
 function RecommendationCard({ rec, isSelected, onToggle }: RecommendationCardProps) {
   const [expanded, setExpanded] = useState(false);
   const config = typeConfig[rec.recommendedType];
-  const RiskIcon = rec.riskLevel === 'low' ? Shield : rec.riskLevel === 'medium' ? AlertTriangle : Zap;
+  const riskLevel = rec.risk ?? rec.riskLevel ?? 'medium';
+  const RiskIcon = riskLevel === 'low' ? Shield : riskLevel === 'medium' ? AlertTriangle : Zap;
 
   return (
     <div className={cn(
@@ -155,17 +216,17 @@ function RecommendationCard({ rec, isSelected, onToggle }: RecommendationCardPro
           </div>
           <span className={cn(
             "px-2 py-0.5 rounded text-[10px] font-medium border",
-            riskConfig[rec.riskLevel].color
+            riskConfig[riskLevel].color
           )}>
             <RiskIcon size={10} className="inline mr-1" />
-            {rec.riskLevel}
+            {riskLevel}
           </span>
         </div>
       </div>
 
-      <div className="mt-3 flex items-center gap-2">
+      <div className="mt-3 flex items-center gap-2 flex-wrap">
         <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-800 px-2 py-1 rounded">
-          {rec.suggestedBet}
+          {rec.pick ?? rec.suggestedBet}
         </span>
         <button
           onClick={() => setExpanded(!expanded)}
@@ -189,16 +250,36 @@ function RecommendationCard({ rec, isSelected, onToggle }: RecommendationCardPro
               ))}
             </ul>
           </div>
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 mb-1">Key Stats</p>
-            <div className="flex flex-wrap gap-1.5">
-              {rec.keyStats.map((s, i) => (
-                <span key={i} className="text-[10px] bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 px-2 py-0.5 rounded">
-                  {s}
-                </span>
-              ))}
+          {(rec.keyStats ?? []).length > 0 && (
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 mb-1">Key Stats</p>
+              <div className="flex flex-wrap gap-1.5">
+                {(rec.keyStats ?? []).map((s, i) => (
+                  <span key={i} className="text-[10px] bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 px-2 py-0.5 rounded">
+                    {s}
+                  </span>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
+          {httpSources(rec.sources).length > 0 && (
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 mb-1">Sources</p>
+              <div className="flex flex-wrap gap-1.5">
+                {httpSources(rec.sources).map((url, i) => (
+                  <a
+                    key={i}
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[10px] text-indigo-500 hover:underline"
+                  >
+                    {sourceHost(url)}
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -231,6 +312,9 @@ export default function AnalysisPage() {
   const [activeTab, setActiveTab] = useState<'free' | 'paid' | 'vip'>('free');
   const [selectedMatches, setSelectedMatches] = useState<Set<string>>(new Set());
   const [runReport, setRunReport] = useState<RunReport | null>(null);
+  const [runProgress, setRunProgress] = useState<RunProgress | null>(null);
+  const [runErrors, setRunErrors] = useState<string[]>([]);
+  const [rerun, setRerun] = useState(false);
   const [proposedPicks, setProposedPicks] = useState<ProposedPick[]>([]);
   const [publishing, setPublishing] = useState(false);
   const [settling, setSettling] = useState(false);
@@ -280,36 +364,52 @@ export default function AnalysisPage() {
     setSuccess(null);
     setResult(null);
     setRunReport(null);
+    setRunProgress(null);
+    setRunErrors([]);
     setProposedPicks([]);
 
+    const progress: RunProgress = { total: 0, analysed: 0 };
+
     try {
-      const res = await fetch('/api/analysis/run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date: selectedDate, analysisType }),
-      });
+      // The endpoint processes at most CHUNK_SIZE matches per request; call
+      // it repeatedly and show progress ("Analysing X/Y") until complete.
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        const res = await fetch('/api/analysis/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ date: selectedDate, analysisType, rerun }),
+        });
 
-      const data = await res.json() as RunAnalysisResponse;
-      if (!res.ok) throw new Error(data.error || 'Analysis failed');
+        const data = (await res.json()) as RunAnalysisResponse;
+        if (!res.ok) throw new RunApiError(res.status, data.error || 'Analysis failed');
 
-      const report: RunReport = {
-        fixturesFound: data.fixturesFound ?? 0,
-        shortlisted: data.shortlisted ?? 0,
-        predictionsOk: data.predictionsOk ?? 0,
-        predictionsFailed: data.predictionsFailed ?? 0,
-        analysed: data.analysed ?? 0,
-        published: data.published ?? { vip: 0, paid: 0, free: 0, unassigned: 0 },
-        errors: data.errors ?? [],
-        autoPublished: data.autoPublished ?? false,
-      };
-      setRunReport(report);
-      setProposedPicks(Array.isArray(data.proposedPicks) ? data.proposedPicks : []);
+        progress.total = Math.max(progress.total, data.total ?? 0);
+        progress.analysed = data.analysed ?? progress.analysed;
+        setRunProgress(progress);
+        setRunErrors(data.errors ?? []);
 
-      setSuccess(`Fixtures found: ${report.fixturesFound} · Analysed: ${report.analysed} · Published — VIP: ${report.published.vip}, Paid: ${report.published.paid}, Free: ${report.published.free}`);
+        if (data.state === 'complete') {
+          setRunReport({
+            state: 'complete',
+            total: progress.total,
+            analysed: progress.analysed,
+            errors: data.errors ?? [],
+            complete: data.complete,
+          });
+          break;
+        }
+
+        await new Promise((r) => setTimeout(r, 1200));
+      }
+
+      const split = result
+        ? `Free: ${result.freeRecommendations.length}, VIP: ${result.vipRecommendations.length}, Paid: ${result.paidRecommendations.length}`
+        : `analysed ${progress.analysed} matches`;
+      setSuccess(`Done — ${split}. Review the proposed split below and approve manually (nothing is published automatically).`);
       await fetchResultForDate();
       await fetchHistory();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to run analysis');
+      setError(e instanceof RunApiError ? describeApiError(e) : e instanceof Error ? e.message : 'Failed to run analysis');
     } finally {
       setLoading(false);
     }
@@ -391,8 +491,8 @@ export default function AnalysisPage() {
       setSuccess(`Approved! ${data.applied} matches tagged.`);
       setSelectedMatches(new Set());
       await fetchResultForDate();
-    } catch (e: any) {
-      setError(e.message || 'Failed to approve');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to approve');
     } finally {
       setApproving(false);
     }
@@ -419,8 +519,8 @@ export default function AnalysisPage() {
       setSuccess(`Approved! ${data.applied} selected matches tagged.`);
       setSelectedMatches(new Set());
       await fetchResultForDate();
-    } catch (e: any) {
-      setError(e.message || 'Failed to approve');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to approve');
     } finally {
       setApproving(false);
     }
@@ -532,6 +632,16 @@ export default function AnalysisPage() {
             )}
           </button>
 
+          <label className="flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={rerun}
+              onChange={(e) => setRerun(e.target.checked)}
+              className="w-4 h-4 accent-indigo-600"
+            />
+            Re-run (include already-analysed matches)
+          </label>
+
           <button
             onClick={settleResults}
             disabled={settling}
@@ -566,18 +676,29 @@ export default function AnalysisPage() {
         )}
       </div>
 
+      {/* Run Progress */}
+      {runProgress && runProgress.total > 0 && (loading || runReport) && (
+        <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-3 flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400">
+          <Loader2 className="animate-spin" size={16} />
+          {loading ? `Analysing ${runProgress.analysed}/${runProgress.total}` : `Analysed ${runProgress.analysed}/${runProgress.total}`}
+          {runReport?.state === 'complete' ? ' — complete' : ''}
+        </div>
+      )}
+
       {/* Run Report */}
       {runReport && (
         <div className="bg-white dark:bg-zinc-900/50 rounded-2xl border border-zinc-200 dark:border-zinc-800 p-6 space-y-4">
           <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-50">Run Report</h3>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            <RunStat label="Fixtures found" value={runReport.fixturesFound} />
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <RunStat label="Total candidates" value={runReport.total} />
             <RunStat label="Analysed" value={runReport.analysed} />
-            <RunStat label="Predictions ok" value={runReport.predictionsOk} />
-            <RunStat label="Predictions failed" value={runReport.predictionsFailed} />
-            <RunStat label="Published VIP" value={runReport.published.vip} />
-            <RunStat label="Published Paid" value={runReport.published.paid} />
-            <RunStat label="Published Free" value={runReport.published.free} />
+            {runReport.complete && (
+              <>
+                <RunStat label="Free" value={runReport.complete.ranked.free.length} />
+                <RunStat label="VIP" value={runReport.complete.ranked.vip.length} />
+                <RunStat label="Paid" value={runReport.complete.ranked.paid.length} />
+              </>
+            )}
           </div>
           {runReport.errors.length > 0 && (
             <ul className="space-y-1">
@@ -591,6 +712,74 @@ export default function AnalysisPage() {
           )}
         </div>
       )}
+
+      {/* Proposed Split (Free / VIP / Paid) */}
+      {result &&
+        result.status === 'verified' &&
+        (result.freeRecommendations.length + result.vipRecommendations.length + result.paidRecommendations.length) > 0 && (
+          <div className="space-y-4">
+            <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-50">Proposed Split</h3>
+            {(['free', 'vip', 'paid'] as const).map((tier) => {
+              const recs = result[`${tier}Recommendations`];
+              if (recs.length === 0) return null;
+              const cfg = typeConfig[tier];
+              return (
+                <div key={tier} className="bg-white dark:bg-zinc-900/50 rounded-2xl border border-zinc-200 dark:border-zinc-800 p-5 space-y-3">
+                  <h4 className="flex items-center gap-2 text-base font-bold text-zinc-900 dark:text-zinc-50">
+                    <cfg.icon size={18} className={cfg.textColor} />
+                    {cfg.label} ({recs.length})
+                  </h4>
+                  <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                    {recs.map((rec) => (
+                      <div
+                        key={rec.matchId}
+                        className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-3 bg-white dark:bg-zinc-900/50"
+                      >
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <span className="text-xs font-semibold text-zinc-600 dark:text-zinc-400">{rec.pick ?? rec.suggestedBet}</span>
+                          <span className={cn(
+                            "px-2 py-0.5 rounded text-[10px] font-medium border",
+                            riskConfig[rec.risk ?? rec.riskLevel ?? 'medium'].color
+                          )}>
+                            {rec.risk ?? rec.riskLevel ?? 'medium'}
+                          </span>
+                        </div>
+                        <h5 className="text-sm font-bold text-zinc-900 dark:text-zinc-50">{rec.homeTeam} vs {rec.awayTeam}</h5>
+                        <p className="text-xs text-zinc-400 mt-0.5">{rec.league} · {new Date(rec.timestamp).toLocaleString()}</p>
+                        <p className="text-xs font-bold text-zinc-700 dark:text-zinc-300 mt-2">{rec.confidence}% confidence</p>
+                        {rec.reasoning.length > 0 && (
+                          <ul className="mt-2 space-y-1">
+                            {rec.reasoning.map((r, i) => (
+                              <li key={i} className="text-xs text-zinc-500 dark:text-zinc-400 flex items-start gap-2">
+                                <CheckCircle2 size={10} className="shrink-0 mt-0.5" />
+                                {r}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        {httpSources(rec.sources).length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {httpSources(rec.sources).map((url, i) => (
+                              <a
+                                key={i}
+                                href={url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[10px] text-indigo-500 hover:underline"
+                              >
+                                {sourceHost(url)}
+                              </a>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
       {/* Settlement Report */}
       {settleReport && (
