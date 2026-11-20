@@ -235,7 +235,10 @@ CREATE TABLE analysis_results (
     approved_at text NULL,
     approved_by text NULL,
     model text NOT NULL,
-    updated_at text NULL
+    updated_at text NULL,
+    -- Per-match proposals stored while Run Analysis is in progress; matches
+    -- get ai_prediction/tier only when this split is approved.
+    proposals jsonb NULL
 );
 
 CREATE INDEX analysis_results_by_date ON analysis_results ("date");

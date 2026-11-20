@@ -80,7 +80,24 @@ You are conservative and thorough. It's better to remove a questionable recommen
 
 Output format: Return a verified list with any necessary adjustments, plus notes explaining your decisions.`;
 
-function formatMatchesForPrompt(matches: any[]): string {
+/** Minimal match shape used by the legacy DeepSeek prompts (subset of
+ * MatchData plus the potentials the legacy API exposed). */
+interface PromptMatch {
+  id: string;
+  league: string;
+  homeTeam: string;
+  awayTeam: string;
+  timestamp: string;
+  status: string;
+  odds?: { home?: string; draw?: string; away?: string };
+  homeScore?: number;
+  awayScore?: number;
+  homeForm?: string;
+  awayForm?: string;
+  potentials?: Array<{ label: string; percent?: number; value?: string }>;
+}
+
+function formatMatchesForPrompt(matches: PromptMatch[]): string {
   return matches
     .map(
       (m, i) => `
@@ -93,14 +110,14 @@ Status: ${m.status}
 Odds: Home ${m.odds?.home || "N/A"}, Draw ${m.odds?.draw || "N/A"}, Away ${m.odds?.away || "N/A"}
 Score: ${m.homeScore != null ? m.homeScore : "-"} - ${m.awayScore != null ? m.awayScore : "-"}
 Form: Home ${m.homeForm || "N/A"}, Away ${m.awayForm || "N/A"}
-Potentials: ${m.potentials ? m.potentials.map((p: any) => `${p.label}: ${p.percent || p.value}%`).join(", ") : "N/A"}
+Potentials: ${m.potentials ? m.potentials.map((p) => `${p.label}: ${p.percent || p.value}%`).join(", ") : "N/A"}
 `
     )
     .join("\n---\n");
 }
 
 export async function analyzeMatchesWithDeepSeek(
-  matches: any[],
+  matches: PromptMatch[],
   analysisType: "daily" | "weekly",
   date: string
 ): Promise<AnalysisResult> {
@@ -190,7 +207,7 @@ ${matchData}`;
 
 export async function verifyRecommendationsWithDeepSeek(
   analysisResult: AnalysisResult,
-  originalMatches: any[]
+  originalMatches: PromptMatch[]
 ): Promise<VerificationResult> {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) {

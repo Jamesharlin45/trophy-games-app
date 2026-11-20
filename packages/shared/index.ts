@@ -32,6 +32,10 @@ export interface MatchData {
         reasoning: string[];
         suggestedBet?: string;
         generatedAt: string;
+        // Added by the web "Run Analysis" rework (per-match DeepSeek result).
+        risk?: 'low' | 'medium' | 'high';
+        sources?: string[];
+        pick?: string;
     };
     odds?: {
         home: string;

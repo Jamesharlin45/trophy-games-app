@@ -36,6 +36,18 @@ function parseScore(score: string | null | undefined): { homeScore?: number; awa
     return out;
 }
 
+/** Derive the match_date range-filter value (YYYY-MM-DD, UTC) from a kickoff
+ * timestamp — the same format the Daily/Weekly range filter reads. */
+export function utcMatchDate(timestamp: string): string {
+    const t = timestamp.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+    // ISO strings with an explicit offset are converted to the UTC date;
+    // offset-less kickoffs are treated as UTC.
+    const parsed = /[Zz]$|[+-]\d{2}:?\d{2}$/.test(t) ? new Date(t) : new Date(`${t}Z`);
+    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+    return t.split('T')[0];
+}
+
 function mapMatch(row: MatchRow): DbMatch {
     // Rich detail fields (homeForm, potentials, h2h, ...) live in `details`
     // (no dedicated columns) and are mirrored at the top level of the
@@ -342,7 +354,7 @@ export async function updateMatch(db: SupabaseClient, matchId: string, edits: Ma
 /** api.matches.create — insert a new match (manual matches carry their
  * `manual-*` external id via `external_id`). Returns the external id. */
 export async function createMatch(db: SupabaseClient, match: CreateMatchInput): Promise<string> {
-    const matchDate = match.timestamp ? match.timestamp.split('T')[0] : new Date().toISOString().split('T')[0];
+    const matchDate = match.timestamp ? utcMatchDate(match.timestamp) : new Date().toISOString().slice(0, 10);
     const score =
         match.score ||
         (match.homeScore != null && match.awayScore != null
@@ -516,7 +528,7 @@ export async function enrichMatch(db: SupabaseClient, matchId: string, data: Rec
 export async function saveAll(db: SupabaseClient, matches: MatchData[], leagues: LeagueInfo[] = []): Promise<void> {
     const now = new Date().toISOString();
     for (const m of matches) {
-        const matchDate = m.matchDate || (m.timestamp ? m.timestamp.split('T')[0] : now.split('T')[0]);
+        const matchDate = m.matchDate || (m.timestamp ? utcMatchDate(m.timestamp) : now.slice(0, 10));
         const existing = await getById(db, m.id);
         const updates: Record<string, unknown> = {
             home_team: m.homeTeam,
@@ -594,7 +606,7 @@ export async function setTrending(db: SupabaseClient, matchId: string): Promise<
 /** Port of Convex insertProxyMatch: insert a proxy match (before tagging it)
  * with the given type, without firing any alerts. */
 async function insertProxyMatch(db: SupabaseClient, match: ProxyMatchInput, forcedType?: MatchTier): Promise<DbMatch> {
-    const matchDate = match.timestamp ? match.timestamp.split('T')[0] : new Date().toISOString().split('T')[0];
+    const matchDate = match.timestamp ? utcMatchDate(match.timestamp) : new Date().toISOString().slice(0, 10);
     const score =
         match.score ||
         (match.homeScore != null && match.awayScore != null
