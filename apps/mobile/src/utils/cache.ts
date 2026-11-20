@@ -4,7 +4,7 @@ const CACHE_PREFIX = '@bet_titan_cache_';
 const DEFAULT_TTL = 3600000; // 1 hour in milliseconds
 
 export const CacheManager = {
-    async set(key: string, data: any, ttl: number = DEFAULT_TTL) {
+    async set(key: string, data: unknown, ttl: number = DEFAULT_TTL) {
         try {
             const cacheData = {
                 data,
@@ -22,7 +22,11 @@ export const CacheManager = {
             const cachedString = await AsyncStorage.getItem(`${CACHE_PREFIX}${key}`);
             if (!cachedString) return null;
 
-            const { data, timestamp, ttl } = JSON.parse(cachedString);
+            const { data, timestamp, ttl } = JSON.parse(cachedString) as {
+                data: unknown;
+                timestamp: number;
+                ttl: number;
+            };
             const isExpired = Date.now() - timestamp > ttl;
 
             if (isExpired) {

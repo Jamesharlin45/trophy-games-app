@@ -1,11 +1,11 @@
 import { View, Text, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
-import { useQuery, useMutation } from 'convex/react';
-import { api } from '@trophy-games/backend';
 import { useTheme } from '../context/ThemeContext';
 import { Stack, useRouter } from 'expo-router';
 import { Bell, ArrowLeft } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useState, useEffect } from 'react';
+import { api } from '../api/client';
+import { useScreenQuery } from '../hooks/useLiveQuery';
 
 export default function AlertsScreen() {
     const { themeColors } = useTheme();
@@ -25,19 +25,23 @@ export default function AlertsScreen() {
         getDeviceId();
     }, []);
 
-    const alerts = useQuery(api.alerts.getAlerts, { deviceId: deviceId || "unknown" });
-    const markRead = useMutation(api.alerts.markRead);
-    const markAllRead = useMutation(api.alerts.markAllRead);
+    const { data: alerts, refetch } = useScreenQuery(
+        () => api.alerts.getAlerts(deviceId || 'unknown'),
+        [deviceId],
+        { pollMs: 60000 },
+    );
 
-    const handleMarkRead = async (id: any) => {
+    const handleMarkRead = async (id: string) => {
         if (deviceId) {
-            await markRead({ alertId: id, deviceId });
+            await api.alerts.markRead(id, deviceId);
+            await refetch();
         }
     };
 
     const handleMarkAllRead = async () => {
         if (deviceId) {
-            await markAllRead({ deviceId });
+            await api.alerts.markAllRead(deviceId);
+            await refetch();
         }
     };
 

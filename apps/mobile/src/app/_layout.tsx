@@ -7,17 +7,14 @@ import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native
 import * as SplashScreen from 'expo-splash-screen';
 import { useFonts } from 'expo-font';
 import { Stack, useRouter } from 'expo-router';
-import { ConvexProvider, ConvexReactClient, useQuery } from "convex/react";
 import { Sun, Moon, Bell, Settings } from 'lucide-react-native';
 import { ThemeProvider as AppThemeProvider, useTheme } from '../context/ThemeContext';
 import { UserProvider, useUser } from '../context/UserContext';
 import { LanguageProvider } from '../context/LanguageContext';
 import { usePushNotifications } from '../hooks/usePushNotifications';
-import { api } from '@trophy-games/backend';
-
-const FALLBACK_CONVEX_URL = 'https://grateful-eel-253.eu-west-1.convex.cloud';
-const convexUrl = process.env.EXPO_PUBLIC_CONVEX_URL || FALLBACK_CONVEX_URL;
-const convex = new ConvexReactClient(convexUrl);
+import { useRestorePurchases } from '../hooks/useRestorePurchases';
+import { useApiQuery } from '../hooks/useLiveQuery';
+import { api } from '../api/client';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -34,30 +31,15 @@ export default function RootLayout() {
         return null;
     }
 
-    if (!convex) {
-        return (
-            <AppThemeProvider>
-                <View style={styles.errorContainer}>
-                    <Text style={styles.errorTitle}>Configuration Error</Text>
-                    <Text style={styles.errorText}>
-                        Convex URL is not set. Please check your environment variables.
-                    </Text>
-                </View>
-            </AppThemeProvider>
-        );
-    }
-
     return (
         <SafeAreaProvider>
-            <ConvexProvider client={convex}>
-                <AppThemeProvider>
-                    <LanguageProvider>
-                        <UserProvider>
-                            <RootLayoutContent />
-                        </UserProvider>
-                    </LanguageProvider>
-                </AppThemeProvider>
-            </ConvexProvider>
+            <AppThemeProvider>
+                <LanguageProvider>
+                    <UserProvider>
+                        <RootLayoutContent />
+                    </UserProvider>
+                </LanguageProvider>
+            </AppThemeProvider>
         </SafeAreaProvider>
     );
 }
@@ -68,6 +50,9 @@ function RootLayoutContent() {
     const { username, isLoading: isUserLoading } = useUser();
     const { expoPushToken } = usePushNotifications();
     const insets = useSafeAreaInsets();
+
+    // Restore Google Play subscriptions once, as soon as the app starts.
+    useRestorePurchases();
 
     const [deviceId, setDeviceId] = useState<string | null>(null);
 
@@ -90,32 +75,31 @@ function RootLayoutContent() {
         getDeviceId();
     }, []);
 
-    const alerts = useQuery(api.alerts.getAlerts, { deviceId: deviceId || "unknown" });
-    const unreadCount = alerts?.filter((a: any) => !(a.readBy ?? []).includes(deviceId || "unknown")).length || 0;
+    const { data: alerts } = useApiQuery(
+        () => api.alerts.getAlerts(deviceId || 'unknown'),
+        [deviceId],
+    );
+    const unreadCount = alerts?.filter((a) => !(a.readBy ?? []).includes(deviceId || 'unknown')).length || 0;
 
     useEffect(() => {
         const registerToken = async () => {
-            if (expoPushToken && convex && deviceId) {
+            if (expoPushToken && deviceId) {
                 try {
-                    await convex.mutation(api.devices.registerPushToken, {
-                        deviceId: deviceId,
-                        pushToken: expoPushToken.data,
-                    });
+                    await api.devices.registerPushToken(deviceId, expoPushToken.data);
                 } catch (e) {
                     console.error('Failed to register push token:', e);
                 }
             }
         };
-        registerToken();
+        void registerToken();
     }, [expoPushToken, deviceId]);
 
     // Configure Android navigation bar to match theme
     useEffect(() => {
         if (Platform.OS === 'android') {
-            const nb = NavigationBar as any;
-            if (nb.setBackgroundColorAsync) nb.setBackgroundColorAsync(themeColors.background).catch(() => {});
-            if (nb.setButtonStyleAsync) nb.setButtonStyleAsync(isDark ? 'light' : 'dark').catch(() => {});
-            if (nb.setBorderColorAsync) nb.setBorderColorAsync(themeColors.border).catch(() => {});
+            NavigationBar.setBackgroundColorAsync(themeColors.background).catch(() => {});
+            NavigationBar.setButtonStyleAsync(isDark ? 'light' : 'dark').catch(() => {});
+            NavigationBar.setBorderColorAsync(themeColors.border).catch(() => {});
         }
     }, [isDark, themeColors.background, themeColors.border]);
 
@@ -174,7 +158,7 @@ function RootLayoutContent() {
     );
 }
 
-const ThemeToggle = ({ onToggle, currentTheme, themeColors }: { onToggle: () => void; currentTheme: string; themeColors: any }) => {
+const ThemeToggle = ({ onToggle, currentTheme, themeColors }: { onToggle: () => void; currentTheme: string; themeColors: ReturnType<typeof useTheme>['themeColors'] }) => {
     return (
         <TouchableOpacity onPress={onToggle} style={styles.themeToggle}>
             {currentTheme === 'dark' ? (

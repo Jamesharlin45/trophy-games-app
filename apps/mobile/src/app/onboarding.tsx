@@ -1,12 +1,11 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
-import { useMutation, useQuery } from 'convex/react';
-import { api } from '@trophy-games/backend/convex/_generated/api';
 import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Application from 'expo-application';
 import { User } from 'lucide-react-native';
 import { useTheme } from '../context/ThemeContext';
+import { api } from '../api/client';
 
 type ThemeColors = ReturnType<typeof useTheme>['themeColors'];
 
@@ -17,9 +16,33 @@ export default function OnboardingScreen() {
   const [username, setUsername] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [availability, setAvailability] = useState<{ available: boolean } | undefined>(undefined);
 
-  const registerUser = useMutation(api.users.registerUser);
-  const checkUsername = useQuery(api.users.checkUsername, { username: username.trim() });
+  // Debounced username availability lookup (was a live Convex query).
+  useEffect(() => {
+    const trimmed = username.trim();
+    if (trimmed.length < 3) {
+      setAvailability(undefined);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      api.users
+        .checkUsername(trimmed)
+        .then((result) => {
+          if (!cancelled) setAvailability(result);
+        })
+        .catch(() => {
+          if (!cancelled) setAvailability(undefined);
+        });
+    }, 400);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [username]);
 
   const getDeviceId = () => {
     return `${Application.applicationId}-${Application.nativeApplicationVersion}`;
@@ -32,7 +55,7 @@ export default function OnboardingScreen() {
       return;
     }
 
-    if (checkUsername?.available === false) {
+    if (availability?.available === false) {
       setError('Username is already taken');
       return;
     }
@@ -42,7 +65,7 @@ export default function OnboardingScreen() {
       setError('');
 
       const deviceId = getDeviceId();
-      const result = await registerUser({ username: trimmed, deviceId });
+      const result = await api.users.register(trimmed, deviceId);
 
       if (result.success) {
         await AsyncStorage.setItem('@trophy_games_username', trimmed);
@@ -81,9 +104,9 @@ export default function OnboardingScreen() {
             autoCorrect={false}
             maxLength={20}
           />
-          {username.length >= 3 && checkUsername !== undefined && (
-            <Text style={[styles.availability, { color: checkUsername.available ? themeColors.primary : themeColors.error }]}>
-              {checkUsername.available ? '✓ Available' : '✗ Taken'}
+          {username.length >= 3 && availability !== undefined && (
+            <Text style={[styles.availability, { color: availability.available ? themeColors.primary : themeColors.error }]}>
+              {availability.available ? '✓ Available' : '✗ Taken'}
             </Text>
           )}
         </View>
@@ -93,10 +116,10 @@ export default function OnboardingScreen() {
         <TouchableOpacity
           style={[
             styles.button,
-            (username.trim().length < 3 || checkUsername?.available === false) && styles.buttonDisabled
+            (username.trim().length < 3 || availability?.available === false) && styles.buttonDisabled
           ]}
           onPress={handleContinue}
-          disabled={loading || username.trim().length < 3 || checkUsername?.available === false}
+          disabled={loading || username.trim().length < 3 || availability?.available === false}
         >
           {loading ? (
             <ActivityIndicator color={themeColors.background} />

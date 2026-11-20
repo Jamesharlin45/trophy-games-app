@@ -1,9 +1,9 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useQuery } from 'convex/react';
-import { api } from '@trophy-games/backend/convex/_generated/api';
 import * as Application from 'expo-application';
 import { router } from 'expo-router';
+import { api } from '../api/client';
+import { useApiQuery } from '../hooks/useLiveQuery';
 
 interface UserContextType {
   username: string | null;
@@ -24,7 +24,10 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   const deviceId = `${Application.applicationId}-${Application.nativeApplicationVersion}`;
-  const remoteUser = useQuery(api.users.getUserByDevice, { deviceId });
+  const { data: remoteUser, loaded } = useApiQuery(
+    () => api.users.byDevice(deviceId),
+    [deviceId],
+  );
 
   useEffect(() => {
     const loadUser = async () => {
@@ -32,8 +35,9 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         const stored = await AsyncStorage.getItem('@trophy_games_username');
         if (stored) {
           setUsernameState(stored);
-        } else if (remoteUser !== undefined) {
-            // Fallback: If we have it in convex but not local storage, sync it
+        } else if (loaded) {
+            // Fallback: If the account exists on the server but not in local
+            // storage, sync it back down.
             if (remoteUser?.username) {
                 await AsyncStorage.setItem('@trophy_games_username', remoteUser.username);
                 setUsernameState(remoteUser.username);
@@ -44,13 +48,13 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       } catch (e) {
         console.error('Failed to load username', e);
       } finally {
-        if (remoteUser !== undefined) {
+        if (loaded) {
           setIsLoading(false);
         }
       }
     };
-    loadUser();
-  }, [remoteUser]);
+    void loadUser();
+  }, [remoteUser, loaded]);
 
   const setUsername = async (newUsername: string | null) => {
     setUsernameState(newUsername);

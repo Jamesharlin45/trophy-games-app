@@ -1,16 +1,13 @@
 import { View, Text, ScrollView, ActivityIndicator, StyleSheet, RefreshControl, TouchableOpacity } from 'react-native';
 import { CheckCircle2, Trophy, TrendingUp } from 'lucide-react-native';
-import { useState, useCallback, useMemo, useEffect } from 'react';
-import { ConvexReactClient } from "convex/react";
-import { api } from '@trophy-games/backend';
+import { useState, useCallback, useMemo } from 'react';
 import { MatchCard } from '../../components/MatchCard';
 import { DatePickerStrip } from '../../components/DatePickerStrip';
 import { useTheme } from '../../context/ThemeContext';
 import { typography } from '../../theme/typography';
-// Mobile reads ONLY from Convex — no direct FootyStats API calls.
-
-const convexUrl = process.env.EXPO_PUBLIC_CONVEX_URL;
-const convex = convexUrl ? new ConvexReactClient(convexUrl) : null;
+import { api } from '../../api/client';
+import type { ApiMatch } from '../../api/client';
+import { useScreenQuery } from '../../hooks/useLiveQuery';
 
 const toTitleCase = (str: string) =>
     str.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
@@ -27,41 +24,19 @@ function getDateRange() {
 
 export default function WinsScreen() {
     const { themeColors } = useTheme();
-    const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [selectedLeague, setSelectedLeague] = useState('All');
     const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
-    const [matches, setMatches] = useState<any[]>([]);
-    const [apiSource, setApiSource] = useState<'footystats' | 'convex'>('footystats');
+
+    const {
+        data: historyData,
+        loading,
+        refetch,
+    } = useScreenQuery(() => api.matches.history(200), [], { pollMs: 60000 });
+
+    const matches = historyData ?? [];
 
     const dates = useMemo(() => getDateRange(), []);
-
-    const loadData = useCallback(async (isRefresh = false) => {
-        if (isRefresh) setRefreshing(true);
-        else setLoading(true);
-
-        // Mobile reads ONLY from Convex.
-        if (convex) {
-            try {
-                const historyData = await convex.query(api.matches.getHistory, { limit: 200 });
-                setMatches(historyData || []);
-                setApiSource('convex');
-                console.log(`[Wins Screen] Loaded ${historyData?.length || 0} matches from Convex`);
-            } catch (convexError) {
-                console.warn('[Wins Screen] Convex failed:', convexError);
-                setMatches([]);
-            }
-        } else {
-            setMatches([]);
-        }
-
-        setLoading(false);
-        setRefreshing(false);
-    }, []);
-
-    useEffect(() => {
-        loadData();
-    }, [loadData]);
 
     // Finished matches for the selected date only.
     const dayMatches = useMemo(() => {
@@ -83,11 +58,13 @@ export default function WinsScreen() {
     }, [dayMatches, selectedLeague]);
 
     const onRefresh = useCallback(async () => {
-        await loadData(true);
-    }, [loadData]);
+        setRefreshing(true);
+        await refetch();
+        setRefreshing(false);
+    }, [refetch]);
 
     // "Win" = home side won (final score), matching the web History strike rate.
-    const isWin = (m: any) => m.homeScore !== undefined && m.awayScore !== undefined && m.homeScore > m.awayScore;
+    const isWin = (m: ApiMatch) => m.homeScore !== undefined && m.awayScore !== undefined && m.homeScore > m.awayScore;
     const winCount = dayMatches.filter(isWin).length;
     const winRate = dayMatches.length > 0 ? Math.round((winCount / dayMatches.length) * 100) : 0;
 
@@ -172,7 +149,7 @@ export default function WinsScreen() {
                     </View>
                 ) : filteredMatches.length > 0 ? (
                     <View style={styles.fixtureGrid}>
-                        {filteredMatches.map((match: any) => (
+                        {filteredMatches.map((match) => (
                             <MatchCard
                                 key={match._id || match.id}
                                 matchId={match.id}
