@@ -3,9 +3,11 @@
 import React, { useEffect, useState } from 'react';
 import {
     AlertCircle, CheckCircle2, ChevronDown, Crown,
-    DollarSign, Filter, Loader2, Sparkles, Star, X
+    DollarSign, Filter, Flag, Loader2, Sparkles, Star, X
 } from 'lucide-react';
 import { MatchData } from '@trophy-games/shared';
+import { FixturePicker, toDatetimeLocal } from '@/components/FixturePicker';
+import type { ApiFootballFixture } from '@/lib/api-football';
 import { cn } from '@/lib/utils';
 
 interface ManualMatchModalProps {
@@ -14,6 +16,8 @@ interface ManualMatchModalProps {
     onSuccess: () => void;
     /** When provided the modal edits this match instead of creating a new one. */
     match?: MatchData | null;
+    /** Open the fixture picker as soon as the modal opens. */
+    openPickerOnStart?: boolean;
 }
 
 type MatchType = 'free' | 'paid' | 'vip' | 'unassigned';
@@ -74,15 +78,6 @@ const getDefaultTimestamp = (): string => {
     return d.toISOString().slice(0, 16);
 };
 
-// datetime-local inputs use local wall-clock time, while stored timestamps are
-// ISO UTC strings — convert back to local time when prefilling the form.
-const toDateTimeLocal = (value: string): string => {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return '';
-    const pad = (part: number) => String(part).padStart(2, '0');
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-};
-
 const formFromMatch = (match?: MatchData | null): FormState => ({
     homeTeam: match?.homeTeam ?? '',
     awayTeam: match?.awayTeam ?? '',
@@ -92,7 +87,7 @@ const formFromMatch = (match?: MatchData | null): FormState => ({
     awayTeamLogo: match?.awayTeamLogo ?? '',
     country: match?.country ?? '',
     countryFlag: match?.countryFlag ?? '',
-    timestamp: match ? toDateTimeLocal(match.timestamp) : getDefaultTimestamp(),
+    timestamp: match ? toDatetimeLocal(match.timestamp) : getDefaultTimestamp(),
     status: match?.status ?? 'Scheduled',
     homeScore: match?.homeScore !== undefined ? String(match.homeScore) : '',
     awayScore: match?.awayScore !== undefined ? String(match.awayScore) : '',
@@ -131,11 +126,12 @@ function Field({ label, htmlFor, required, hint, children }: FieldProps) {
     );
 }
 
-export function ManualMatchModal({ isOpen, onClose, onSuccess, match }: ManualMatchModalProps) {
+export function ManualMatchModal({ isOpen, onClose, onSuccess, match, openPickerOnStart }: ManualMatchModalProps) {
     const isEdit = Boolean(match);
     const [form, setForm] = useState<FormState>(() => formFromMatch(match));
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [fixturesOpen, setFixturesOpen] = useState(false);
 
     // The parent remounts this component with a new key whenever the edit
     // target changes, so the initializer always seeds the latest match data.
@@ -151,6 +147,37 @@ export function ManualMatchModal({ isOpen, onClose, onSuccess, match }: ManualMa
             window.removeEventListener('keydown', handleEsc);
         };
     }, [isOpen, onClose]);
+
+    // Close the picker when the modal closes; open it right away when the
+    // caller asked for it (e.g. "Add from fixtures" on the matches page).
+    // Deferred via microtask to avoid cascading renders inside the effect.
+    useEffect(() => {
+        queueMicrotask(() => {
+            if (isOpen && openPickerOnStart) {
+                setFixturesOpen(true);
+            } else if (!isOpen) {
+                setFixturesOpen(false);
+            }
+        });
+    }, [isOpen, openPickerOnStart]);
+
+    // Picking a fixture prefills the manual fields — teams, league, kickoff
+    // time, and the logos/country the API has. The picker closes so the
+    // filled fields become visible.
+    const handlePickFromFixture = (f: ApiFootballFixture) => {
+        setForm(prev => ({
+            ...prev,
+            homeTeam: f.homeTeam.name.trim(),
+            awayTeam: f.awayTeam.name.trim(),
+            league: f.league.name.trim(),
+            country: f.league.country || prev.country,
+            timestamp: toDatetimeLocal(f.date),
+            leagueLogo: f.league.logo || '',
+            homeTeamLogo: f.homeTeam.logo || '',
+            awayTeamLogo: f.awayTeam.logo || '',
+        }));
+        setFixturesOpen(false);
+    };
 
     const setText = (key: TextField) => (
         e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
@@ -277,9 +304,20 @@ export function ManualMatchModal({ isOpen, onClose, onSuccess, match }: ManualMa
             <div className="relative flex h-[100dvh] w-full flex-col overflow-hidden bg-white shadow-2xl dark:bg-zinc-900 sm:h-auto sm:max-h-[92dvh] sm:max-w-lg sm:rounded-3xl sm:border sm:border-zinc-200 dark:sm:border-zinc-800">
                 {/* Header */}
                 <div className="flex shrink-0 items-center justify-between border-b border-zinc-100 p-5 dark:border-zinc-800">
-                    <h2 className="text-lg font-bold text-zinc-900 dark:text-zinc-50">
-                        {isEdit ? 'Edit Match' : 'Add New Match'}
-                    </h2>
+                    <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                        <h2 className="text-lg font-bold text-zinc-900 dark:text-zinc-50">
+                            {isEdit ? 'Edit Match' : 'Add New Match'}
+                        </h2>
+                        <button
+                            type="button"
+                            onClick={() => setFixturesOpen(prev => !prev)}
+                            aria-pressed={fixturesOpen}
+                            className="flex shrink-0 items-center gap-1.5 rounded-xl border border-blue-500/30 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-600 transition-colors hover:bg-blue-100 dark:bg-blue-950/40 dark:text-blue-400 dark:hover:bg-blue-900"
+                        >
+                            <Flag size={15} />
+                            Pick from fixtures
+                        </button>
+                    </div>
                     <button
                         type="button"
                         onClick={onClose}
@@ -291,6 +329,14 @@ export function ManualMatchModal({ isOpen, onClose, onSuccess, match }: ManualMa
                 </div>
 
                 <form onSubmit={handleSave} className="flex min-h-0 flex-1 flex-col">
+                    {/* Fixture picker — shown when the admin opens it from the
+                        header button or presses "Pick from fixtures". */}
+                    {fixturesOpen && (
+                        <div className="max-h-[52vh] shrink-0 overflow-y-auto border-b border-zinc-100 px-5 pb-4 pt-2 dark:border-zinc-800">
+                            <FixturePicker onSelect={handlePickFromFixture} />
+                        </div>
+                    )}
+
                     {/* Body — the only scrolling region */}
                     <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5 scrollbar-thin scrollbar-thumb-zinc-200 dark:scrollbar-thumb-zinc-800">
                         {error && (

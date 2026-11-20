@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { TrendingUp, Timer, Zap, CheckCircle2, AlertCircle, Loader2, Search, Filter, Calendar, Crown, DollarSign, Star, RefreshCw, Flame, PlusCircle, Trash2, Pencil } from 'lucide-react';
+import { TrendingUp, Timer, Zap, CheckCircle2, AlertCircle, Loader2, Search, Filter, Calendar, Crown, DollarSign, Star, RefreshCw, Flame, PlusCircle, Trash2, Pencil, Flag } from 'lucide-react';
 import { MatchData } from '@trophy-games/shared';
 import { MatchDetailModal } from '@/components/MatchDetailModal';
 import { ManualMatchModal } from '@/components/ManualMatchModal';
@@ -73,6 +73,9 @@ export default function MatchesPage() {
     const [selectedMatch, setSelectedMatch] = useState<MatchData | null>(null);
     const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
     const [isManualModalOpen, setIsManualModalOpen] = useState(false);
+    // When the manual modal opens via the "Add from fixtures" button, start
+    // with the fixture picker already open inside it.
+    const [manualModalOpenPicker, setManualModalOpenPicker] = useState(false);
     const [editingMatch, setEditingMatch] = useState<MatchData | null>(null);
 
     useEffect(() => {
@@ -455,13 +458,23 @@ export default function MatchesPage() {
                     <h1 className="text-3xl font-bold text-zinc-900 dark:text-zinc-50 tracking-tight">Matches</h1>
                     <p className="text-zinc-500 dark:text-zinc-400">Manage every match — edit teams, scores, status, result and AI predictions. Changes sync to mobile.</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                     <button
                         onClick={() => setIsManualModalOpen(true)}
                         className="flex items-center justify-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-colors text-sm shadow-sm"
                     >
                         <PlusCircle size={16} />
                         Manual Match
+                    </button>
+                    <button
+                        onClick={() => {
+                            setManualModalOpenPicker(true);
+                            setIsManualModalOpen(true);
+                        }}
+                        className="flex items-center justify-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition-colors text-sm shadow-sm"
+                    >
+                        <Flag size={16} />
+                        Add from fixtures
                     </button>
                     <button
                         onClick={handleRefresh}
@@ -638,7 +651,11 @@ export default function MatchesPage() {
             {/* Manual Match Creation Modal */}
             <ManualMatchModal
                 isOpen={isManualModalOpen}
-                onClose={() => setIsManualModalOpen(false)}
+                openPickerOnStart={manualModalOpenPicker}
+                onClose={() => {
+                    setIsManualModalOpen(false);
+                    setManualModalOpenPicker(false);
+                }}
                 onSuccess={fetchMatches}
             />
 
