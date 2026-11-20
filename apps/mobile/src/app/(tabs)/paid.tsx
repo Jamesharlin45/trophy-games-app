@@ -4,13 +4,13 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { MatchCard } from '../../components/MatchCard';
 import { DatePickerStrip } from '../../components/DatePickerStrip';
 import { useTheme } from '../../context/ThemeContext';
+import type { ThemeColors } from '../../theme/colors';
 import { useUser } from '../../context/UserContext';
 import { typography } from '../../theme/typography';
 import { api } from '../../api/client';
 import { useScreenQuery } from '../../hooks/useLiveQuery';
 import { useRouter } from 'expo-router';
 import * as Application from 'expo-application';
-
 
 type MemberStatus = 'none' | 'pending' | 'approved' | 'rejected' | 'active' | 'loading';
 
@@ -19,9 +19,11 @@ const toTitleCase = (str: string) =>
 
 export default function PaidTipsScreen() {
     const { themeColors } = useTheme();
+    const styles = getStyles(themeColors);
     const router = useRouter();
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
     const [selectedLeague, setSelectedLeague] = useState('All');
+    const [expandedId, setExpandedId] = useState<string | null>(null);
     const [tokenInput, setTokenInput] = useState('');
     const [enteringToken, setEnteringToken] = useState(false);
     const [verifyingToken, setVerifyingToken] = useState(false);
@@ -73,12 +75,12 @@ export default function PaidTipsScreen() {
     }, []);
 
     const uniqueLeagues = useMemo(() => {
-        const leagues = Array.from(new Set(matches.map(m => m.league))).sort();
+        const leagues = Array.from(new Set(matches.map((m) => m.league))).sort();
         return ['All', ...leagues];
     }, [matches]);
 
     const filteredMatches = useMemo(() => {
-        return matches.filter(match => {
+        return matches.filter((match) => {
             const leagueMatch = selectedLeague === 'All' || match.league === selectedLeague;
             return leagueMatch;
         });
@@ -129,7 +131,7 @@ export default function PaidTipsScreen() {
     if (memberStatus === 'loading') {
         return (
             <View style={[styles.container, { backgroundColor: themeColors.background, justifyContent: 'center', alignItems: 'center' }]}>
-                <ActivityIndicator color={themeColors.primary} size="large" />
+                <ActivityIndicator color={themeColors.accent} size="large" />
             </View>
         );
     }
@@ -151,7 +153,7 @@ export default function PaidTipsScreen() {
                     </View>
 
                     <Text style={[styles.gateTitle, { color: themeColors.text }]}>PREMIUM TIPS</Text>
-                    <Text style={[styles.gateSubtitle, { color: themeColors.textMuted }]}>
+                    <Text style={[styles.gateSubtitle, { color: themeColors.mutedText }]}>
                         Get exclusive access to our curated premium predictions with expert analysis.
                     </Text>
 
@@ -178,20 +180,20 @@ export default function PaidTipsScreen() {
                     )}
 
                     {memberStatus === 'pending' && !enteringToken && (
-                        <View style={[styles.pendingCard, { backgroundColor: themeColors.cardBg, borderColor: themeColors.orange9 }]}>
+                        <View style={[styles.pendingCard, { backgroundColor: themeColors.surface, borderColor: themeColors.orange9 }]}>
                             <Clock size={18} color={themeColors.orange9} />
                             <Text style={[styles.pendingTitle, { color: themeColors.text }]}>Request Under Review</Text>
-                            <Text style={[styles.pendingText, { color: themeColors.textMuted }]}>
+                            <Text style={[styles.pendingText, { color: themeColors.mutedText }]}>
                                 Your request is pending admin approval. You will receive an access token shortly.
                             </Text>
                         </View>
                     )}
 
                     {memberStatus === 'approved' && !enteringToken && (
-                        <View style={[styles.pendingCard, { backgroundColor: themeColors.cardBg, borderColor: '#15783a' }]}>
-                            <CheckCircle2 size={18} color={'#15783a'} />
+                        <View style={[styles.pendingCard, { backgroundColor: themeColors.surface, borderColor: themeColors.success }]}>
+                            <CheckCircle2 size={18} color={themeColors.success} />
                             <Text style={[styles.pendingTitle, { color: themeColors.text }]}>Request Approved!</Text>
-                            <Text style={[styles.pendingText, { color: themeColors.textMuted }]}>
+                            <Text style={[styles.pendingText, { color: themeColors.mutedText }]}>
                                 Your Paid access request has been approved. Please enter your token below.
                             </Text>
                         </View>
@@ -199,7 +201,7 @@ export default function PaidTipsScreen() {
 
                     {/* Get Premium access - navigate to Store tab */}
                     <TouchableOpacity
-                        style={[styles.primaryBtn, { backgroundColor: themeColors.primary }]}
+                        style={[styles.primaryBtn, { backgroundColor: themeColors.accent }]}
                         onPress={() => router.push('/market')}
                     >
                         <Text style={styles.primaryBtnText}>Get Premium access</Text>
@@ -210,18 +212,18 @@ export default function PaidTipsScreen() {
                             style={[styles.secondaryBtn, { borderColor: themeColors.border }]}
                             onPress={() => setEnteringToken(true)}
                         >
-                            <Key size={13} color={themeColors.textMuted} />
-                            <Text style={[styles.secondaryBtnText, { color: themeColors.textMuted }]}>I HAVE A TOKEN</Text>
+                            <Key size={13} color={themeColors.mutedText} />
+                            <Text style={[styles.secondaryBtnText, { color: themeColors.mutedText }]}>I HAVE A TOKEN</Text>
                         </TouchableOpacity>
                     ) : (
-                        <View style={[styles.tokenInputCard, { backgroundColor: themeColors.cardBg, borderColor: themeColors.border }]}>
-                            <Text style={[styles.tokenInputLabel, { color: themeColors.textMuted }]}>ENTER YOUR ACCESS TOKEN</Text>
+                        <View style={[styles.tokenInputCard, { backgroundColor: themeColors.surface, borderColor: themeColors.border }]}>
+                            <Text style={[styles.tokenInputLabel, { color: themeColors.mutedText }]}>ENTER YOUR ACCESS TOKEN</Text>
                             <TextInput
                                 value={tokenInput}
                                 onChangeText={setTokenInput}
                                 placeholder="e.g. PAD-XXXX-XXXX-XXXX"
-                                placeholderTextColor={themeColors.textMuted}
-                                style={[styles.tokenInput, { color: themeColors.text, borderColor: themeColors.border, backgroundColor: themeColors.cardBgSecondary }]}
+                                placeholderTextColor={themeColors.mutedText}
+                                style={[styles.tokenInput, { color: themeColors.text, borderColor: themeColors.border, backgroundColor: themeColors.surfaceElevated }]}
                                 autoCapitalize="characters"
                                 autoCorrect={false}
                             />
@@ -237,10 +239,10 @@ export default function PaidTipsScreen() {
                                     }
                                 </TouchableOpacity>
                                 <TouchableOpacity
-                                    style={[styles.cancelBtn, { backgroundColor: themeColors.cardBgSecondary }]}
+                                    style={[styles.cancelBtn, { backgroundColor: themeColors.surfaceElevated }]}
                                     onPress={() => { setEnteringToken(false); setTokenInput(''); }}
                                 >
-                                    <Text style={[styles.cancelBtnText, { color: themeColors.textMuted }]}>Cancel</Text>
+                                    <Text style={[styles.cancelBtnText, { color: themeColors.mutedText }]}>Cancel</Text>
                                 </TouchableOpacity>
                             </View>
                         </View>
@@ -252,23 +254,32 @@ export default function PaidTipsScreen() {
 
     return (
         <View style={[styles.container, { backgroundColor: themeColors.background }]}>
-            <View style={[styles.calendarStrip, { borderBottomColor: 'rgba(255,255,255,0.05)' }]}>
+            <View style={[styles.calendarStrip, { borderBottomColor: themeColors.border }]}>
                 <DatePickerStrip
                     dates={dates}
                     selectedDate={selectedDate}
-                    onSelectDate={setSelectedDate}
+                    onSelectDate={(date) => {
+                        setSelectedDate(date);
+                        setExpandedId(null);
+                    }}
                 />
             </View>
 
             <View style={styles.filterSection}>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.leaguesScroll}>
-                    {uniqueLeagues.map(league => (
+                    {uniqueLeagues.map((league) => (
                         <TouchableOpacity
                             key={league}
-                            onPress={() => setSelectedLeague(league)}
-                            style={[styles.leagueChip, { backgroundColor: selectedLeague === league ? themeColors.primary : themeColors.cardBgSecondary }]}
+                            onPress={() => {
+                                setSelectedLeague(league);
+                                setExpandedId(null);
+                            }}
+                            style={[
+                                styles.leagueChip,
+                                { backgroundColor: selectedLeague === league ? themeColors.accent : themeColors.surfaceElevated },
+                            ]}
                         >
-                            <Text style={[styles.leagueChipText, { color: selectedLeague === league ? 'white' : themeColors.textMuted }]}>
+                            <Text style={[styles.leagueChipText, { color: selectedLeague === league ? 'white' : themeColors.mutedText }]}>
                                 {league === 'All' ? 'All' : toTitleCase(league)}
                             </Text>
                         </TouchableOpacity>
@@ -285,7 +296,7 @@ export default function PaidTipsScreen() {
                 style={styles.content}
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={styles.scrollContent}
-                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={themeColors.primary} colors={[themeColors.primary]} />}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={themeColors.accent} colors={[themeColors.accent]} />}
             >
                 <View style={styles.sectionHeader}>
                     <Zap size={14} color={themeColors.orange9} />
@@ -294,36 +305,27 @@ export default function PaidTipsScreen() {
 
                 {loading ? (
                     <View style={styles.loadingContainer}>
-                        <ActivityIndicator size="large" color={themeColors.primary} />
+                        <ActivityIndicator size="large" color={themeColors.accent} />
                     </View>
                 ) : filteredMatches.length > 0 ? (
                     <View style={styles.fixtureGrid}>
                         {filteredMatches.map((match) => (
                             <MatchCard
                                 key={match.id}
-                                matchId={match.id}
-                                matchData={match}
-                                leagueName={match.league}
-                                leagueLogo={match.leagueLogo}
-                                time={new Date(match.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                homeTeam={match.homeTeam}
-                                homeTeamLogo={match.homeTeamLogo}
-                                awayTeam={match.awayTeam}
-                                awayTeamLogo={match.awayTeamLogo}
-                                isLocked={false}
-                                aiInsight={match.aiPrediction}
-                                prediction={match.aiPrediction?.prediction}
-                                odds={match.odds?.home}
+                                match={match}
+                                expanded={expandedId === match.id}
+                                onToggle={() => setExpandedId((prev) => (prev === match.id ? null : match.id))}
+                                access={{ paid: memberStatus === 'active', vip: false }}
                             />
                         ))}
                     </View>
                 ) : (
                     <View style={styles.emptyContainer}>
-                        <View style={[styles.emptyIconWrapper, { backgroundColor: themeColors.cardBgSecondary }]}>
-                            <DollarSign size={36} color={themeColors.textMuted} />
+                        <View style={[styles.emptyIconWrapper, { backgroundColor: themeColors.surfaceElevated }]}>
+                            <DollarSign size={36} color={themeColors.mutedText} />
                         </View>
                         <Text style={[styles.emptyText, { color: themeColors.text }]}>No Paid Tips Today</Text>
-                        <Text style={[styles.emptySubtext, { color: themeColors.textMuted }]}>
+                        <Text style={[styles.emptySubtext, { color: themeColors.mutedText }]}>
                             Our analysts are currently vetting the next set of value picks.
                         </Text>
                     </View>
@@ -333,7 +335,8 @@ export default function PaidTipsScreen() {
     );
 }
 
-const styles = StyleSheet.create({
+function getStyles(themeColors: ThemeColors) {
+    return StyleSheet.create({
     container: { flex: 1 },
     gateContainer: { padding: 28, paddingTop: 48, alignItems: 'center', gap: 16, paddingBottom: 100 },
     gateBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, marginBottom: 4 },
@@ -360,7 +363,7 @@ const styles = StyleSheet.create({
     calendarStrip: { borderBottomWidth: 1, paddingBottom: 2 },
     filterSection: { paddingHorizontal: 14, paddingTop: 8 },
     leaguesScroll: { paddingVertical: 4, gap: 8 },
-    leagueChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' },
+    leagueChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, borderWidth: 1, borderColor: themeColors.border },
     leagueChipText: { ...typography.chipText },
     content: { flex: 1 },
     scrollContent: { padding: 14, paddingTop: 14, paddingBottom: 40 },
@@ -372,4 +375,5 @@ const styles = StyleSheet.create({
     emptyIconWrapper: { width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center' },
     emptyText: { ...typography.emptyText },
     emptySubtext: { ...typography.emptySubtext, textAlign: 'center', paddingHorizontal: 36 },
-});
+    });
+}

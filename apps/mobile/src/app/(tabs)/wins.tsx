@@ -4,10 +4,12 @@ import { useState, useCallback, useMemo } from 'react';
 import { MatchCard } from '../../components/MatchCard';
 import { DatePickerStrip } from '../../components/DatePickerStrip';
 import { useTheme } from '../../context/ThemeContext';
+import type { ThemeColors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import { api } from '../../api/client';
 import type { ApiMatch } from '../../api/client';
 import { useScreenQuery } from '../../hooks/useLiveQuery';
+import { useMembershipAccess } from '../../hooks/useMembershipAccess';
 
 const toTitleCase = (str: string) =>
     str.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
@@ -24,9 +26,12 @@ function getDateRange() {
 
 export default function WinsScreen() {
     const { themeColors } = useTheme();
+    const styles = getStyles(themeColors);
     const [refreshing, setRefreshing] = useState(false);
     const [selectedLeague, setSelectedLeague] = useState('All');
     const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
+    const [expandedId, setExpandedId] = useState<string | null>(null);
+    const access = useMembershipAccess();
 
     const {
         data: historyData,
@@ -76,7 +81,10 @@ export default function WinsScreen() {
                 <DatePickerStrip
                     dates={dates}
                     selectedDate={selectedDate}
-                    onSelectDate={setSelectedDate}
+                    onSelectDate={(date) => {
+                        setSelectedDate(date);
+                        setExpandedId(null);
+                    }}
                     labelOverrides={{
                         [new Date().toISOString().split('T')[0]]: 'TODAY',
                     }}
@@ -89,15 +97,18 @@ export default function WinsScreen() {
                     {uniqueLeagues.map(league => (
                         <TouchableOpacity
                             key={league}
-                            onPress={() => setSelectedLeague(league)}
+                            onPress={() => {
+                                setSelectedLeague(league);
+                                setExpandedId(null);
+                            }}
                             style={[
                                 styles.leagueChip,
-                                { backgroundColor: selectedLeague === league ? themeColors.primary : themeColors.cardBgSecondary }
+                                { backgroundColor: selectedLeague === league ? themeColors.accent : themeColors.surfaceElevated },
                             ]}
                         >
                             <Text style={[
                                 styles.leagueChipText,
-                                { color: selectedLeague === league ? 'white' : themeColors.textMuted }
+                                { color: selectedLeague === league ? 'white' : themeColors.mutedText }
                             ]}>
                                 {league === 'All' ? 'All' : toTitleCase(league)}
                             </Text>
@@ -109,10 +120,10 @@ export default function WinsScreen() {
             {/* Stats banner */}
             <View style={[styles.statsRow, { borderBottomColor: themeColors.border }]}>
                 <View style={styles.statBox}>
-                    <Trophy size={18} color={themeColors.primary} />
+                    <Trophy size={18} color={themeColors.accent} />
                     <View>
                         <Text style={[styles.statValue, { color: themeColors.text }]}>{winRate}%</Text>
-                        <Text style={[styles.statLabel, { color: themeColors.textMuted }]}>STRIKE RATE</Text>
+                        <Text style={[styles.statLabel, { color: themeColors.mutedText }]}>STRIKE RATE</Text>
                     </View>
                 </View>
                 <View style={[styles.statDivider, { backgroundColor: themeColors.border }]} />
@@ -120,7 +131,7 @@ export default function WinsScreen() {
                     <TrendingUp size={18} color={themeColors.blue10} />
                     <View>
                         <Text style={[styles.statValue, { color: themeColors.text }]}>{winCount}/{dayMatches.length}</Text>
-                        <Text style={[styles.statLabel, { color: themeColors.textMuted }]}>WINS / TOTAL</Text>
+                        <Text style={[styles.statLabel, { color: themeColors.mutedText }]}>WINS / TOTAL</Text>
                     </View>
                 </View>
             </View>
@@ -133,49 +144,39 @@ export default function WinsScreen() {
                     <RefreshControl
                         refreshing={refreshing}
                         onRefresh={onRefresh}
-                        tintColor={themeColors.primary}
-                        colors={[themeColors.primary]}
+                        tintColor={themeColors.accent}
+                        colors={[themeColors.accent]}
                     />
                 }
             >
                 <View style={styles.sectionHeader}>
-                    <CheckCircle2 size={14} color={themeColors.primary} />
+                    <CheckCircle2 size={14} color={themeColors.accent} />
                     <Text style={[styles.sectionTitle, { color: themeColors.text }]}>PROVEN RESULTS</Text>
                 </View>
 
                 {loading ? (
                     <View style={styles.loadingContainer}>
-                        <ActivityIndicator size="large" color={themeColors.primary} />
+                        <ActivityIndicator size="large" color={themeColors.accent} />
                     </View>
                 ) : filteredMatches.length > 0 ? (
                     <View style={styles.fixtureGrid}>
                         {filteredMatches.map((match) => (
                             <MatchCard
                                 key={match._id || match.id}
-                                matchId={match.id}
-                                matchData={match}
-                                leagueName={match.league}
-                                leagueLogo={match.leagueLogo}
-                                time="FT"
-                                homeTeam={match.homeTeam}
-                                homeTeamLogo={match.homeTeamLogo}
-                                awayTeam={match.awayTeam}
-                                awayTeamLogo={match.awayTeamLogo}
-                                prediction={match.result ? match.result.toUpperCase() : (match.aiPrediction?.prediction || 'FT')}
-                                odds={match.odds?.home || '—'}
-                                homeScore={match.homeScore}
-                                awayScore={match.awayScore}
-                                aiInsight={match.aiPrediction}
+                                match={match}
+                                expanded={expandedId === match.id}
+                                onToggle={() => setExpandedId((prev) => (prev === match.id ? null : match.id))}
+                                access={{ paid: access.paid, vip: access.vip }}
                             />
                         ))}
                     </View>
                 ) : (
                     <View style={styles.emptyContainer}>
-                        <View style={[styles.emptyIconWrapper, { backgroundColor: themeColors.cardBgSecondary }]}>
-                            <Trophy size={36} color={themeColors.textMuted} />
+                        <View style={[styles.emptyIconWrapper, { backgroundColor: themeColors.surfaceElevated }]}>
+                            <Trophy size={36} color={themeColors.mutedText} />
                         </View>
                         <Text style={[styles.emptyText, { color: themeColors.text }]}>No Results Yet</Text>
-                        <Text style={[styles.emptySubtext, { color: themeColors.textMuted }]}>
+                        <Text style={[styles.emptySubtext, { color: themeColors.mutedText }]}>
                             No finished matches for this date.
                         </Text>
                     </View>
@@ -185,7 +186,8 @@ export default function WinsScreen() {
     );
 }
 
-const styles = StyleSheet.create({
+function getStyles(themeColors: ThemeColors) {
+    return StyleSheet.create({
     container: { flex: 1 },
     calendarStrip: {
         borderBottomWidth: 1,
@@ -198,7 +200,7 @@ const styles = StyleSheet.create({
         paddingVertical: 6,
         borderRadius: 12,
         borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.05)',
+        borderColor: themeColors.border,
     },
     leagueChipText: { ...typography.chipText },
     statsRow: {
@@ -235,4 +237,5 @@ const styles = StyleSheet.create({
     },
     emptyText: { ...typography.emptyText },
     emptySubtext: { ...typography.emptySubtext, textAlign: 'center', paddingHorizontal: 36 },
-});
+    });
+}

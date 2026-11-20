@@ -1,9 +1,10 @@
 import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, StyleSheet, RefreshControl, TextInput, Alert, KeyboardAvoidingView, Platform } from 'react-native';
-import { Crown, Calendar, Lock, Key, CheckCircle2, Clock, Send } from 'lucide-react-native';
+import { Crown, Key, CheckCircle2, Clock, Send } from 'lucide-react-native';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { MatchCard } from '../../components/MatchCard';
 import { DatePickerStrip } from '../../components/DatePickerStrip';
 import { useTheme } from '../../context/ThemeContext';
+import type { ThemeColors } from '../../theme/colors';
 import { useUser } from '../../context/UserContext';
 import { typography } from '../../theme/typography';
 import { api } from '../../api/client';
@@ -19,9 +20,11 @@ const toTitleCase = (str: string) =>
 
 export default function VIPTipsScreen() {
     const { themeColors } = useTheme();
+    const styles = getStyles(themeColors);
     const router = useRouter();
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
     const [selectedLeague, setSelectedLeague] = useState('All');
+    const [expandedId, setExpandedId] = useState<string | null>(null);
     const [tokenInput, setTokenInput] = useState('');
     const [enteringToken, setEnteringToken] = useState(false);
     const [verifyingToken, setVerifyingToken] = useState(false);
@@ -130,7 +133,7 @@ export default function VIPTipsScreen() {
     if (memberStatus === 'loading') {
         return (
             <View style={[styles.container, { backgroundColor: themeColors.background, justifyContent: 'center', alignItems: 'center' }]}>
-                <ActivityIndicator color={themeColors.primary} size="large" />
+                <ActivityIndicator color={themeColors.accent} size="large" />
             </View>
         );
     }
@@ -147,20 +150,20 @@ export default function VIPTipsScreen() {
                     keyboardShouldPersistTaps='handled'
                     showsVerticalScrollIndicator={false}
                 >
-                    <View style={[styles.gateBadge, { backgroundColor: themeColors.primary }]}>
+                    <View style={[styles.gateBadge, { backgroundColor: themeColors.accent }]}>
                         <Crown size={18} color="white" />
                         <Text style={styles.gateBadgeText}>ELITE ACCESS REQUIRED</Text>
                     </View>
 
                     <Text style={[styles.gateTitle, { color: themeColors.text }]}>JOIN THE 1%</Text>
-                    <Text style={[styles.gateSubtitle, { color: themeColors.textMuted }]}>
+                    <Text style={[styles.gateSubtitle, { color: themeColors.mutedText }]}>
                         Get access to our most accurate AI predictions with verified 90%+ strike rate.
                     </Text>
 
                     {/* Features */}
                     {['Expert AI analysis on every match', 'Verified 90%+ accuracy predictions', 'Exclusive VIP-only picks', 'Priority support'].map((f, i) => (
                         <View key={i} style={styles.featureRow}>
-                            <CheckCircle2 size={14} color={themeColors.primary} />
+                            <CheckCircle2 size={14} color={themeColors.accent} />
                             <Text style={[styles.featureText, { color: themeColors.text }]}>{f}</Text>
                         </View>
                     ))}
@@ -168,7 +171,7 @@ export default function VIPTipsScreen() {
                     {/* Request membership */}
                     {memberStatus === 'none' && !enteringToken && (
                         <TouchableOpacity
-                            style={[styles.primaryBtn, { backgroundColor: themeColors.primary }]}
+                            style={[styles.primaryBtn, { backgroundColor: themeColors.accent }]}
                             onPress={requestMembership}
                             disabled={requesting}
                         >
@@ -183,10 +186,10 @@ export default function VIPTipsScreen() {
 
                     {/* Pending state */}
                     {memberStatus === 'pending' && !enteringToken && (
-                        <View style={[styles.pendingCard, { backgroundColor: themeColors.cardBg, borderColor: themeColors.primary }]}>
-                            <Clock size={20} color={themeColors.primary} />
+                        <View style={[styles.pendingCard, { backgroundColor: themeColors.surface, borderColor: themeColors.accent }]}>
+                            <Clock size={20} color={themeColors.accent} />
                             <Text style={[styles.pendingTitle, { color: themeColors.text }]}>Request Under Review</Text>
-                            <Text style={[styles.pendingText, { color: themeColors.textMuted }]}>
+                            <Text style={[styles.pendingText, { color: themeColors.mutedText }]}>
                                 Your request is pending admin approval. Once approved, you will receive an access token.
                             </Text>
                         </View>
@@ -194,10 +197,10 @@ export default function VIPTipsScreen() {
 
                     {/* Approved state */}
                     {memberStatus === 'approved' && !enteringToken && (
-                        <View style={[styles.pendingCard, { backgroundColor: themeColors.cardBg, borderColor: '#15783a' }]}>
-                            <CheckCircle2 size={20} color="#15783a" />
+                        <View style={[styles.pendingCard, { backgroundColor: themeColors.surface, borderColor: themeColors.success }]}>
+                            <CheckCircle2 size={20} color={themeColors.success} />
                             <Text style={[styles.pendingTitle, { color: themeColors.text }]}>Request Approved!</Text>
-                            <Text style={[styles.pendingText, { color: themeColors.textMuted }]}>
+                            <Text style={[styles.pendingText, { color: themeColors.mutedText }]}>
                                 Your VIP access request has been approved. Please enter your token below to unlock it.
                             </Text>
                         </View>
@@ -205,7 +208,7 @@ export default function VIPTipsScreen() {
 
                     {/* Get VIP access - navigate to Store tab */}
                     <TouchableOpacity
-                        style={[styles.primaryBtn, { backgroundColor: themeColors.primary }]}
+                        style={[styles.primaryBtn, { backgroundColor: themeColors.accent }]}
                         onPress={() => router.push('/market')}
                     >
                         <Text style={styles.primaryBtnText}>Get VIP access</Text>
@@ -217,24 +220,24 @@ export default function VIPTipsScreen() {
                             style={[styles.secondaryBtn, { borderColor: themeColors.border }]}
                             onPress={() => setEnteringToken(true)}
                         >
-                            <Key size={14} color={themeColors.textMuted} />
-                            <Text style={[styles.secondaryBtnText, { color: themeColors.textMuted }]}>I HAVE A TOKEN</Text>
+                            <Key size={14} color={themeColors.mutedText} />
+                            <Text style={[styles.secondaryBtnText, { color: themeColors.mutedText }]}>I HAVE A TOKEN</Text>
                         </TouchableOpacity>
                     ) : (
-                        <View style={[styles.tokenInputCard, { backgroundColor: themeColors.cardBg, borderColor: themeColors.border }]}>
-                            <Text style={[styles.tokenInputLabel, { color: themeColors.textMuted }]}>ENTER YOUR ACCESS TOKEN</Text>
+                        <View style={[styles.tokenInputCard, { backgroundColor: themeColors.surface, borderColor: themeColors.border }]}>
+                            <Text style={[styles.tokenInputLabel, { color: themeColors.mutedText }]}>ENTER YOUR ACCESS TOKEN</Text>
                             <TextInput
                                 value={tokenInput}
                                 onChangeText={setTokenInput}
                                 placeholder="e.g. VIP-XXXX-XXXX-XXXX"
-                                placeholderTextColor={themeColors.textMuted}
-                                style={[styles.tokenInput, { color: themeColors.text, borderColor: themeColors.border, backgroundColor: themeColors.cardBgSecondary }]}
+                                placeholderTextColor={themeColors.mutedText}
+                                style={[styles.tokenInput, { color: themeColors.text, borderColor: themeColors.border, backgroundColor: themeColors.surfaceElevated }]}
                                 autoCapitalize="characters"
                                 autoCorrect={false}
                             />
                             <View style={styles.tokenBtnRow}>
                                 <TouchableOpacity
-                                    style={[styles.primaryBtn, { backgroundColor: themeColors.primary, flex: 1 }]}
+                                    style={[styles.primaryBtn, { backgroundColor: themeColors.accent, flex: 1 }]}
                                     onPress={verifyToken}
                                     disabled={verifyingToken || !tokenInput.trim()}
                                 >
@@ -244,10 +247,10 @@ export default function VIPTipsScreen() {
                                     }
                                 </TouchableOpacity>
                                 <TouchableOpacity
-                                    style={[styles.cancelBtn, { backgroundColor: themeColors.cardBgSecondary }]}
+                                    style={[styles.cancelBtn, { backgroundColor: themeColors.surfaceElevated }]}
                                     onPress={() => { setEnteringToken(false); setTokenInput(''); }}
                                 >
-                                    <Text style={[styles.cancelBtnText, { color: themeColors.textMuted }]}>Cancel</Text>
+                                    <Text style={[styles.cancelBtnText, { color: themeColors.mutedText }]}>Cancel</Text>
                                 </TouchableOpacity>
                             </View>
                         </View>
@@ -261,24 +264,33 @@ export default function VIPTipsScreen() {
     return (
         <View style={[styles.container, { backgroundColor: themeColors.background }]}>
             {/* Calendar strip */}
-            <View style={[styles.calendarStrip, { borderBottomColor: 'rgba(255,255,255,0.05)' }]}>
+            <View style={[styles.calendarStrip, { borderBottomColor: themeColors.border }]}>
                 <DatePickerStrip
                     dates={dates}
                     selectedDate={selectedDate}
-                    onSelectDate={setSelectedDate}
+                    onSelectDate={(date) => {
+                        setSelectedDate(date);
+                        setExpandedId(null);
+                    }}
                 />
             </View>
 
             {/* League filter */}
             <View style={styles.filterSection}>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.leaguesScroll}>
-                    {uniqueLeagues.map(league => (
+                    {uniqueLeagues.map((league) => (
                         <TouchableOpacity
                             key={league}
-                            onPress={() => setSelectedLeague(league)}
-                            style={[styles.leagueChip, { backgroundColor: selectedLeague === league ? themeColors.primary : themeColors.cardBgSecondary }]}
+                            onPress={() => {
+                                setSelectedLeague(league);
+                                setExpandedId(null);
+                            }}
+                            style={[
+                                styles.leagueChip,
+                                { backgroundColor: selectedLeague === league ? themeColors.accent : themeColors.surfaceElevated },
+                            ]}
                         >
-                            <Text style={[styles.leagueChipText, { color: selectedLeague === league ? 'white' : themeColors.textMuted }]}>
+                            <Text style={[styles.leagueChipText, { color: selectedLeague === league ? 'white' : themeColors.mutedText }]}>
                                 {league === 'All' ? 'All' : toTitleCase(league)}
                             </Text>
                         </TouchableOpacity>
@@ -287,54 +299,45 @@ export default function VIPTipsScreen() {
             </View>
 
             {/* VIP active badge */}
-            <View style={[styles.activeBanner, { backgroundColor: `${themeColors.primary}15`, borderColor: `${themeColors.primary}30` }]}>
-                <Crown size={14} color={themeColors.primary} />
-                <Text style={[styles.activeBannerText, { color: themeColors.primary }]}>VIP ACCESS ACTIVE</Text>
+            <View style={[styles.activeBanner, { backgroundColor: `${themeColors.accent}15`, borderColor: `${themeColors.accent}30` }]}>
+                <Crown size={14} color={themeColors.accent} />
+                <Text style={[styles.activeBannerText, { color: themeColors.accent }]}>VIP ACCESS ACTIVE</Text>
             </View>
 
             <ScrollView
                 style={styles.content}
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={styles.scrollContent}
-                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={themeColors.primary} colors={[themeColors.primary]} />}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={themeColors.accent} colors={[themeColors.accent]} />}
             >
                 <View style={styles.sectionHeader}>
-                    <Crown size={14} color={themeColors.primary} />
+                    <Crown size={14} color={themeColors.accent} />
                     <Text style={[styles.sectionTitle, { color: themeColors.text }]}>TODAY'S VIP PICKS</Text>
                 </View>
 
                 {loading ? (
                     <View style={styles.loadingContainer}>
-                        <ActivityIndicator size="large" color={themeColors.primary} />
+                        <ActivityIndicator size="large" color={themeColors.accent} />
                     </View>
                 ) : filteredMatches.length > 0 ? (
                     <View style={styles.fixtureGrid}>
                         {filteredMatches.map((match) => (
                             <MatchCard
                                 key={match.id}
-                                matchId={match.id}
-                                matchData={match}
-                                leagueName={match.league}
-                                leagueLogo={match.leagueLogo}
-                                time={new Date(match.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                homeTeam={match.homeTeam}
-                                homeTeamLogo={match.homeTeamLogo}
-                                awayTeam={match.awayTeam}
-                                awayTeamLogo={match.awayTeamLogo}
-                                isLocked={false}
-                                aiInsight={match.aiPrediction}
-                                prediction={match.aiPrediction?.prediction}
-                                odds={match.odds?.home}
+                                match={match}
+                                expanded={expandedId === match.id}
+                                onToggle={() => setExpandedId((prev) => (prev === match.id ? null : match.id))}
+                                access={{ paid: false, vip: memberStatus === 'active' }}
                             />
                         ))}
                     </View>
                 ) : (
                     <View style={styles.emptyContainer}>
-                        <View style={[styles.emptyIconWrapper, { backgroundColor: themeColors.cardBgSecondary }]}>
-                            <Crown size={36} color={themeColors.textMuted} />
+                        <View style={[styles.emptyIconWrapper, { backgroundColor: themeColors.surfaceElevated }]}>
+                            <Crown size={36} color={themeColors.mutedText} />
                         </View>
                         <Text style={[styles.emptyText, { color: themeColors.text }]}>No VIP Tips Today</Text>
-                        <Text style={[styles.emptySubtext, { color: themeColors.textMuted }]}>
+                        <Text style={[styles.emptySubtext, { color: themeColors.mutedText }]}>
                             New elite predictions are being analyzed. Check back soon.
                         </Text>
                     </View>
@@ -344,7 +347,8 @@ export default function VIPTipsScreen() {
     );
 }
 
-const styles = StyleSheet.create({
+function getStyles(themeColors: ThemeColors) {
+    return StyleSheet.create({
     container: { flex: 1 },
 
     // Gate screen
@@ -436,7 +440,7 @@ const styles = StyleSheet.create({
     datesContainer: { gap: 10 },
     filterSection: { paddingHorizontal: 14, paddingTop: 8 },
     leaguesScroll: { paddingVertical: 4, gap: 8 },
-    leagueChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' },
+    leagueChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, borderWidth: 1, borderColor: themeColors.border },
     leagueChipText: { ...typography.chipText },
     content: { flex: 1 },
     scrollContent: { padding: 14, paddingTop: 14, paddingBottom: 40 },
@@ -448,4 +452,5 @@ const styles = StyleSheet.create({
     emptyIconWrapper: { width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center' },
     emptyText: { ...typography.emptyText },
     emptySubtext: { ...typography.emptySubtext, textAlign: 'center', paddingHorizontal: 36 },
-});
+    });
+}

@@ -91,13 +91,13 @@ export function DatePickerStrip({
                             {
                                 width: itemWidth,
                                 backgroundColor: isSelected
-                                    ? themeColors.primary
-                                    : themeColors.cardBgSecondary,
+                                    ? themeColors.accent
+                                    : themeColors.surfaceElevated,
                                 borderColor: isSelected
-                                    ? themeColors.primary
+                                    ? themeColors.accent
                                     : 'transparent',
                                 borderWidth: isSelected ? 1 : 0,
-                                shadowColor: isSelected ? themeColors.primary : '#000',
+                                shadowColor: isSelected ? themeColors.accent : themeColors.shadow,
                                 shadowOffset: isSelected ? { width: 0, height: 4 } : { width: 0, height: 0 },
                                 shadowOpacity: isSelected ? 0.4 : 0,
                                 shadowRadius: isSelected ? 12 : 0,
@@ -108,7 +108,7 @@ export function DatePickerStrip({
                         <Text
                             style={[
                                 styles.dayText,
-                                { color: isSelected ? '#090A0C' : themeColors.textMuted },
+                                { color: isSelected ? themeColors.accentText : themeColors.mutedText },
                             ]}
                         >
                             {String(label || '')}
@@ -116,7 +116,7 @@ export function DatePickerStrip({
                         <Text
                             style={[
                                 styles.numText,
-                                { color: isSelected ? '#090A0C' : themeColors.text },
+                                { color: isSelected ? themeColors.accentText : themeColors.text },
                             ]}
                         >
                             {String(dayNum || '')}

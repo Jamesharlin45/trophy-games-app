@@ -87,7 +87,7 @@ export default function OnboardingScreen() {
     >
       <View style={styles.content}>
         <View style={styles.iconContainer}>
-          <User size={48} color={themeColors.primary} />
+          <User size={48} color={themeColors.accent} />
         </View>
 
         <Text style={styles.title}>Welcome to Trophy Games</Text>
@@ -97,7 +97,7 @@ export default function OnboardingScreen() {
           <TextInput
             style={styles.input}
             placeholder="Choose a username..."
-            placeholderTextColor={themeColors.textMuted}
+            placeholderTextColor={themeColors.mutedText}
             value={username}
             onChangeText={(t) => { setUsername(t); setError(''); }}
             autoCapitalize="none"
@@ -105,7 +105,7 @@ export default function OnboardingScreen() {
             maxLength={20}
           />
           {username.length >= 3 && availability !== undefined && (
-            <Text style={[styles.availability, { color: availability.available ? themeColors.primary : themeColors.error }]}>
+            <Text style={[styles.availability, { color: availability.available ? themeColors.accent : themeColors.danger }]}>
               {availability.available ? '✓ Available' : '✗ Taken'}
             </Text>
           )}
@@ -147,7 +147,7 @@ function createStyles(themeColors: ThemeColors) {
       width: 80,
       height: 80,
       borderRadius: 40,
-      backgroundColor: themeColors.cardBgSecondary,
+      backgroundColor: themeColors.surfaceElevated,
       justifyContent: 'center',
       alignItems: 'center',
       alignSelf: 'center',
@@ -164,7 +164,7 @@ function createStyles(themeColors: ThemeColors) {
     },
     subtitle: {
       fontSize: 15,
-      color: themeColors.textMuted,
+      color: themeColors.mutedText,
       textAlign: 'center',
       marginBottom: 48,
       lineHeight: 22,
@@ -173,7 +173,7 @@ function createStyles(themeColors: ThemeColors) {
       marginBottom: 24,
     },
     input: {
-      backgroundColor: themeColors.cardBg,
+      backgroundColor: themeColors.surface,
       borderWidth: 1,
       borderColor: themeColors.border,
       borderRadius: 16,
@@ -189,24 +189,24 @@ function createStyles(themeColors: ThemeColors) {
       fontWeight: '600',
     },
     errorText: {
-      color: themeColors.error,
+      color: themeColors.danger,
       textAlign: 'center',
       marginBottom: 16,
       fontSize: 14,
     },
     button: {
-      backgroundColor: themeColors.primary,
+      backgroundColor: themeColors.accent,
       padding: 16,
       borderRadius: 16,
       alignItems: 'center',
-      shadowColor: themeColors.primary,
+      shadowColor: themeColors.accent,
       shadowOffset: { width: 0, height: 4 },
       shadowOpacity: 0.3,
       shadowRadius: 12,
       elevation: 4,
     },
     buttonDisabled: {
-      backgroundColor: themeColors.cardBgSecondary,
+      backgroundColor: themeColors.surfaceElevated,
       shadowOpacity: 0,
       elevation: 0,
     },
