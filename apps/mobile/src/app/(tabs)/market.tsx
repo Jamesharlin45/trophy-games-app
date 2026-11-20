@@ -1,8 +1,9 @@
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, ActivityIndicator, Alert, TextInput, Platform } from 'react-native';
 import { useState, useCallback, useEffect } from 'react';
-import { Crown, CheckCircle2, Zap, Trophy, ShieldCheck, CreditCard, ChevronRight, Sparkles, Key, Send, Clock, ShoppingCart } from 'lucide-react-native';
+import { Crown, CheckCircle2, Zap, Trophy, ShieldCheck, CreditCard, Sparkles, Key, Clock, ShoppingCart } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { useTheme } from '../../context/ThemeContext';
+import type { ThemeColors } from '../../theme/colors';
 import { useUser } from '../../context/UserContext';
 import { typography } from '../../theme/typography';
 import { SUBSCRIPTION_PRODUCTS } from '@trophy-games/shared/subscriptions';
@@ -15,6 +16,7 @@ type MemberStatus = 'none' | 'pending' | 'approved' | 'active' | 'loading';
 
 export default function MembershipStoreScreen() {
     const { themeColors } = useTheme();
+    const styles = getStyles(themeColors);
     const [refreshing, setRefreshing] = useState(false);
     const [deviceId, setDeviceId] = useState('');
     const [tokenInput, setTokenInput] = useState('');
@@ -129,7 +131,7 @@ export default function MembershipStoreScreen() {
             } else {
                 Alert.alert('Notice', result.reason || 'Request could not be processed.');
             }
-        } catch (e) {
+        } catch {
             Alert.alert('Error', 'Failed to send request. Please try again.');
         }
         setRequesting(null);
@@ -152,14 +154,14 @@ export default function MembershipStoreScreen() {
             } else {
                 Alert.alert('Invalid Token', result.reason || 'Token is invalid or already used.');
             }
-        } catch (e) {
+        } catch {
             Alert.alert('Error', 'Verification failed. Try again later.');
         }
         setVerifyingToken(false);
     };
 
     /** Handle Google Play subscription purchase */
-    const handleSubscribe = async (productId: string, tier: 'vip' | 'paid') => {
+    const handleSubscribe = async (productId: string, _tier: 'vip' | 'paid') => {
         if (!deviceId) return;
         setPurchasing(productId);
         try {
@@ -195,15 +197,15 @@ export default function MembershipStoreScreen() {
     // Active IAP product IDs for border highlighting
     const activeProductId = iapActiveSub?.productId ?? null;
 
-    const StatusBadge = ({ status, type, iapActive }: { status: MemberStatus; type: string; iapActive: boolean }) => {
+    const StatusBadge = ({ status, type: _type, iapActive }: { status: MemberStatus; type: string; iapActive: boolean }) => {
         if (status === 'none' || status === 'loading') return null;
 
         const config = iapActive
-            ? { color: '#10b981', icon: ShoppingCart, label: 'SUBSCRIBED' }
+            ? { color: themeColors.success, icon: ShoppingCart, label: 'SUBSCRIBED' }
             : {
-                pending: { color: '#f59e0b', icon: Clock, label: 'PENDING' },
-                approved: { color: '#15783a', icon: CheckCircle2, label: 'APPROVED' },
-                active: { color: themeColors.primary, icon: Crown, label: 'ACTIVE' },
+                pending: { color: themeColors.warning, icon: Clock, label: 'PENDING' },
+                approved: { color: themeColors.success, icon: CheckCircle2, label: 'APPROVED' },
+                active: { color: themeColors.accent, icon: Crown, label: 'ACTIVE' },
             }[status as 'pending' | 'approved' | 'active'];
 
         if (!config) return null;
@@ -229,8 +231,8 @@ export default function MembershipStoreScreen() {
         if (isLoading) {
             return (
                 <View style={styles.loadingRow}>
-                    <ActivityIndicator color={themeColors.primary} size="small" />
-                    <Text style={[styles.loadingText, { color: themeColors.textMuted }]}>Checking status...</Text>
+                    <ActivityIndicator color={themeColors.accent} size="small" />
+                    <Text style={[styles.loadingText, { color: themeColors.mutedText }]}>Checking status...</Text>
                 </View>
             );
         }
@@ -238,7 +240,7 @@ export default function MembershipStoreScreen() {
             return (
                 <View style={styles.actionGroup}>
                     <TouchableOpacity
-                        style={[styles.subscribeBtn, { backgroundColor: themeColors.primary }]}
+                        style={[styles.subscribeBtn, { backgroundColor: themeColors.accent }]}
                         onPress={() => handleSubscribe(productId, tier)}
                         disabled={purchasing !== null || iapLoading}
                     >
@@ -261,9 +263,9 @@ export default function MembershipStoreScreen() {
                         disabled={requesting === tier}
                     >
                         {requesting === tier ? (
-                            <ActivityIndicator color={themeColors.textMuted} size="small" />
+                            <ActivityIndicator color={themeColors.mutedText} size="small" />
                         ) : (
-                            <Text style={[styles.textBtnLabel, { color: themeColors.textMuted }]}>Request token manually</Text>
+                            <Text style={[styles.textBtnLabel, { color: themeColors.mutedText }]}>Request token manually</Text>
                         )}
                     </TouchableOpacity>
                 </View>
@@ -271,17 +273,17 @@ export default function MembershipStoreScreen() {
         }
         if (status === 'pending') {
             return (
-                <View style={[styles.pendingInfo, { backgroundColor: themeColors.cardBgSecondary }]}>
-                    <Clock size={16} color={themeColors.textMuted} />
-                    <Text style={[styles.pendingText, { color: themeColors.textMuted }]}>Reviewing your request...</Text>
+                <View style={[styles.pendingInfo, { backgroundColor: themeColors.surfaceElevated }]}>
+                    <Clock size={16} color={themeColors.mutedText} />
+                    <Text style={[styles.pendingText, { color: themeColors.mutedText }]}>Reviewing your request...</Text>
                 </View>
             );
         }
         // active / approved
         return (
-            <View style={[styles.activeInfo, { backgroundColor: themeColors.primary + '15' }]}>
-                <CheckCircle2 size={16} color={themeColors.primary} />
-                <Text style={[styles.activeInfoText, { color: themeColors.primary }]}>
+            <View style={[styles.activeInfo, { backgroundColor: themeColors.accent + '15' }]}>
+                <CheckCircle2 size={16} color={themeColors.accent} />
+                <Text style={[styles.activeInfoText, { color: themeColors.accent }]}>
                     {activeProductId === productId && iapActiveSub?.expiresAt
                         ? `Subscribed — expires ${new Date(iapActiveSub.expiresAt).toLocaleDateString()}`
                         : 'Access Active'}
@@ -294,17 +296,17 @@ export default function MembershipStoreScreen() {
         <View style={[styles.container, { backgroundColor: themeColors.background }]}>
             <ScrollView
                 showsVerticalScrollIndicator={false}
-                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={themeColors.primary} />}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={themeColors.accent} />}
             >
                 {/* Hero section */}
-                <View style={[styles.hero, { backgroundColor: themeColors.cardBg }]}>
+                <View style={[styles.hero, { backgroundColor: themeColors.surface }]}>
                     <View style={styles.heroContent}>
-                        <View style={[styles.heroBadge, { backgroundColor: themeColors.primary + '20' }]}>
-                            <Sparkles size={14} color={themeColors.primary} />
-                            <Text style={[styles.heroBadgeText, { color: themeColors.primary }]}>PREMIUM ACCESS</Text>
+                        <View style={[styles.heroBadge, { backgroundColor: themeColors.accent + '20' }]}>
+                            <Sparkles size={14} color={themeColors.accent} />
+                            <Text style={[styles.heroBadgeText, { color: themeColors.accent }]}>PREMIUM ACCESS</Text>
                         </View>
                         <Text style={[styles.heroTitle, { color: themeColors.text }]}>UNLEASH THE POWER OF AI</Text>
-                        <Text style={[styles.heroSubtitle, { color: themeColors.textMuted }]}>
+                        <Text style={[styles.heroSubtitle, { color: themeColors.mutedText }]}>
                             Get professional-grade predictions and insights with over 90% verified strike rate.
                         </Text>
                     </View>
@@ -313,21 +315,21 @@ export default function MembershipStoreScreen() {
                 <View style={styles.content}>
                     {/* Token Input Section (if approved) */}
                     {(vipTokenStatus === 'approved' || paidTokenStatus === 'approved' || showTokenInput) && (
-                        <View style={[styles.card, { backgroundColor: themeColors.cardBg, borderColor: themeColors.primary }]}>
+                        <View style={[styles.card, { backgroundColor: themeColors.surface, borderColor: themeColors.accent }]}>
                             <View style={styles.cardHeader}>
-                                <Key size={20} color={themeColors.primary} />
+                                <Key size={20} color={themeColors.accent} />
                                 <Text style={[styles.cardTitle, { color: themeColors.text }]}>ENTER ACCESS TOKEN</Text>
                             </View>
                             <TextInput
-                                style={[styles.input, { backgroundColor: themeColors.cardBgSecondary, color: themeColors.text, borderColor: themeColors.border }]}
+                                style={[styles.input, { backgroundColor: themeColors.surfaceElevated, color: themeColors.text, borderColor: themeColors.border }]}
                                 placeholder="APP-XXXX-XXXX"
-                                placeholderTextColor={themeColors.textMuted}
+                                placeholderTextColor={themeColors.mutedText}
                                 value={tokenInput}
                                 onChangeText={setTokenInput}
                                 autoCapitalize="characters"
                             />
                             <TouchableOpacity
-                                style={[styles.actionBtn, { backgroundColor: themeColors.primary }]}
+                                style={[styles.actionBtn, { backgroundColor: themeColors.accent }]}
                                 onPress={handleVerifyToken}
                                 disabled={verifyingToken || !tokenInput.trim()}
                             >
@@ -338,8 +340,8 @@ export default function MembershipStoreScreen() {
 
                     {/* IAP status banner */}
                     {iapError && Platform.OS === 'android' && !iapLoading && (
-                        <View style={[styles.iapNotice, { backgroundColor: themeColors.cardBgSecondary, borderColor: themeColors.border }]}>
-                            <Text style={[styles.iapNoticeText, { color: themeColors.textMuted }]}>
+                        <View style={[styles.iapNotice, { backgroundColor: themeColors.surfaceElevated, borderColor: themeColors.border }]}>
+                            <Text style={[styles.iapNoticeText, { color: themeColors.mutedText }]}>
                                 ⚠️ Google Play Billing unavailable: {iapError.includes('not available') ? 'This device may not support Google Play Billing, or you may be running in Expo Go (which disables IAP).' : iapError}
                             </Text>
                         </View>
@@ -349,13 +351,13 @@ export default function MembershipStoreScreen() {
                     <Text style={[styles.sectionTitle, { color: themeColors.text }]}>MEMBERSHIP PLANS</Text>
 
                     {/* ── VIP WEEKLY CARD ── */}
-                    <View style={[styles.card, { backgroundColor: themeColors.cardBg, borderColor: activeProductId === SUBSCRIPTION_PRODUCTS.VIP_WEEKLY.productId ? themeColors.primary + '60' : themeColors.border }]}>
+                    <View style={[styles.card, { backgroundColor: themeColors.surface, borderColor: activeProductId === SUBSCRIPTION_PRODUCTS.VIP_WEEKLY.productId ? themeColors.accent + '60' : themeColors.border }]}>
                         <View style={styles.cardTop}>
                             <View style={styles.cardHeader}>
-                                <Crown size={24} color={themeColors.primary} />
+                                <Crown size={24} color={themeColors.accent} />
                                 <View>
                                     <Text style={[styles.planTitle, { color: themeColors.text }]}>VIP WEEKLY</Text>
-                                    <Text style={[styles.planSubtitle, { color: themeColors.textMuted }]}>7 Days Full Access</Text>
+                                    <Text style={[styles.planSubtitle, { color: themeColors.mutedText }]}>7 Days Full Access</Text>
                                 </View>
                             </View>
                             <StatusBadge
@@ -367,7 +369,7 @@ export default function MembershipStoreScreen() {
                         <View style={styles.features}>
                             {['Daily Elite AI Predictions', '90%+ Strike Rate Accuracy', 'Exclusive Match Insights', 'Priority Support'].map((f, i) => (
                                 <View key={i} style={styles.featureLine}>
-                                    <ShieldCheck size={14} color={themeColors.primary} />
+                                    <ShieldCheck size={14} color={themeColors.accent} />
                                     <Text style={[styles.featureText, { color: themeColors.text }]}>{f}</Text>
                                 </View>
                             ))}
@@ -382,13 +384,13 @@ export default function MembershipStoreScreen() {
                     </View>
 
                     {/* ── VIP MONTHLY CARD ── */}
-                    <View style={[styles.card, { backgroundColor: themeColors.cardBg, borderColor: activeProductId === SUBSCRIPTION_PRODUCTS.VIP_MONTHLY.productId ? themeColors.primary + '60' : themeColors.border }]}>
+                    <View style={[styles.card, { backgroundColor: themeColors.surface, borderColor: activeProductId === SUBSCRIPTION_PRODUCTS.VIP_MONTHLY.productId ? themeColors.accent + '60' : themeColors.border }]}>
                         <View style={styles.cardTop}>
                             <View style={styles.cardHeader}>
-                                <Crown size={24} color={themeColors.primary} />
+                                <Crown size={24} color={themeColors.accent} />
                                 <View>
                                     <Text style={[styles.planTitle, { color: themeColors.text }]}>VIP MONTHLY</Text>
-                                    <Text style={[styles.planSubtitle, { color: themeColors.textMuted }]}>30 Days Full Access</Text>
+                                    <Text style={[styles.planSubtitle, { color: themeColors.mutedText }]}>30 Days Full Access</Text>
                                 </View>
                             </View>
                             <StatusBadge
@@ -400,15 +402,15 @@ export default function MembershipStoreScreen() {
                         <View style={styles.features}>
                             {['Daily Elite AI Predictions', '90%+ Strike Rate Accuracy', 'Exclusive Match Insights', 'Priority Support'].map((f, i) => (
                                 <View key={i} style={styles.featureLine}>
-                                    <ShieldCheck size={14} color={themeColors.primary} />
+                                    <ShieldCheck size={14} color={themeColors.accent} />
                                     <Text style={[styles.featureText, { color: themeColors.text }]}>{f}</Text>
                                 </View>
                             ))}
                         </View>
                         {/* Best value badge */}
-                        <View style={[styles.savingsBadge, { backgroundColor: themeColors.primary + '15', borderColor: themeColors.primary + '30' }]}>
-                            <Zap size={11} color={themeColors.primary} />
-                            <Text style={[styles.savingsText, { color: themeColors.primary }]}>BEST VALUE — Save vs weekly</Text>
+                        <View style={[styles.savingsBadge, { backgroundColor: themeColors.accent + '15', borderColor: themeColors.accent + '30' }]}>
+                            <Zap size={11} color={themeColors.accent} />
+                            <Text style={[styles.savingsText, { color: themeColors.accent }]}>BEST VALUE — Save vs weekly</Text>
                         </View>
                         {renderCardActions(
                             SUBSCRIPTION_PRODUCTS.VIP_MONTHLY.productId,
@@ -420,13 +422,13 @@ export default function MembershipStoreScreen() {
                     </View>
 
                     {/* ── PAID MONTHLY CARD ── */}
-                    <View style={[styles.card, { backgroundColor: themeColors.cardBg, borderColor: activeProductId === SUBSCRIPTION_PRODUCTS.PAID_MONTHLY.productId ? themeColors.primary + '60' : themeColors.border }]}>
+                    <View style={[styles.card, { backgroundColor: themeColors.surface, borderColor: activeProductId === SUBSCRIPTION_PRODUCTS.PAID_MONTHLY.productId ? themeColors.accent + '60' : themeColors.border }]}>
                         <View style={styles.cardTop}>
                             <View style={styles.cardHeader}>
-                                <Trophy size={24} color={themeColors.primary} />
+                                <Trophy size={24} color={themeColors.accent} />
                                 <View>
                                     <Text style={[styles.planTitle, { color: themeColors.text }]}>PAID MONTHLY</Text>
-                                    <Text style={[styles.planSubtitle, { color: themeColors.textMuted }]}>30 Days Full Access</Text>
+                                    <Text style={[styles.planSubtitle, { color: themeColors.mutedText }]}>30 Days Full Access</Text>
                                 </View>
                             </View>
                             <StatusBadge
@@ -438,7 +440,7 @@ export default function MembershipStoreScreen() {
                         <View style={styles.features}>
                             {['Curated premium predictions', 'Detailed AI match analysis', 'Match insights & value bets', 'Higher accuracy predictions'].map((f, i) => (
                                 <View key={i} style={styles.featureLine}>
-                                    <ShieldCheck size={14} color={themeColors.primary} />
+                                    <ShieldCheck size={14} color={themeColors.accent} />
                                     <Text style={[styles.featureText, { color: themeColors.text }]}>{f}</Text>
                                 </View>
                             ))}
@@ -453,7 +455,7 @@ export default function MembershipStoreScreen() {
                     </View>
 
                     {/* Support / Info */}
-                    <View style={[styles.footer, { backgroundColor: themeColors.cardBgSecondary }]}>
+                    <View style={[styles.footer, { backgroundColor: themeColors.surfaceElevated }]}>
                         <InfoSection icon={ShieldCheck} title="Verified Results" desc="All our predictions are verified by independent sources." />
                         <View style={styles.divider} />
                         <InfoSection icon={CreditCard} title="Secure Payments" desc="Payments processed securely via Google Play Billing." />
@@ -466,20 +468,22 @@ export default function MembershipStoreScreen() {
 
 function InfoSection({ icon: Icon, title, desc }: { icon: LucideIcon, title: string, desc: string }) {
     const { themeColors } = useTheme();
+    const styles = getStyles(themeColors);
     return (
         <View style={styles.infoSection}>
             <View style={[styles.infoIcon, { backgroundColor: themeColors.background }]}>
-                <Icon size={16} color={themeColors.primary} />
+                <Icon size={16} color={themeColors.accent} />
             </View>
             <View style={styles.infoContent}>
                 <Text style={[styles.infoTitle, { color: themeColors.text }]}>{title}</Text>
-                <Text style={[styles.infoDesc, { color: themeColors.textMuted }]}>{desc}</Text>
+                <Text style={[styles.infoDesc, { color: themeColors.mutedText }]}>{desc}</Text>
             </View>
         </View>
     );
 }
 
-const styles = StyleSheet.create({
+function getStyles(themeColors: ThemeColors) {
+    return StyleSheet.create({
     container: { flex: 1 },
     hero: {
         padding: 30,
@@ -507,7 +511,7 @@ const styles = StyleSheet.create({
         padding: 20,
         borderRadius: 24,
         borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.05)',
+        borderColor: themeColors.border,
         gap: 16,
     },
     cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
@@ -623,5 +627,6 @@ const styles = StyleSheet.create({
     infoContent: { flex: 1 },
     infoTitle: { ...typography.alertTitle },
     infoDesc: { ...typography.caption, lineHeight: 16 },
-    divider: { height: 1, backgroundColor: 'rgba(255,255,255,0.05)' },
-});
+    divider: { height: 1, backgroundColor: themeColors.border },
+    });
+}

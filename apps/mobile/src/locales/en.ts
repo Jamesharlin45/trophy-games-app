@@ -40,6 +40,8 @@ export default {
     settings: {
         title: 'Settings',
         theme: 'Theme',
+        mode: 'Mode',
+        accent: 'Accent',
         language: 'Language',
         notifications: 'Notifications',
         contact: 'Contact Support',

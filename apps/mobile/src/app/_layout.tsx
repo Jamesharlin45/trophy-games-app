@@ -9,6 +9,7 @@ import { useFonts } from 'expo-font';
 import { Stack, useRouter } from 'expo-router';
 import { Sun, Moon, Bell, Settings } from 'lucide-react-native';
 import { ThemeProvider as AppThemeProvider, useTheme } from '../context/ThemeContext';
+import type { ThemeColors } from '../theme/colors';
 import { UserProvider, useUser } from '../context/UserContext';
 import { LanguageProvider } from '../context/LanguageContext';
 import { usePushNotifications } from '../hooks/usePushNotifications';
@@ -50,6 +51,7 @@ function RootLayoutContent() {
     const { username, isLoading: isUserLoading } = useUser();
     const { expoPushToken } = usePushNotifications();
     const insets = useSafeAreaInsets();
+    const styles = getStyles(themeColors);
 
     // Restore Google Play subscriptions once, as soon as the app starts.
     useRestorePurchases();
@@ -128,7 +130,7 @@ function RootLayoutContent() {
                             >
                                 <Bell size={22} color={themeColors.text} strokeWidth={2.5} />
                                 {unreadCount > 0 && (
-                                    <View style={[styles.badge, { backgroundColor: themeColors.primary }]}>
+                                    <View style={[styles.badge, { backgroundColor: themeColors.accent }]}>
                                         <Text style={styles.badgeText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
                                     </View>
                                 )}
@@ -149,7 +151,7 @@ function RootLayoutContent() {
                     }} />
                     <Stack.Screen name="onboarding" options={{ headerShown: false, gestureEnabled: false }} />
                     <Stack.Screen name="match/[id]" options={{ headerShown: false }} />
-                    <Stack.Screen name="settings" options={{ presentation: 'modal', title: 'Settings' }} />
+                    <Stack.Screen name="settings" options={{ presentation: 'modal', title: 'Settings', headerShown: false }} />
                     <Stack.Screen name="alerts" options={{ presentation: 'modal', title: 'Alerts' }} />
                     <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
                 </Stack>
@@ -158,68 +160,53 @@ function RootLayoutContent() {
     );
 }
 
-const ThemeToggle = ({ onToggle, currentTheme, themeColors }: { onToggle: () => void; currentTheme: string; themeColors: ReturnType<typeof useTheme>['themeColors'] }) => {
+const ThemeToggle = ({ onToggle, currentTheme, themeColors }: { onToggle: () => void; currentTheme: string; themeColors: ThemeColors }) => {
+    const styles = getStyles(themeColors);
     return (
         <TouchableOpacity onPress={onToggle} style={styles.themeToggle}>
             {currentTheme === 'dark' ? (
-                <Sun size={20} color={themeColors.primary} />
+                <Sun size={20} color={themeColors.accent} />
             ) : (
-                <Moon size={20} color={themeColors.blue10} />
+                <Moon size={20} color={themeColors.accent} />
             )}
         </TouchableOpacity>
     );
 };
 
-const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-    },
-    errorContainer: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: '#000',
-        padding: 24,
-    },
-    errorTitle: {
-        color: '#EF4444',
-        fontSize: 18,
-        fontWeight: '700',
-        marginBottom: 12,
-    },
-    errorText: {
-        color: '#A1A1AA',
-        fontSize: 14,
-        textAlign: 'center',
-    },
-    themeToggle: {
-        padding: 12,
-    },
-    headerRight: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginRight: 8,
-    },
-    bellButton: {
-        padding: 12,
-        position: 'relative',
-    },
-    badge: {
-        position: 'absolute',
-        top: 8,
-        right: 8,
-        minWidth: 16,
-        height: 16,
-        borderRadius: 8,
-        justifyContent: 'center',
-        alignItems: 'center',
-        paddingHorizontal: 2,
-        borderWidth: 1.5,
-        borderColor: '#000',
-    },
-    badgeText: {
-        color: 'white',
-        fontSize: 8,
-        fontWeight: '700',
-    },
-});
+function getStyles(themeColors: ThemeColors) {
+    return StyleSheet.create({
+        container: {
+            flex: 1,
+        },
+        themeToggle: {
+            padding: 12,
+        },
+        headerRight: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            marginRight: 8,
+        },
+        bellButton: {
+            padding: 12,
+            position: 'relative',
+        },
+        badge: {
+            position: 'absolute',
+            top: 8,
+            right: 8,
+            minWidth: 16,
+            height: 16,
+            borderRadius: 8,
+            justifyContent: 'center',
+            alignItems: 'center',
+            paddingHorizontal: 2,
+            borderWidth: 1.5,
+            borderColor: themeColors.shadow,
+        },
+        badgeText: {
+            color: themeColors.accentText,
+            fontSize: 8,
+            fontWeight: '700',
+        },
+    });
+}

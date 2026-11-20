@@ -1,9 +1,10 @@
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Image, ActivityIndicator, Dimensions } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Image, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { ChevronLeft, Zap, ShieldCheck, Goal } from 'lucide-react-native';
 import { useTheme } from '../../context/ThemeContext';
+import type { ThemeColors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import { getCountryFlagUrl } from '../../lib/flags';
 import { fetchMatchStats } from '../../api/footystats';
@@ -17,10 +18,11 @@ type MatchViewModel = Omit<
 > &
     Partial<MatchDetailData>;
 
-const { width } = Dimensions.get('window');
 
 const TeamLogo = ({ uri, name, textColor }: { uri?: string; name: string; textColor: string }) => {
     const [failed, setFailed] = useState(false);
+    const { themeColors } = useTheme();
+    const logoStyles = getLogoStyles(themeColors);
     const initials = name.split(' ').slice(0, 2).map((w: string) => w[0]).join('').toUpperCase();
     const flagUri = !uri || failed ? getCountryFlagUrl(name) : undefined;
 
@@ -37,17 +39,20 @@ const TeamLogo = ({ uri, name, textColor }: { uri?: string; name: string; textCo
     return <Text style={[logoStyles.initials, { color: textColor }]}>{initials}</Text>;
 };
 
-const logoStyles = StyleSheet.create({
+function getLogoStyles(themeColors: ThemeColors) {
+    return StyleSheet.create({
     img: { width: 46, height: 46, resizeMode: 'contain' },
-    flagBox: { width: 46, height: 46, borderRadius: 12, overflow: 'hidden', backgroundColor: 'rgba(128,128,128,0.08)', alignItems: 'center', justifyContent: 'center' },
+    flagBox: { width: 46, height: 46, borderRadius: 12, overflow: 'hidden', backgroundColor: themeColors.glass, alignItems: 'center', justifyContent: 'center' },
     flag: { width: 46, height: 30, resizeMode: 'cover' },
     initials: { fontSize: 18, fontWeight: '800', letterSpacing: 1 },
-});
+    });
+}
 
 export default function MatchDetailScreen() {
     const { id, matchData } = useLocalSearchParams();
     const router = useRouter();
     const { themeColors } = useTheme();
+    const styles = getStyles(themeColors);
 
     const [match, setMatch] = useState<MatchViewModel | null>(null);
     const [loading, setLoading] = useState(true);
@@ -128,7 +133,7 @@ export default function MatchDetailScreen() {
     if (loading && !match) {
         return (
             <SafeAreaView style={[styles.container, { backgroundColor: themeColors.background, justifyContent: 'center', alignItems: 'center' }]} edges={['left', 'right']}>
-                <ActivityIndicator size="large" color={themeColors.primary} />
+                <ActivityIndicator size="large" color={themeColors.accent} />
             </SafeAreaView>
         );
     }
@@ -136,9 +141,9 @@ export default function MatchDetailScreen() {
     if (!match) {
         return (
             <SafeAreaView style={[styles.container, { backgroundColor: themeColors.background, justifyContent: 'center', alignItems: 'center' }]} edges={['left', 'right']}>
-                <Text style={{ color: themeColors.textMuted }}>Match details unavailable</Text>
+                <Text style={{ color: themeColors.mutedText }}>Match details unavailable</Text>
                 <TouchableOpacity onPress={() => router.back()} style={{ marginTop: 20 }}>
-                    <Text style={{ color: themeColors.primary, fontWeight: '700' }}>GO BACK</Text>
+                    <Text style={{ color: themeColors.accent, fontWeight: '700' }}>GO BACK</Text>
                 </TouchableOpacity>
             </SafeAreaView>
         );
@@ -163,14 +168,14 @@ export default function MatchDetailScreen() {
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
 
                 {/* Hero Scoreboard */}
-                <View style={[styles.scoreboard, { backgroundColor: themeColors.cardBgSecondary }]}>
+                <View style={[styles.scoreboard, { backgroundColor: themeColors.surfaceElevated }]}>
                     <View style={styles.leagueRow}>
-                        <ShieldCheck size={11} color={themeColors.textMuted} />
-                        <Text style={[styles.leagueText, { color: themeColors.textMuted }]}>
+                        <ShieldCheck size={11} color={themeColors.mutedText} />
+                        <Text style={[styles.leagueText, { color: themeColors.mutedText }]}>
                             {match.league?.replace(/\w\S*/g, (w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())}
                         </Text>
                         {match.country && (
-                            <Text style={[styles.countryText, { color: themeColors.textMuted }]}>• {match.country}</Text>
+                            <Text style={[styles.countryText, { color: themeColors.mutedText }]}>• {match.country}</Text>
                         )}
                     </View>
 
@@ -178,13 +183,13 @@ export default function MatchDetailScreen() {
                     <View style={[
                         styles.statusBadge,
                         {
-                            backgroundColor: isLive ? '#ef4444' : isFinished ? themeColors.cardBg : themeColors.cardBg,
+                            backgroundColor: isLive ? themeColors.danger : isFinished ? themeColors.surface : themeColors.surface,
                         }
                     ]}>
                         {isLive && <View style={styles.liveDot} />}
                         <Text style={[
                             styles.statusText,
-                            { color: isLive ? 'white' : themeColors.textMuted }
+                            { color: isLive ? 'white' : themeColors.mutedText }
                         ]}>
                             {isLive ? match.status?.toUpperCase() : isFinished ? 'FULL TIME' : 'UPCOMING'}
                         </Text>
@@ -193,31 +198,31 @@ export default function MatchDetailScreen() {
                     {/* Teams + Score */}
                     <View style={styles.teamsRow}>
                         <View style={styles.teamCol}>
-                            <View style={[styles.logoBox, { backgroundColor: themeColors.cardBg }]}>
-                                <TeamLogo uri={match.homeTeamLogo} name={match.homeTeam} textColor={themeColors.textMuted} />
+                            <View style={[styles.logoBox, { backgroundColor: themeColors.surface }]}>
+                                <TeamLogo uri={match.homeTeamLogo} name={match.homeTeam} textColor={themeColors.mutedText} />
                             </View>
                             <Text style={[styles.teamName, { color: themeColors.text }]} numberOfLines={2}>{match.homeTeam}</Text>
                             {match.homeStanding && (
-                                <Text style={[styles.standingText, { color: themeColors.textMuted }]}>#{match.homeStanding}</Text>
+                                <Text style={[styles.standingText, { color: themeColors.mutedText }]}>#{match.homeStanding}</Text>
                             )}
                         </View>
 
                         <View style={styles.scoreCol}>
                             {(match.homeScore !== undefined) ? (
-                                <Text style={[styles.scoreText, { color: themeColors.primary }]}>
+                                <Text style={[styles.scoreText, { color: themeColors.accent }]}>
                                     {match.homeScore} — {match.awayScore}
                                 </Text>
                             ) : (
                                 <Text style={[styles.vsText, { color: themeColors.text }]}>VS</Text>
                             )}
-                            <Text style={[styles.kickoffText, { color: themeColors.textMuted }]}>
+                            <Text style={[styles.kickoffText, { color: themeColors.mutedText }]}>
                                 {new Date(match.timestamp).toLocaleString([], {
                                     weekday: 'short', month: 'short', day: 'numeric',
                                     hour: '2-digit', minute: '2-digit'
                                 })}
                             </Text>
                             {(match.htHomeScore !== undefined && match.htAwayScore !== undefined) && (
-                                <Text style={[styles.htText, { color: themeColors.textMuted }]}>
+                                <Text style={[styles.htText, { color: themeColors.mutedText }]}>
                                     HT {match.htHomeScore} - {match.htAwayScore}
                                 </Text>
                             )}
@@ -230,12 +235,12 @@ export default function MatchDetailScreen() {
                         </View>
 
                         <View style={styles.teamCol}>
-                            <View style={[styles.logoBox, { backgroundColor: themeColors.cardBg }]}>
-                                <TeamLogo uri={match.awayTeamLogo} name={match.awayTeam} textColor={themeColors.textMuted} />
+                            <View style={[styles.logoBox, { backgroundColor: themeColors.surface }]}>
+                                <TeamLogo uri={match.awayTeamLogo} name={match.awayTeam} textColor={themeColors.mutedText} />
                             </View>
                             <Text style={[styles.teamName, { color: themeColors.text }]} numberOfLines={2}>{match.awayTeam}</Text>
                             {match.awayStanding && (
-                                <Text style={[styles.standingText, { color: themeColors.textMuted }]}>#{match.awayStanding}</Text>
+                                <Text style={[styles.standingText, { color: themeColors.mutedText }]}>#{match.awayStanding}</Text>
                             )}
                         </View>
                     </View>
@@ -244,20 +249,20 @@ export default function MatchDetailScreen() {
                 {/* Match Predictions (pre-match probability potentials) */}
                 {match.potentials && match.potentials.length > 0 && (
                     <View style={styles.outerPad}>
-                        <Text style={[styles.sectionLabel, { color: themeColors.textMuted }]}>MATCH PREDICTIONS</Text>
-                        <View style={[styles.potentialCard, { backgroundColor: themeColors.cardBg }]}>
+                        <Text style={[styles.sectionLabel, { color: themeColors.mutedText }]}>MATCH PREDICTIONS</Text>
+                        <View style={[styles.potentialCard, { backgroundColor: themeColors.surface }]}>
                             {match.potentials.map((p, i: number) => (
                                 <View key={i} style={styles.potentialRow}>
                                     <Text style={[styles.potentialLabel, { color: themeColors.text }]}>{p.label}</Text>
                                     {p.percent !== undefined ? (
                                         <View style={styles.potentialBarWrap}>
-                                            <View style={[styles.potentialBarTrack, { backgroundColor: themeColors.cardBgSecondary }]}>
-                                                <View style={[styles.potentialBarFill, { width: `${p.percent}%`, backgroundColor: themeColors.primary }]} />
+                                            <View style={[styles.potentialBarTrack, { backgroundColor: themeColors.surfaceElevated }]}>
+                                                <View style={[styles.potentialBarFill, { width: `${p.percent}%`, backgroundColor: themeColors.accent }]} />
                                             </View>
-                                            <Text style={[styles.potentialPct, { color: themeColors.primary }]}>{p.percent}%</Text>
+                                            <Text style={[styles.potentialPct, { color: themeColors.accent }]}>{p.percent}%</Text>
                                         </View>
                                     ) : (
-                                        <Text style={[styles.potentialPct, { color: themeColors.primary }]}>{p.value}</Text>
+                                        <Text style={[styles.potentialPct, { color: themeColors.accent }]}>{p.value}</Text>
                                     )}
                                 </View>
                             ))}
@@ -268,46 +273,46 @@ export default function MatchDetailScreen() {
                 {/* Market Odds - Show detailedOdds if available, otherwise fall back to basic odds */}
                 {(match.detailedOdds || match.odds) && (
                     <View style={styles.outerPad}>
-                        <Text style={[styles.sectionLabel, { color: themeColors.textMuted }]}>MARKET ODDS</Text>
+                        <Text style={[styles.sectionLabel, { color: themeColors.mutedText }]}>MARKET ODDS</Text>
                         <View style={styles.oddsGrid}>
-                            <View style={[styles.oddsTile, { backgroundColor: themeColors.cardBg }]}>
-                                <Text style={[styles.tileLabel, { color: themeColors.textMuted }]}>FULL TIME 1X2</Text>
+                            <View style={[styles.oddsTile, { backgroundColor: themeColors.surface }]}>
+                                <Text style={[styles.tileLabel, { color: themeColors.mutedText }]}>FULL TIME 1X2</Text>
                                 <View style={styles.oddsRow}>
                                     <View style={styles.oddsCell}>
-                                        <Text style={[styles.oddsVal, { color: themeColors.primary }]}>
+                                        <Text style={[styles.oddsVal, { color: themeColors.accent }]}>
                                             {match.detailedOdds?.ft?.['1x2']?.home || match.odds?.home || '—'}
                                         </Text>
-                                        <Text style={[styles.oddsSub, { color: themeColors.textMuted }]}>HOME</Text>
+                                        <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>HOME</Text>
                                     </View>
                                     <View style={[styles.oddsDivider, { backgroundColor: themeColors.border }]} />
                                     <View style={styles.oddsCell}>
                                         <Text style={[styles.oddsVal, { color: themeColors.text }]}>
                                             {match.detailedOdds?.ft?.['1x2']?.draw || match.odds?.draw || '—'}
                                         </Text>
-                                        <Text style={[styles.oddsSub, { color: themeColors.textMuted }]}>DRAW</Text>
+                                        <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>DRAW</Text>
                                     </View>
                                     <View style={[styles.oddsDivider, { backgroundColor: themeColors.border }]} />
                                     <View style={styles.oddsCell}>
                                         <Text style={[styles.oddsVal, { color: themeColors.text }]}>
                                             {match.detailedOdds?.ft?.['1x2']?.away || match.odds?.away || '—'}
                                         </Text>
-                                        <Text style={[styles.oddsSub, { color: themeColors.textMuted }]}>AWAY</Text>
+                                        <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>AWAY</Text>
                                     </View>
                                 </View>
                             </View>
 
                             {match.detailedOdds?.ft?.['ou'] && (
-                                <View style={[styles.oddsTile, { backgroundColor: themeColors.cardBg }]}>
-                                    <Text style={[styles.tileLabel, { color: themeColors.textMuted }]}>GOALS OVER / UNDER</Text>
+                                <View style={[styles.oddsTile, { backgroundColor: themeColors.surface }]}>
+                                    <Text style={[styles.tileLabel, { color: themeColors.mutedText }]}>GOALS OVER / UNDER</Text>
                                     <View style={styles.oddsRow}>
                                         <View style={styles.oddsCell}>
                                             <Text style={[styles.oddsVal, { color: themeColors.text }]}>{match.detailedOdds.ft['ou'].over || '—'}</Text>
-                                            <Text style={[styles.oddsSub, { color: themeColors.textMuted }]}>OVER {match.detailedOdds.ft['ou'].line}</Text>
+                                            <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>OVER {match.detailedOdds.ft['ou'].line}</Text>
                                         </View>
                                         <View style={[styles.oddsDivider, { backgroundColor: themeColors.border }]} />
                                         <View style={styles.oddsCell}>
                                             <Text style={[styles.oddsVal, { color: themeColors.text }]}>{match.detailedOdds.ft['ou'].under || '—'}</Text>
-                                            <Text style={[styles.oddsSub, { color: themeColors.textMuted }]}>UNDER {match.detailedOdds.ft['ou'].line}</Text>
+                                            <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>UNDER {match.detailedOdds.ft['ou'].line}</Text>
                                         </View>
                                     </View>
                                 </View>
@@ -319,42 +324,42 @@ export default function MatchDetailScreen() {
                 {/* Detailed Odds */}
                 {match.detailedOdds && (
                     <View style={styles.outerPad}>
-                        <Text style={[styles.sectionLabel, { color: themeColors.textMuted }]}>DETAILED ODDS</Text>
+                        <Text style={[styles.sectionLabel, { color: themeColors.mutedText }]}>DETAILED ODDS</Text>
                         <View style={styles.oddsGrid}>
                             {/* FT 1X2 */}
-                            <View style={[styles.oddsTile, { backgroundColor: themeColors.cardBg }]}>
-                                <Text style={[styles.tileLabel, { color: themeColors.textMuted }]}>FULL TIME 1X2</Text>
+                            <View style={[styles.oddsTile, { backgroundColor: themeColors.surface }]}>
+                                <Text style={[styles.tileLabel, { color: themeColors.mutedText }]}>FULL TIME 1X2</Text>
                                 <View style={styles.oddsRow}>
                                     <View style={styles.oddsCell}>
-                                        <Text style={[styles.oddsVal, { color: themeColors.primary }]}>{match.detailedOdds.ft?.['1x2'].home || '—'}</Text>
-                                        <Text style={[styles.oddsSub, { color: themeColors.textMuted }]}>HOME</Text>
+                                        <Text style={[styles.oddsVal, { color: themeColors.accent }]}>{match.detailedOdds.ft?.['1x2'].home || '—'}</Text>
+                                        <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>HOME</Text>
                                     </View>
                                     <View style={[styles.oddsDivider, { backgroundColor: themeColors.border }]} />
                                     <View style={styles.oddsCell}>
                                         <Text style={[styles.oddsVal, { color: themeColors.text }]}>{match.detailedOdds.ft?.['1x2'].draw || '—'}</Text>
-                                        <Text style={[styles.oddsSub, { color: themeColors.textMuted }]}>DRAW</Text>
+                                        <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>DRAW</Text>
                                     </View>
                                     <View style={[styles.oddsDivider, { backgroundColor: themeColors.border }]} />
                                     <View style={styles.oddsCell}>
                                         <Text style={[styles.oddsVal, { color: themeColors.text }]}>{match.detailedOdds.ft?.['1x2'].away || '—'}</Text>
-                                        <Text style={[styles.oddsSub, { color: themeColors.textMuted }]}>AWAY</Text>
+                                        <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>AWAY</Text>
                                     </View>
                                 </View>
                             </View>
 
                             {/* FT O/U */}
                             {match.detailedOdds.ft?.ou && (
-                                <View style={[styles.oddsTile, { backgroundColor: themeColors.cardBg }]}>
-                                    <Text style={[styles.tileLabel, { color: themeColors.textMuted }]}>FT OVER / UNDER ({match.detailedOdds.ft.ou.line})</Text>
+                                <View style={[styles.oddsTile, { backgroundColor: themeColors.surface }]}>
+                                    <Text style={[styles.tileLabel, { color: themeColors.mutedText }]}>FT OVER / UNDER ({match.detailedOdds.ft.ou.line})</Text>
                                     <View style={styles.oddsRow}>
                                         <View style={styles.oddsCell}>
                                             <Text style={[styles.oddsVal, { color: themeColors.text }]}>{match.detailedOdds.ft.ou.over}</Text>
-                                            <Text style={[styles.oddsSub, { color: themeColors.textMuted }]}>OVER</Text>
+                                            <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>OVER</Text>
                                         </View>
                                         <View style={[styles.oddsDivider, { backgroundColor: themeColors.border }]} />
                                         <View style={styles.oddsCell}>
                                             <Text style={[styles.oddsVal, { color: themeColors.text }]}>{match.detailedOdds.ft.ou.under}</Text>
-                                            <Text style={[styles.oddsSub, { color: themeColors.textMuted }]}>UNDER</Text>
+                                            <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>UNDER</Text>
                                         </View>
                                     </View>
                                 </View>
@@ -362,17 +367,17 @@ export default function MatchDetailScreen() {
 
                             {/* FT AH */}
                             {match.detailedOdds.ft?.ah && (
-                                <View style={[styles.oddsTile, { backgroundColor: themeColors.cardBg }]}>
-                                    <Text style={[styles.tileLabel, { color: themeColors.textMuted }]}>FT ASIAN HANDICAP ({match.detailedOdds.ft.ah.line})</Text>
+                                <View style={[styles.oddsTile, { backgroundColor: themeColors.surface }]}>
+                                    <Text style={[styles.tileLabel, { color: themeColors.mutedText }]}>FT ASIAN HANDICAP ({match.detailedOdds.ft.ah.line})</Text>
                                     <View style={styles.oddsRow}>
                                         <View style={styles.oddsCell}>
                                             <Text style={[styles.oddsVal, { color: themeColors.text }]}>{match.detailedOdds.ft.ah.home}</Text>
-                                            <Text style={[styles.oddsSub, { color: themeColors.textMuted }]}>HOME</Text>
+                                            <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>HOME</Text>
                                         </View>
                                         <View style={[styles.oddsDivider, { backgroundColor: themeColors.border }]} />
                                         <View style={styles.oddsCell}>
                                             <Text style={[styles.oddsVal, { color: themeColors.text }]}>{match.detailedOdds.ft.ah.away}</Text>
-                                            <Text style={[styles.oddsSub, { color: themeColors.textMuted }]}>AWAY</Text>
+                                            <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>AWAY</Text>
                                         </View>
                                     </View>
                                 </View>
@@ -380,22 +385,22 @@ export default function MatchDetailScreen() {
 
                             {/* HT 1X2 */}
                             {match.detailedOdds.ht?.['1x2'] && (match.detailedOdds.ht['1x2'].home || match.detailedOdds.ht['1x2'].draw || match.detailedOdds.ht['1x2'].away) && (
-                                <View style={[styles.oddsTile, { backgroundColor: themeColors.cardBg }]}>
-                                    <Text style={[styles.tileLabel, { color: themeColors.textMuted }]}>HALF TIME 1X2</Text>
+                                <View style={[styles.oddsTile, { backgroundColor: themeColors.surface }]}>
+                                    <Text style={[styles.tileLabel, { color: themeColors.mutedText }]}>HALF TIME 1X2</Text>
                                     <View style={styles.oddsRow}>
                                         <View style={styles.oddsCell}>
-                                            <Text style={[styles.oddsVal, { color: themeColors.primary }]}>{match.detailedOdds.ht['1x2'].home || '—'}</Text>
-                                            <Text style={[styles.oddsSub, { color: themeColors.textMuted }]}>HOME</Text>
+                                            <Text style={[styles.oddsVal, { color: themeColors.accent }]}>{match.detailedOdds.ht['1x2'].home || '—'}</Text>
+                                            <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>HOME</Text>
                                         </View>
                                         <View style={[styles.oddsDivider, { backgroundColor: themeColors.border }]} />
                                         <View style={styles.oddsCell}>
                                             <Text style={[styles.oddsVal, { color: themeColors.text }]}>{match.detailedOdds.ht['1x2'].draw || '—'}</Text>
-                                            <Text style={[styles.oddsSub, { color: themeColors.textMuted }]}>DRAW</Text>
+                                            <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>DRAW</Text>
                                         </View>
                                         <View style={[styles.oddsDivider, { backgroundColor: themeColors.border }]} />
                                         <View style={styles.oddsCell}>
                                             <Text style={[styles.oddsVal, { color: themeColors.text }]}>{match.detailedOdds.ht['1x2'].away || '—'}</Text>
-                                            <Text style={[styles.oddsSub, { color: themeColors.textMuted }]}>AWAY</Text>
+                                            <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>AWAY</Text>
                                         </View>
                                     </View>
                                 </View>
@@ -407,11 +412,11 @@ export default function MatchDetailScreen() {
                 {/* Bookmaker Odds Comparison */}
                 {match.oddsComparison && match.oddsComparison.length > 0 && (
                     <View style={styles.outerPad}>
-                        <Text style={[styles.sectionLabel, { color: themeColors.textMuted }]}>ODDS COMPARISON</Text>
+                        <Text style={[styles.sectionLabel, { color: themeColors.mutedText }]}>ODDS COMPARISON</Text>
                         <View style={styles.oddsGrid}>
                             {match.oddsComparison.map((m, i: number) => (
-                                <View key={i} style={[styles.oddsTile, { backgroundColor: themeColors.cardBg }]}>
-                                    <Text style={[styles.tileLabel, { color: themeColors.textMuted }]}>{m.market.toUpperCase()}</Text>
+                                <View key={i} style={[styles.oddsTile, { backgroundColor: themeColors.surface }]}>
+                                    <Text style={[styles.tileLabel, { color: themeColors.mutedText }]}>{m.market.toUpperCase()}</Text>
                                     {m.selections.map((sel, j: number) => {
                                         const vals = sel.odds.map((o) => parseFloat(o.value)).filter((n: number) => !isNaN(n));
                                         const best = vals.length ? Math.max(...vals) : null;
@@ -431,12 +436,12 @@ export default function MatchDetailScreen() {
                                                                 key={k}
                                                                 style={[
                                                                     styles.ocChip,
-                                                                    { backgroundColor: themeColors.cardBgSecondary, borderColor: 'transparent' },
-                                                                    isBest && { backgroundColor: `${themeColors.primary}1A`, borderColor: themeColors.primary },
+                                                                    { backgroundColor: themeColors.surfaceElevated, borderColor: 'transparent' },
+                                                                    isBest && { backgroundColor: `${themeColors.accent}1A`, borderColor: themeColors.accent },
                                                                 ]}
                                                             >
-                                                                <Text style={[styles.ocBookie, { color: themeColors.textMuted }]} numberOfLines={1}>{o.bookie}</Text>
-                                                                <Text style={[styles.ocValue, { color: isBest ? themeColors.primary : themeColors.text }]}>{o.value}</Text>
+                                                                <Text style={[styles.ocBookie, { color: themeColors.mutedText }]} numberOfLines={1}>{o.bookie}</Text>
+                                                                <Text style={[styles.ocValue, { color: isBest ? themeColors.accent : themeColors.text }]}>{o.value}</Text>
                                                             </View>
                                                         );
                                                     })}
@@ -453,26 +458,26 @@ export default function MatchDetailScreen() {
                 {/* H2H Summary */}
                 {match.h2h?.summary && (
                     <View style={styles.outerPad}>
-                        <Text style={[styles.sectionLabel, { color: themeColors.textMuted }]}>HEAD TO HEAD</Text>
-                        <View style={[styles.h2hCard, { backgroundColor: themeColors.cardBg }]}>
+                        <Text style={[styles.sectionLabel, { color: themeColors.mutedText }]}>HEAD TO HEAD</Text>
+                        <View style={[styles.h2hCard, { backgroundColor: themeColors.surface }]}>
                             <View style={styles.h2hRow}>
                                 <View style={styles.h2hStat}>
-                                    <Text style={[styles.h2hVal, { color: themeColors.primary }]}>{match.h2h.summary.wins}</Text>
-                                    <Text style={[styles.h2hLabel, { color: themeColors.textMuted }]}>HOME WINS</Text>
+                                    <Text style={[styles.h2hVal, { color: themeColors.accent }]}>{match.h2h.summary.wins}</Text>
+                                    <Text style={[styles.h2hLabel, { color: themeColors.mutedText }]}>HOME WINS</Text>
                                 </View>
                                 <View style={styles.h2hStat}>
                                     <Text style={[styles.h2hVal, { color: themeColors.text }]}>{match.h2h.summary.draws}</Text>
-                                    <Text style={[styles.h2hLabel, { color: themeColors.textMuted }]}>DRAWS</Text>
+                                    <Text style={[styles.h2hLabel, { color: themeColors.mutedText }]}>DRAWS</Text>
                                 </View>
                                 <View style={styles.h2hStat}>
                                     <Text style={[styles.h2hVal, { color: themeColors.text }]}>{match.h2h.summary.losses}</Text>
-                                    <Text style={[styles.h2hLabel, { color: themeColors.textMuted }]}>AWAY WINS</Text>
+                                    <Text style={[styles.h2hLabel, { color: themeColors.mutedText }]}>AWAY WINS</Text>
                                 </View>
                             </View>
                             {/* Visual bar */}
                             <View style={styles.h2hBar}>
                                 <View style={[styles.h2hBarSegment, {
-                                    backgroundColor: themeColors.primary,
+                                    backgroundColor: themeColors.accent,
                                     flex: match.h2h.summary.wins || 1,
                                 }]} />
                                 <View style={[styles.h2hBarSegment, {
@@ -480,7 +485,7 @@ export default function MatchDetailScreen() {
                                     flex: match.h2h.summary.draws || 1,
                                 }]} />
                                 <View style={[styles.h2hBarSegment, {
-                                    backgroundColor: themeColors.textMuted,
+                                    backgroundColor: themeColors.mutedText,
                                     flex: match.h2h.summary.losses || 1,
                                 }]} />
                             </View>
@@ -491,17 +496,17 @@ export default function MatchDetailScreen() {
                 {/* H2H History */}
                 {match.h2h?.history && match.h2h.history.length > 0 && (
                     <View style={styles.outerPad}>
-                        <Text style={[styles.sectionLabel, { color: themeColors.textMuted }]}>H2H HISTORY</Text>
-                        <View style={[styles.h2hHistoryCard, { backgroundColor: themeColors.cardBg }]}>
+                        <Text style={[styles.sectionLabel, { color: themeColors.mutedText }]}>H2H HISTORY</Text>
+                        <View style={[styles.h2hHistoryCard, { backgroundColor: themeColors.surface }]}>
                             {match.h2h.history.map((h, i: number) => (
                                 <View key={i} style={[styles.h2hHistoryRow, i < match.h2h!.history!.length - 1 && { borderBottomWidth: 1, borderBottomColor: themeColors.border }]}>
                                     <View style={styles.h2hHistoryLeft}>
-                                        <Text style={[styles.h2hHistoryLeague, { color: themeColors.textMuted }]}>{h.league}</Text>
+                                        <Text style={[styles.h2hHistoryLeague, { color: themeColors.mutedText }]}>{h.league}</Text>
                                         <Text style={[styles.h2hHistoryTeams, { color: themeColors.text }]}>{h.home} vs {h.away}</Text>
                                     </View>
                                     <View style={styles.h2hHistoryRight}>
-                                        <Text style={[styles.h2hHistoryScore, { color: themeColors.primary }]}>{h.score}</Text>
-                                        <Text style={[styles.h2hHistoryDate, { color: themeColors.textMuted }]}>{h.date}</Text>
+                                        <Text style={[styles.h2hHistoryScore, { color: themeColors.accent }]}>{h.score}</Text>
+                                        <Text style={[styles.h2hHistoryDate, { color: themeColors.mutedText }]}>{h.date}</Text>
                                     </View>
                                 </View>
                             ))}
@@ -512,15 +517,15 @@ export default function MatchDetailScreen() {
                 {/* Team Form */}
                 {(match.homeForm || match.awayForm) && (
                     <View style={styles.outerPad}>
-                        <Text style={[styles.sectionLabel, { color: themeColors.textMuted }]}>RECENT FORM</Text>
-                        <View style={[styles.formCard, { backgroundColor: themeColors.cardBg }]}>
+                        <Text style={[styles.sectionLabel, { color: themeColors.mutedText }]}>RECENT FORM</Text>
+                        <View style={[styles.formCard, { backgroundColor: themeColors.surface }]}>
                             {match.homeForm && (
                                 <View style={styles.formRow}>
                                     <Text style={[styles.formTeam, { color: themeColors.text }]}>{match.homeTeam}</Text>
                                     <View style={styles.formStreak}>
                                         {match.homeForm.split('').slice(0, 5).map((char: string, i: number) => (
                                             <View key={i} style={[styles.formBadge, {
-                                                backgroundColor: char === 'W' ? '#15783a' : char === 'D' ? themeColors.orange9 : '#EF4444'
+                                                backgroundColor: char === 'W' ? themeColors.success : char === 'D' ? themeColors.orange9 : themeColors.danger
                                             }]}>
                                                 <Text style={styles.formBadgeText}>{char}</Text>
                                             </View>
@@ -534,7 +539,7 @@ export default function MatchDetailScreen() {
                                     <View style={styles.formStreak}>
                                         {match.awayForm.split('').slice(0, 5).map((char: string, i: number) => (
                                             <View key={i} style={[styles.formBadge, {
-                                                backgroundColor: char === 'W' ? '#15783a' : char === 'D' ? themeColors.orange9 : '#EF4444'
+                                                backgroundColor: char === 'W' ? themeColors.success : char === 'D' ? themeColors.orange9 : themeColors.danger
                                             }]}>
                                                 <Text style={styles.formBadgeText}>{char}</Text>
                                             </View>
@@ -549,11 +554,11 @@ export default function MatchDetailScreen() {
                 {/* Lineups */}
                 {((match.homeLineup?.length ?? 0) > 0 || (match.awayLineup?.length ?? 0) > 0) && (
                     <View style={styles.outerPad}>
-                        <Text style={[styles.sectionLabel, { color: themeColors.textMuted }]}>STARTING LINEUPS</Text>
-                        <View style={[styles.lineupCard, { backgroundColor: themeColors.cardBg }]}>
+                        <Text style={[styles.sectionLabel, { color: themeColors.mutedText }]}>STARTING LINEUPS</Text>
+                        <View style={[styles.lineupCard, { backgroundColor: themeColors.surface }]}>
                             <View style={styles.lineupCols}>
                                 <View style={styles.lineupCol}>
-                                    <Text style={[styles.lineupTeam, { color: themeColors.primary }]} numberOfLines={1}>{match.homeTeam}</Text>
+                                    <Text style={[styles.lineupTeam, { color: themeColors.accent }]} numberOfLines={1}>{match.homeTeam}</Text>
                                     {(match.homeLineup || []).map((p, i: number) => (
                                         <Text key={i} style={[styles.lineupPlayer, { color: themeColors.text }]} numberOfLines={1}>
                                             {p.number ? `${p.number}. ` : ''}{p.name}
@@ -577,10 +582,10 @@ export default function MatchDetailScreen() {
                 {/* Expected Goals (xG) */}
                 {(match.homeXg !== undefined || match.awayXg !== undefined) && (
                     <View style={styles.outerPad}>
-                        <Text style={[styles.sectionLabel, { color: themeColors.textMuted }]}>EXPECTED GOALS (xG)</Text>
-                        <View style={[styles.xgCard, { backgroundColor: themeColors.cardBg }]}>
-                            <Text style={[styles.xgVal, { color: themeColors.primary }]}>{(match.homeXg ?? 0).toFixed(2)}</Text>
-                            <Text style={[styles.xgLabel, { color: themeColors.textMuted }]}>xG</Text>
+                        <Text style={[styles.sectionLabel, { color: themeColors.mutedText }]}>EXPECTED GOALS (xG)</Text>
+                        <View style={[styles.xgCard, { backgroundColor: themeColors.surface }]}>
+                            <Text style={[styles.xgVal, { color: themeColors.accent }]}>{(match.homeXg ?? 0).toFixed(2)}</Text>
+                            <Text style={[styles.xgLabel, { color: themeColors.mutedText }]}>xG</Text>
                             <Text style={[styles.xgVal, { color: themeColors.text }]}>{(match.awayXg ?? 0).toFixed(2)}</Text>
                         </View>
                     </View>
@@ -589,8 +594,8 @@ export default function MatchDetailScreen() {
                 {/* Match Stats (possession, shots, etc.) */}
                 {match.stats && match.stats.length > 0 && (
                     <View style={styles.outerPad}>
-                        <Text style={[styles.sectionLabel, { color: themeColors.textMuted }]}>MATCH STATS</Text>
-                        <View style={[styles.statsCard, { backgroundColor: themeColors.cardBg }]}>
+                        <Text style={[styles.sectionLabel, { color: themeColors.mutedText }]}>MATCH STATS</Text>
+                        <View style={[styles.statsCard, { backgroundColor: themeColors.surface }]}>
                             {match.stats.map((s, i: number) => {
                                 const total = (s.home + s.away) || 1;
                                 const homePct = Math.round((s.home / total) * 100);
@@ -598,11 +603,11 @@ export default function MatchDetailScreen() {
                                     <View key={i} style={styles.statBlock}>
                                         <View style={styles.statValues}>
                                             <Text style={[styles.statNum, { color: themeColors.text }]}>{s.home}{s.percent ? '%' : ''}</Text>
-                                            <Text style={[styles.statLabel, { color: themeColors.textMuted }]}>{s.label}</Text>
+                                            <Text style={[styles.statLabel, { color: themeColors.mutedText }]}>{s.label}</Text>
                                             <Text style={[styles.statNum, { color: themeColors.text }]}>{s.away}{s.percent ? '%' : ''}</Text>
                                         </View>
-                                        <View style={[styles.statBarTrack, { backgroundColor: themeColors.cardBgSecondary }]}>
-                                            <View style={[styles.statBarFill, { width: `${homePct}%`, backgroundColor: themeColors.primary }]} />
+                                        <View style={[styles.statBarTrack, { backgroundColor: themeColors.surfaceElevated }]}>
+                                            <View style={[styles.statBarFill, { width: `${homePct}%`, backgroundColor: themeColors.accent }]} />
                                         </View>
                                     </View>
                                 );
@@ -614,15 +619,15 @@ export default function MatchDetailScreen() {
                 {/* Goal Timeline */}
                 {match.goals && match.goals.length > 0 && (
                     <View style={styles.outerPad}>
-                        <Text style={[styles.sectionLabel, { color: themeColors.textMuted }]}>GOALS</Text>
-                        <View style={[styles.timelineCard, { backgroundColor: themeColors.cardBg }]}>
+                        <Text style={[styles.sectionLabel, { color: themeColors.mutedText }]}>GOALS</Text>
+                        <View style={[styles.timelineCard, { backgroundColor: themeColors.surface }]}>
                             {match.goals.map((g, i: number) => (
                                 <View key={i} style={[styles.goalRow, g.team === 'away' && styles.goalRowAway]}>
-                                    <Goal size={14} color={themeColors.primary} />
+                                    <Goal size={14} color={themeColors.accent} />
                                     <View style={[styles.goalInfo, g.team === 'away' && { alignItems: 'flex-end' }]}>
                                         <Text style={[styles.goalScorer, { color: themeColors.text }]}>{g.scorer} {g.time}'</Text>
                                         {g.assist && (
-                                            <Text style={[styles.goalAssist, { color: themeColors.textMuted }]}>assist: {g.assist}</Text>
+                                            <Text style={[styles.goalAssist, { color: themeColors.mutedText }]}>assist: {g.assist}</Text>
                                         )}
                                     </View>
                                 </View>
@@ -634,14 +639,14 @@ export default function MatchDetailScreen() {
                 {/* Corner Stats */}
                 {(match.homeCorners !== undefined || match.awayCorners !== undefined) && (
                     <View style={styles.outerPad}>
-                        <Text style={[styles.sectionLabel, { color: themeColors.textMuted }]}>CORNER STATS</Text>
-                        <View style={[styles.infoCard, { backgroundColor: themeColors.cardBg }]}>
+                        <Text style={[styles.sectionLabel, { color: themeColors.mutedText }]}>CORNER STATS</Text>
+                        <View style={[styles.infoCard, { backgroundColor: themeColors.surface }]}>
                             <View style={styles.infoRow}>
-                                <Text style={[styles.infoKey, { color: themeColors.textMuted }]}>{match.homeTeam}</Text>
+                                <Text style={[styles.infoKey, { color: themeColors.mutedText }]}>{match.homeTeam}</Text>
                                 <Text style={[styles.infoVal, { color: themeColors.text }]}>{match.homeCorners ?? 0}</Text>
                             </View>
                             <View style={[styles.infoRow, { borderTopWidth: 1, borderTopColor: themeColors.border, paddingTop: 12 }]}>
-                                <Text style={[styles.infoKey, { color: themeColors.textMuted }]}>{match.awayTeam}</Text>
+                                <Text style={[styles.infoKey, { color: themeColors.mutedText }]}>{match.awayTeam}</Text>
                                 <Text style={[styles.infoVal, { color: themeColors.text }]}>{match.awayCorners ?? 0}</Text>
                             </View>
                         </View>
@@ -651,35 +656,35 @@ export default function MatchDetailScreen() {
                 {/* Match Info */}
                 {(match.stadium || match.attendance || (match.tvStations?.length ?? 0) > 0 || match.referee || match.weather) && (
                     <View style={styles.outerPad}>
-                        <Text style={[styles.sectionLabel, { color: themeColors.textMuted }]}>MATCH INFO</Text>
-                        <View style={[styles.infoCard, { backgroundColor: themeColors.cardBg }]}>
+                        <Text style={[styles.sectionLabel, { color: themeColors.mutedText }]}>MATCH INFO</Text>
+                        <View style={[styles.infoCard, { backgroundColor: themeColors.surface }]}>
                             {match.stadium && (
                                 <View style={styles.infoRow}>
-                                    <Text style={[styles.infoKey, { color: themeColors.textMuted }]}>VENUE</Text>
+                                    <Text style={[styles.infoKey, { color: themeColors.mutedText }]}>VENUE</Text>
                                     <Text style={[styles.infoVal, { color: themeColors.text }]} numberOfLines={1}>{match.stadium}</Text>
                                 </View>
                             )}
                             {match.attendance && (
                                 <View style={styles.infoRow}>
-                                    <Text style={[styles.infoKey, { color: themeColors.textMuted }]}>ATTENDANCE</Text>
+                                    <Text style={[styles.infoKey, { color: themeColors.mutedText }]}>ATTENDANCE</Text>
                                     <Text style={[styles.infoVal, { color: themeColors.text }]}>{match.attendance.toLocaleString()}</Text>
                                 </View>
                             )}
                             {match.tvStations && match.tvStations.length > 0 && (
                                 <View style={styles.infoRow}>
-                                    <Text style={[styles.infoKey, { color: themeColors.textMuted }]}>TV</Text>
+                                    <Text style={[styles.infoKey, { color: themeColors.mutedText }]}>TV</Text>
                                     <Text style={[styles.infoVal, { color: themeColors.text }]} numberOfLines={1}>{match.tvStations.join(', ')}</Text>
                                 </View>
                             )}
                             {match.referee && (
                                 <View style={styles.infoRow}>
-                                    <Text style={[styles.infoKey, { color: themeColors.textMuted }]}>REFEREE</Text>
+                                    <Text style={[styles.infoKey, { color: themeColors.mutedText }]}>REFEREE</Text>
                                     <Text style={[styles.infoVal, { color: themeColors.text }]}>{match.referee}</Text>
                                 </View>
                             )}
                             {match.weather && (
                                 <View style={styles.infoRow}>
-                                    <Text style={[styles.infoKey, { color: themeColors.textMuted }]}>WEATHER</Text>
+                                    <Text style={[styles.infoKey, { color: themeColors.mutedText }]}>WEATHER</Text>
                                     <Text style={[styles.infoVal, { color: themeColors.text }]}>{match.weather}</Text>
                                 </View>
                             )}
@@ -692,7 +697,8 @@ export default function MatchDetailScreen() {
     );
 }
 
-const styles = StyleSheet.create({
+function getStyles(themeColors: ThemeColors) {
+    return StyleSheet.create({
     container: { flex: 1 },
     scrollContent: { paddingBottom: 48 },
 
@@ -750,7 +756,7 @@ const styles = StyleSheet.create({
         borderRadius: 22,
         alignItems: 'center',
         justifyContent: 'center',
-        shadowColor: '#000',
+        shadowColor: themeColors.shadow,
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.12,
         shadowRadius: 10,
@@ -800,7 +806,7 @@ const styles = StyleSheet.create({
         padding: 18,
         borderRadius: 22,
         borderWidth: 1,
-        shadowColor: '#000',
+        shadowColor: themeColors.shadow,
         shadowOffset: { width: 0, height: 6 },
         shadowOpacity: 0.08,
         shadowRadius: 16,
@@ -932,7 +938,7 @@ const styles = StyleSheet.create({
         paddingHorizontal: 16,
         paddingVertical: 12,
         borderBottomWidth: 1,
-        borderBottomColor: 'rgba(255,255,255,0.05)',
+        borderBottomColor: themeColors.border,
     },
     headerLeft: {
         padding: 8,
@@ -998,4 +1004,5 @@ const styles = StyleSheet.create({
     ocChip: { minWidth: 54, paddingHorizontal: 8, paddingVertical: 6, borderRadius: 10, alignItems: 'center', borderWidth: 1 },
     ocBookie: { fontSize: 8, fontWeight: '600', marginBottom: 2, maxWidth: 56 },
     ocValue: { fontSize: 14, fontWeight: '800' },
-});
+    });
+}

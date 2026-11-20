@@ -1,22 +1,19 @@
 import { Tabs } from 'expo-router';
 import { Home, DollarSign, Crown, CheckCircle, Store } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors } from '../../theme/colors';
 import { useTheme } from '../../context/ThemeContext';
-import { useLanguage } from '../../context/LanguageContext';
 import i18n from '../../locales';
 
 export default function TabLayout() {
     const { themeColors } = useTheme();
-    const { locale } = useLanguage();
     const insets = useSafeAreaInsets();
 
     return (
         <Tabs
             screenOptions={{
                 headerShown: false,
-                tabBarActiveTintColor: themeColors.primary,
-                tabBarInactiveTintColor: themeColors.textMuted,
+                tabBarActiveTintColor: themeColors.accent,
+                tabBarInactiveTintColor: themeColors.mutedText,
                 tabBarLabelStyle: {
                     fontSize: 10,
                     fontWeight: '600',

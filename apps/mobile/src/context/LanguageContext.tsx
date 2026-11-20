@@ -15,7 +15,7 @@ const LanguageContext = createContext<LanguageContextType>({
 
 export function LanguageProvider({ children }: { children: React.ReactNode }) {
     const [locale, setLocaleState] = useState(i18n.locale);
-    const [isLoaded, setIsLoaded] = useState(false);
+    const [, setIsLoaded] = useState(false);
 
     useEffect(() => {
         const loadLang = async () => {

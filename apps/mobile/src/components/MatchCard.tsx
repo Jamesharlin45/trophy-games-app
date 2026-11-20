@@ -3,12 +3,15 @@ import { Lock } from 'lucide-react-native';
 import { useState } from 'react';
 import { getCountryFlagUrl } from '../lib/flags';
 import { useTheme } from '../context/ThemeContext';
+import type { ThemeColors } from '../theme/colors';
 import { typography } from '../theme/typography';
 import { useRouter } from 'expo-router';
 import type { ApiMatch } from '../api/client';
 
 const TeamBadge = ({ uri, name }: { uri?: string; name: string }) => {
     const [failed, setFailed] = useState(false);
+    const { themeColors } = useTheme();
+    const badgeStyles = getBadgeStyles(themeColors);
     const safeName = String(name || '');
     const initials = safeName.split(' ').slice(0, 2).map((w: string) => w[0]).join('').toUpperCase();
     const flagUri = !uri || failed ? getCountryFlagUrl(name) : undefined;
@@ -26,13 +29,15 @@ const TeamBadge = ({ uri, name }: { uri?: string; name: string }) => {
     return <View style={badgeStyles.initialsBox}><Text style={badgeStyles.initials}>{initials}</Text></View>;
 };
 
-const badgeStyles = StyleSheet.create({
-    logo: { width: 36, height: 36, borderRadius: 18, borderWidth: 1, borderColor: 'rgba(128,128,128,0.12)' },
-    flagBox: { width: 36, height: 36, borderRadius: 18, overflow: 'hidden', backgroundColor: 'rgba(128,128,128,0.08)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(128,128,128,0.12)' },
-    flag: { width: 36, height: 24, resizeMode: 'cover' },
-    initialsBox: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(128,128,128,0.15)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(128,128,128,0.12)' },
-    initials: { fontSize: 11, fontWeight: '700', textAlign: 'center', color: '#888', letterSpacing: 0.3 },
-});
+function getBadgeStyles(themeColors: ThemeColors) {
+    return StyleSheet.create({
+        logo: { width: 36, height: 36, borderRadius: 18, borderWidth: 1, borderColor: themeColors.border },
+        flagBox: { width: 36, height: 36, borderRadius: 18, overflow: 'hidden', backgroundColor: themeColors.glass, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: themeColors.border },
+        flag: { width: 36, height: 24, resizeMode: 'cover' },
+        initialsBox: { width: 36, height: 36, borderRadius: 18, backgroundColor: themeColors.glass, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: themeColors.border },
+        initials: { fontSize: 11, fontWeight: '700', textAlign: 'center', color: themeColors.mutedText, letterSpacing: 0.3 },
+    });
+}
 
 interface MatchCardProps {
     leagueName: string;
@@ -83,6 +88,7 @@ export const MatchCard = ({
 }: MatchCardProps) => {
     const router = useRouter();
     const { themeColors } = useTheme();
+    const styles = getStyles(themeColors);
 
     const getFlagUrl = (countryName?: string) => {
         if (!countryName) return null;
@@ -137,7 +143,7 @@ export const MatchCard = ({
 
     return (
         <TouchableOpacity
-            style={[styles.card, { backgroundColor: themeColors.cardBg, borderColor: themeColors.border }]}
+            style={[styles.card, { backgroundColor: themeColors.surface, borderColor: themeColors.border }]}
             onPress={handleCardPress}
             activeOpacity={0.7}
         >
@@ -153,9 +159,9 @@ export const MatchCard = ({
                             <View style={[styles.leagueLogoPlaceholder, { backgroundColor: themeColors.gray5 }]} />
                         )}
                     </View>
-                    <Text style={[styles.leagueName, { color: themeColors.textMuted }]}>{leagueName}</Text>
+                    <Text style={[styles.leagueName, { color: themeColors.mutedText }]}>{leagueName}</Text>
                 </View>
-                <Text style={[styles.time, { color: themeColors.textMuted }]}>{time}</Text>
+                <Text style={[styles.time, { color: themeColors.mutedText }]}>{time}</Text>
             </View>
 
             {/* Teams */}
@@ -168,9 +174,9 @@ export const MatchCard = ({
                     <View style={styles.teamRightSection}>
                         {homeScore !== undefined && <Text style={[styles.score, { color: themeColors.text }]}>{homeScore}</Text>}
                         {homeOdds && (
-                            <View style={[styles.teamOddsBox, { backgroundColor: themeColors.cardBgSecondary }]}>
-                                <Text style={[styles.teamOddsLabel, { color: themeColors.textMuted }]}>1</Text>
-                                <Text style={[styles.teamOddsValue, { color: themeColors.primary }]}>{homeOdds}</Text>
+                            <View style={[styles.teamOddsBox, { backgroundColor: themeColors.surfaceElevated }]}>
+                                <Text style={[styles.teamOddsLabel, { color: themeColors.mutedText }]}>1</Text>
+                                <Text style={[styles.teamOddsValue, { color: themeColors.accent }]}>{homeOdds}</Text>
                             </View>
                         )}
                     </View>
@@ -184,9 +190,9 @@ export const MatchCard = ({
                     <View style={styles.teamRightSection}>
                         {awayScore !== undefined && <Text style={[styles.score, { color: themeColors.text }]}>{awayScore}</Text>}
                         {awayOdds && (
-                            <View style={[styles.teamOddsBox, { backgroundColor: themeColors.cardBgSecondary }]}>
-                                <Text style={[styles.teamOddsLabel, { color: themeColors.textMuted }]}>2</Text>
-                                <Text style={[styles.teamOddsValue, { color: themeColors.primary }]}>{awayOdds}</Text>
+                            <View style={[styles.teamOddsBox, { backgroundColor: themeColors.surfaceElevated }]}>
+                                <Text style={[styles.teamOddsLabel, { color: themeColors.mutedText }]}>2</Text>
+                                <Text style={[styles.teamOddsValue, { color: themeColors.accent }]}>{awayOdds}</Text>
                             </View>
                         )}
                     </View>
@@ -197,13 +203,13 @@ export const MatchCard = ({
             <View style={[styles.footer, { borderTopColor: themeColors.border }]}>
                 {isLocked ? (
                     <View style={styles.lockedContainer}>
-                        <View style={[styles.lockBadge, { backgroundColor: themeColors.cardBgSecondary, borderColor: themeColors.border }]}>
-                            <Lock size={12} color={themeColors.primary} />
-                            <Text style={[styles.lockText, { color: themeColors.primary }]}>UNLOCK {price} COINS</Text>
+                        <View style={[styles.lockBadge, { backgroundColor: themeColors.surfaceElevated, borderColor: themeColors.border }]}>
+                            <Lock size={12} color={themeColors.accent} />
+                            <Text style={[styles.lockText, { color: themeColors.accent }]}>UNLOCK {price} COINS</Text>
                         </View>
                         <TouchableOpacity
                             activeOpacity={0.8}
-                            style={[styles.unlockButton, { backgroundColor: themeColors.primary, shadowColor: themeColors.primary }]}
+                            style={[styles.unlockButton, { backgroundColor: themeColors.accent, shadowColor: themeColors.accent }]}
                         >
                             <Text style={styles.unlockButtonText}>BUY TIP</Text>
                         </TouchableOpacity>
@@ -211,10 +217,10 @@ export const MatchCard = ({
                 ) : (
                     <View style={styles.predictionRow}>
                         <View style={styles.predictionWrap}>
-                            <Text style={[styles.predictionLabel, { color: themeColors.textMuted }]}>{predictionLabel}</Text>
-                            <View style={[styles.predictionChip, { backgroundColor: themeColors.primary, shadowColor: themeColors.primary }]}>
+                            <Text style={[styles.predictionLabel, { color: themeColors.mutedText }]}>{predictionLabel}</Text>
+                            <View style={[styles.predictionChip, { backgroundColor: themeColors.accent, shadowColor: themeColors.accent }]}>
                                 <Text
-                                    style={[styles.predictionValue, { color: '#090A0C' }]}
+                                    style={[styles.predictionValue, { color: themeColors.accentText }]}
                                     numberOfLines={1}
                                     adjustsFontSizeToFit
                                     minimumFontScale={0.7}
@@ -225,7 +231,7 @@ export const MatchCard = ({
                         </View>
 
                         <View style={styles.oddsWrap}>
-                            <Text style={[styles.oddsLabel, { color: themeColors.textMuted }]}>ODDS</Text>
+                            <Text style={[styles.oddsLabel, { color: themeColors.mutedText }]}>ODDS</Text>
                             <Text style={[styles.oddsValue, { color: themeColors.text }]}>{String(odds || '—')}</Text>
                         </View>
                     </View>
@@ -235,7 +241,8 @@ export const MatchCard = ({
     );
 };
 
-const styles = StyleSheet.create({
+function getStyles(themeColors: ThemeColors) {
+    return StyleSheet.create({
     card: {
         borderRadius: 16,
         paddingHorizontal: 16,
@@ -244,7 +251,7 @@ const styles = StyleSheet.create({
         marginVertical: 6,
         // Remove harsh borders, use subtle shadow
         borderWidth: 0,
-        shadowColor: '#000',
+        shadowColor: themeColors.shadow,
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.5,
         shadowRadius: 16,
@@ -392,8 +399,9 @@ const styles = StyleSheet.create({
         elevation: 4,
     },
     unlockButtonText: {
-        color: '#090A0C',
+        color: themeColors.accentText,
         ...typography.result,
         letterSpacing: 0.3,
     },
-});
+    });
+}

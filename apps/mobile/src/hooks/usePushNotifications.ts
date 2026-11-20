@@ -81,7 +81,7 @@ export const usePushNotifications = (): PushNotificationState => {
             });
 
         responseListener.current =
-            Notifications.addNotificationResponseReceivedListener((response) => {
+            Notifications.addNotificationResponseReceivedListener(() => {
                 // Handle notification tap
             });
 

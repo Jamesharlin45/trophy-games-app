@@ -1,16 +1,20 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
-import { useRouter } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { typography } from '../theme/typography';
-import { Settings, Globe, LogOut, ShieldAlert, Palette, Moon, Sun, Smartphone } from 'lucide-react-native';
+import { Settings, Globe, LogOut, Palette, Moon, Sun, Smartphone } from 'lucide-react-native';
+import { accents, type AccentType } from '../theme/colors';
 import i18n from '../locales';
 
+const MODE_OPTIONS = [
+    { mode: 'light', Icon: Sun, label: 'Light' },
+    { mode: 'dark', Icon: Moon, label: 'Dark' },
+    { mode: 'system', Icon: Smartphone, label: 'System' },
+] as const;
+
 export default function SettingsScreen() {
-    const { themeColors, theme, setTheme } = useTheme();
+    const { themeColors, theme, accent, setTheme, setAccent } = useTheme();
     const { locale, setLocale } = useLanguage();
-    const router = useRouter();
 
     const languages = [
         { code: 'en', name: 'English' },
@@ -25,41 +29,53 @@ export default function SettingsScreen() {
                 <Text style={[styles.title, { color: themeColors.text }]}>{i18n.t('settings.title')}</Text>
             </View>
 
-            <View style={[styles.section, { backgroundColor: themeColors.cardBgSecondary }]}>
+            <View style={[styles.section, { backgroundColor: themeColors.surfaceElevated }]}>
                 <View style={styles.sectionHeader}>
-                    <Palette size={20} color={themeColors.primary} />
+                    <Palette size={20} color={themeColors.accent} />
                     <Text style={[styles.sectionTitle, { color: themeColors.text }]}>{i18n.t('settings.theme')}</Text>
                 </View>
+
+                <Text style={[styles.rowLabel, { color: themeColors.mutedText }]}>{i18n.t('settings.mode')}</Text>
                 <View style={styles.themeOptions}>
-                    <TouchableOpacity 
-                        style={[styles.themeBtn, theme === 'light' && { borderColor: themeColors.primary, backgroundColor: themeColors.primary + '20' }, { borderColor: themeColors.border }]}
-                        onPress={() => setTheme('light')}
-                    >
-                        <Sun size={20} color={theme === 'light' ? themeColors.primary : themeColors.textMuted} />
-                        <Text style={[styles.themeBtnText, { color: theme === 'light' ? themeColors.primary : themeColors.textMuted }]}>Light</Text>
-                    </TouchableOpacity>
+                    {MODE_OPTIONS.map(({ mode, Icon, label }) => {
+                        const isSelected = theme === mode;
+                        return (
+                            <TouchableOpacity
+                                key={mode}
+                                style={[
+                                    styles.themeBtn,
+                                    { borderColor: themeColors.border },
+                                    isSelected && { borderColor: themeColors.accent, backgroundColor: themeColors.accent + '20' },
+                                ]}
+                                onPress={() => setTheme(mode)}
+                            >
+                                <Icon size={20} color={isSelected ? themeColors.accent : themeColors.mutedText} />
+                                <Text style={[styles.themeBtnText, { color: isSelected ? themeColors.accent : themeColors.mutedText }]}>{label}</Text>
+                            </TouchableOpacity>
+                        );
+                    })}
+                </View>
 
-                    <TouchableOpacity 
-                        style={[styles.themeBtn, theme === 'dark' && { borderColor: themeColors.primary, backgroundColor: themeColors.primary + '20' }, { borderColor: themeColors.border }]}
-                        onPress={() => setTheme('dark')}
-                    >
-                        <Moon size={20} color={theme === 'dark' ? themeColors.primary : themeColors.textMuted} />
-                        <Text style={[styles.themeBtnText, { color: theme === 'dark' ? themeColors.primary : themeColors.textMuted }]}>Dark</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity 
-                        style={[styles.themeBtn, theme === 'system' && { borderColor: themeColors.primary, backgroundColor: themeColors.primary + '20' }, { borderColor: themeColors.border }]}
-                        onPress={() => setTheme('system')}
-                    >
-                        <Smartphone size={20} color={theme === 'system' ? themeColors.primary : themeColors.textMuted} />
-                        <Text style={[styles.themeBtnText, { color: theme === 'system' ? themeColors.primary : themeColors.textMuted }]}>System</Text>
-                    </TouchableOpacity>
+                <Text style={[styles.rowLabel, { color: themeColors.mutedText, marginTop: 18 }]}>{i18n.t('settings.accent')}</Text>
+                <View style={styles.accentDots}>
+                    {(Object.keys(accents) as AccentType[]).map((key) => (
+                        <TouchableOpacity
+                            key={key}
+                            accessibilityLabel={accents[key].label}
+                            style={[
+                                styles.accentDot,
+                                { backgroundColor: accents[key].accent },
+                                accent === key && { borderColor: themeColors.text, borderWidth: 2 },
+                            ]}
+                            onPress={() => setAccent(key)}
+                        />
+                    ))}
                 </View>
             </View>
 
-            <View style={[styles.section, { backgroundColor: themeColors.cardBgSecondary }]}>
+            <View style={[styles.section, { backgroundColor: themeColors.surfaceElevated }]}>
                 <View style={styles.sectionHeader}>
-                    <Globe size={20} color={themeColors.primary} />
+                    <Globe size={20} color={themeColors.accent} />
                     <Text style={[styles.sectionTitle, { color: themeColors.text }]}>{i18n.t('settings.language')}</Text>
                 </View>
                 <View style={styles.langList}>
@@ -68,7 +84,7 @@ export default function SettingsScreen() {
                             key={lang.code}
                             style={[
                                 styles.langOption,
-                                { borderColor: locale === lang.code ? themeColors.primary : themeColors.border }
+                                { borderColor: locale === lang.code ? themeColors.accent : themeColors.border }
                             ]}
                             onPress={() => {
                                 setLocale(lang.code);
@@ -76,7 +92,7 @@ export default function SettingsScreen() {
                         >
                             <Text style={[
                                 styles.langText,
-                                { color: locale === lang.code ? themeColors.primary : themeColors.textMuted }
+                                { color: locale === lang.code ? themeColors.accent : themeColors.mutedText }
                             ]}>
                                 {lang.name}
                             </Text>
@@ -85,16 +101,16 @@ export default function SettingsScreen() {
                 </View>
             </View>
 
-            <TouchableOpacity 
-                style={[styles.btn, { backgroundColor: themeColors.cardBgSecondary }]}
+            <TouchableOpacity
+                style={[styles.btn, { backgroundColor: themeColors.surfaceElevated }]}
                 onPress={() => {
                     // Logic to clear user token / username would go here
                     // Then redirect to onboarding
                     // router.replace('/onboarding');
                 }}
             >
-                <LogOut size={20} color={themeColors.textMuted} />
-                <Text style={[styles.btnText, { color: themeColors.textMuted }]}>Sign Out / Change Username</Text>
+                <LogOut size={20} color={themeColors.mutedText} />
+                <Text style={[styles.btnText, { color: themeColors.mutedText }]}>Sign Out / Change Username</Text>
             </TouchableOpacity>
 
         </ScrollView>
@@ -132,6 +148,11 @@ const styles = StyleSheet.create({
         fontSize: 18,
         fontWeight: '600',
     },
+    rowLabel: {
+        fontSize: 12,
+        fontWeight: '600',
+        marginBottom: 10,
+    },
     themeOptions: {
         flexDirection: 'row',
         gap: 12,
@@ -148,6 +169,18 @@ const styles = StyleSheet.create({
     themeBtnText: {
         fontSize: 14,
         fontWeight: '600',
+    },
+    accentDots: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    accentDot: {
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     langList: {
         gap: 10,
