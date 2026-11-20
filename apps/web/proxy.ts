@@ -1,21 +1,49 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 
-// Protect only the admin area:
-//   /admin/:path*       dashboard pages (admin area)
-//   /api/admin/:path*   admin API routes
+// Protect the admin area and the operator-facing pages/routes:
+//   /admin/:path*                       dashboard admin pages
+//   /api/admin/:path*                   admin API routes
+//   /matches, /leagues, /history, /analysis   dashboard pages
+//   /api/analysis/*, /api/ai/*          AI analysis / suggestion routes
 export const config = {
-  matcher: ['/admin/:path*', '/api/admin/:path*'],
+  matcher: [
+    '/admin/:path*',
+    '/api/admin/:path*',
+    '/matches',
+    '/matches/:path*',
+    '/leagues',
+    '/leagues/:path*',
+    '/analysis',
+    '/analysis/:path*',
+    '/history',
+    '/history/:path*',
+    '/api/analysis',
+    '/api/analysis/:path*',
+    '/api/ai',
+    '/api/ai/:path*',
+    '/',
+  ],
 };
 
 const ADMIN_USERNAME = 'admin';
-const ADMIN_PREFIXES = ['/admin', '/api/admin'];
+const PROTECTED_PREFIXES = [
+  '/admin',
+  '/api/admin',
+  '/matches',
+  '/leagues',
+  '/analysis',
+  '/history',
+  '/api/analysis',
+  '/api/ai',
+  '/',
+];
 const BASE64_ALPHABET =
   'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 const textEncoder = new TextEncoder();
 
 function isProtectedPath(pathname: string): boolean {
-  return ADMIN_PREFIXES.some(
+  return PROTECTED_PREFIXES.some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
   );
 }
