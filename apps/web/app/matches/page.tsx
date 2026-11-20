@@ -54,6 +54,13 @@ export default function MatchesPage() {
     const [matches, setMatches] = useState<MatchData[]>([]);
     const [loading, setLoading] = useState(true);
     const [updatingId, setUpdatingId] = useState<string | null>(null);
+    // Fixture sync state: "Refresh fixtures" and the auto-sync-on-open path
+    // both run the same server function (syncFixtures); lastSynced feeds the
+    // "Last synced …" label.
+    const [lastSynced, setLastSynced] = useState<string | null>(null);
+    const [syncing, setSyncing] = useState(false);
+    const [errorMsg, setErrorMsg] = useState<string | null>(null);
+    const [deletingId, setDeletingId] = useState<string | null>(null);
 
     // Stored unpublished fixtures for the selected date ("Fetched fixtures
     // (not published)" section): rows with external_id starting 'af-' and
@@ -141,10 +148,51 @@ export default function MatchesPage() {
         await fetchMatches();
     };
 
-    // Tag a proxy match as free/paid/vip. Sends the full match so Convex can
-    // upsert it (matches originate from the FootyStats proxy, not Convex).
-    const [errorMsg, setErrorMsg] = useState<string | null>(null);
-    const [deletingId, setDeletingId] = useState<string | null>(null);
+    // "Refresh fixtures" — runs the same syncFixtures server function as the
+    // cron and the auto-sync path, then refreshes the list from the database.
+    const runFixturesSync = async () => {
+        if (syncing) return;
+        setSyncing(true);
+        try {
+            const res = await fetch('/api/admin/sync-fixtures');
+            const data = (await res.json()) as {
+                error?: string;
+                lastSyncedAt?: string | null;
+            };
+            if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+            if (data.lastSyncedAt) setLastSynced(data.lastSyncedAt);
+            await fetchMatches();
+        } catch (error) {
+            setErrorMsg(error instanceof Error ? error.message : 'Fixture sync failed');
+        } finally {
+            setSyncing(false);
+        }
+    };
+
+    // Load the last fixture sync time; when the Matches page opens and the
+    // last sync is older than 3 hours (or never ran), run syncFixtures in the
+    // background — the list refreshes when it finishes.
+    useEffect(() => {
+        let cancelled = false;
+        async function loadLastSynced() {
+            let lastSyncedAt: string | null = null;
+            try {
+                const res = await fetch('/api/admin/sync-status');
+                const data = (await res.json()) as { lastSyncedAt?: string | null };
+                lastSyncedAt = data.lastSyncedAt ?? null;
+            } catch (error) {
+                console.error('Failed to read last sync time:', error);
+            }
+            if (cancelled) return;
+            setLastSynced(lastSyncedAt);
+            if (!lastSyncedAt || Date.now() - Date.parse(lastSyncedAt) >= 3 * 60 * 60 * 1000) {
+                // Background auto-sync, once per page open (no retry loop).
+                queueMicrotask(() => { void runFixturesSync(); });
+            }
+        }
+        void loadLastSynced();
+        return () => { cancelled = true; };
+    }, []);
 
     const handleDeleteMatch = async (matchId: string) => {
         if (!confirm('Are you sure you want to delete this match?')) return;
@@ -530,6 +578,7 @@ export default function MatchesPage() {
                     <h1 className="text-3xl font-bold text-zinc-900 dark:text-zinc-50 tracking-tight">Matches</h1>
                     <p className="text-zinc-500 dark:text-zinc-400">Manage every match — edit teams, scores, status, result and AI predictions. Changes sync to mobile.</p>
                 </div>
+<<<<<<< HEAD
                 <div className="flex flex-wrap gap-2 items-center">
                     {resultsMessage && !syncingResults && (
                         <span className="text-xs text-emerald-600 dark:text-emerald-400">{resultsMessage}</span>
@@ -542,6 +591,9 @@ export default function MatchesPage() {
                         <RefreshCw size={16} className={syncingResults ? 'animate-spin' : undefined} />
                         {syncingResults ? 'Syncing...' : 'Refresh results'}
                     </button>
+=======
+                <div className="flex gap-2 items-center">
+>>>>>>> 8aa101d (Automatic fixtures sync)
                     <button
                         onClick={() => setIsManualModalOpen(true)}
                         className="flex items-center justify-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-colors text-sm shadow-sm"
@@ -550,6 +602,7 @@ export default function MatchesPage() {
                         Manual Match
                     </button>
                     <button
+<<<<<<< HEAD
                         onClick={() => {
                             setManualModalOpenPicker(true);
                             setIsManualModalOpen(true);
@@ -562,10 +615,20 @@ export default function MatchesPage() {
                     <button
                         onClick={handleRefresh}
                         className="flex items-center justify-center gap-1 px-4 py-2 bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 font-bold rounded-xl transition-colors text-sm"
+=======
+                        onClick={() => void runFixturesSync()}
+                        disabled={syncing}
+                        className="flex items-center justify-center gap-1 px-4 py-2 bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 font-bold rounded-xl transition-colors text-sm disabled:opacity-50"
+>>>>>>> 8aa101d (Automatic fixtures sync)
                     >
                         <RefreshCw size={16} />
-                        Refresh
+                        {syncing ? 'Syncing…' : 'Refresh fixtures'}
                     </button>
+                    {lastSynced && (
+                        <span className="text-xs text-zinc-500 dark:text-zinc-400 whitespace-nowrap">
+                            Last synced {new Date(lastSynced).toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                    )}
                 </div>
             </div>
 

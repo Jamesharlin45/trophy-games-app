@@ -11,6 +11,12 @@
  * percentages (percent.home / draw / away), advice and the team form stats.
  */
 
+import {
+    ApiFootballError,
+    getApiFootballKey,
+    readApiFootballResponse,
+} from './api-football';
+
 const PREDICTIONS_URL = 'https://v3.football.api-sports.io/predictions';
 
 /** Prediction percentages/advice/form extracted from the /predictions response. */
