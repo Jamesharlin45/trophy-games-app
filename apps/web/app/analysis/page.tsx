@@ -17,6 +17,7 @@ import {
   ChevronUp,
   Clock,
   Zap,
+  RefreshCw,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -76,6 +77,17 @@ interface ProposedPick {
 interface RunAnalysisResponse extends RunReport {
   proposedPicks?: ProposedPick[];
   error?: string;
+}
+
+interface SettleReport {
+  candidates: number;
+  fetched: number;
+  settled: number;
+  won: number;
+  lost: number;
+  void: number;
+  skipped: number;
+  errors: string[];
 }
 
 const typeConfig = {
@@ -221,6 +233,8 @@ export default function AnalysisPage() {
   const [runReport, setRunReport] = useState<RunReport | null>(null);
   const [proposedPicks, setProposedPicks] = useState<ProposedPick[]>([]);
   const [publishing, setPublishing] = useState(false);
+  const [settling, setSettling] = useState(false);
+  const [settleReport, setSettleReport] = useState<SettleReport | null>(null);
 
   const fetchHistory = useCallback(async () => {
     try {
@@ -298,6 +312,36 @@ export default function AnalysisPage() {
       setError(e instanceof Error ? e.message : 'Failed to run analysis');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const settleResults = async () => {
+    setSettling(true);
+    setError(null);
+    setSuccess(null);
+    setSettleReport(null);
+
+    try {
+      const res = await fetch('/api/admin/settle', { method: 'POST' });
+      const data = await res.json() as Partial<SettleReport> & { error?: string };
+      if (!res.ok) throw new Error(data.error || 'Settlement failed');
+
+      const report: SettleReport = {
+        candidates: data.candidates ?? 0,
+        fetched: data.fetched ?? 0,
+        settled: data.settled ?? 0,
+        won: data.won ?? 0,
+        lost: data.lost ?? 0,
+        void: data.void ?? 0,
+        skipped: data.skipped ?? 0,
+        errors: Array.isArray(data.errors) ? data.errors : [],
+      };
+      setSettleReport(report);
+      setSuccess(`Settled ${report.settled} picks — Won: ${report.won}, Lost: ${report.lost}, Void: ${report.void}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to settle results');
+    } finally {
+      setSettling(false);
     }
   };
 
@@ -487,6 +531,24 @@ export default function AnalysisPage() {
               </>
             )}
           </button>
+
+          <button
+            onClick={settleResults}
+            disabled={settling}
+            className="flex items-center gap-2 px-6 py-2.5 bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:hover:bg-white text-white dark:text-zinc-900 font-bold rounded-xl transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {settling ? (
+              <>
+                <Loader2 size={18} className="animate-spin" />
+                Settling...
+              </>
+            ) : (
+              <>
+                <RefreshCw size={18} />
+                Settle results now
+              </>
+            )}
+          </button>
         </div>
 
         {error && (
@@ -520,6 +582,31 @@ export default function AnalysisPage() {
           {runReport.errors.length > 0 && (
             <ul className="space-y-1">
               {runReport.errors.map((error, i) => (
+                <li key={i} className="text-xs text-red-600 dark:text-red-400 flex items-start gap-2">
+                  <AlertTriangle size={12} className="shrink-0 mt-0.5" />
+                  {error}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {/* Settlement Report */}
+      {settleReport && (
+        <div className="bg-white dark:bg-zinc-900/50 rounded-2xl border border-zinc-200 dark:border-zinc-800 p-6 space-y-4">
+          <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-50">Settlement Report</h3>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <RunStat label="Candidates" value={settleReport.candidates} />
+            <RunStat label="Settled" value={settleReport.settled} />
+            <RunStat label="Won" value={settleReport.won} />
+            <RunStat label="Lost" value={settleReport.lost} />
+            <RunStat label="Void" value={settleReport.void} />
+            <RunStat label="Left for next run" value={settleReport.skipped} />
+          </div>
+          {settleReport.errors.length > 0 && (
+            <ul className="space-y-1">
+              {settleReport.errors.map((error, i) => (
                 <li key={i} className="text-xs text-red-600 dark:text-red-400 flex items-start gap-2">
                   <AlertTriangle size={12} className="shrink-0 mt-0.5" />
                   {error}
