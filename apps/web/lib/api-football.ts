@@ -2,13 +2,22 @@
  * Server-only helper for the API-Football (v3) fixtures endpoint.
  *
  * Base URL: https://v3.football.api-sports.io
- * Header:   x-apisports-key (process.env.API_FOOTBALL_KEY, read server-side only)
+ * Header:   x-apisports-key (the normalised key from getApiFootballKey)
  * Endpoint: GET /fixtures?date=YYYY-MM-DD
  *
  * Free plan limits: 100 requests/day and only yesterday/today/tomorrow dates.
- * The API reports failures inside the JSON "errors" field ([] = success)
- * rather than via HTTP status codes, so that field is always checked.
+ * The API reports failures inside the JSON "errors" field ([] = success),
+ * including on HTTP 403, so that field is always checked before the status.
  */
+
+import {
+    ApiFootballError,
+    getApiFootballKey,
+    type ApiFootballErrorCode,
+} from './api-football-key';
+
+export { ApiFootballError, getApiFootballKey } from './api-football-key';
+export type { ApiFootballErrorCode } from './api-football-key';
 
 const BASE_URL = 'https://v3.football.api-sports.io';
 
@@ -35,18 +44,6 @@ export interface ApiFootballFixtureResult {
     finalAwayScore: number | null;
 }
 
-export type ApiFootballErrorCode = 'MISSING_KEY' | 'PLAN_LIMIT' | 'API_FAILURE';
-
-export class ApiFootballError extends Error {
-    code: ApiFootballErrorCode;
-
-    constructor(message: string, code: ApiFootballErrorCode) {
-        super(message);
-        this.name = 'ApiFootballError';
-        this.code = code;
-    }
-}
-
 interface RawFixture {
     fixture: {
         id: number;
@@ -71,14 +68,10 @@ interface RawFixtureResult {
     };
 }
 
-interface RawApiResponse {
-    response?: RawFixture[];
+export interface ApiFootballEnvelope<T> {
+    response?: T[];
     errors?: unknown;
-}
-
-interface RawResultApiResponse {
-    response?: RawFixtureResult[];
-    errors?: unknown;
+    results?: number;
 }
 
 interface CacheEntry {
@@ -99,17 +92,68 @@ function isToday(date: string): boolean {
     return date === todayUtc;
 }
 
-/** Extract human-readable messages from the API's "errors" field. */
-function extractErrors(errors: unknown): string[] {
-    if (Array.isArray(errors)) {
-        return errors.filter((e): e is string => typeof e === 'string' && e.trim().length > 0);
+function messagesFromErrorValue(value: unknown): string[] {
+    if (typeof value === 'string') {
+        const message = value.trim();
+        return message.length > 0 ? [message] : [];
     }
-    if (errors !== null && typeof errors === 'object') {
-        return Object.entries(errors as Record<string, unknown>)
-            .map(([key, value]) => (value ? `${key}: ${String(value)}` : ''))
-            .filter((message) => message.length > 0);
+    if (Array.isArray(value)) {
+        return value.flatMap(messagesFromErrorValue);
+    }
+    if (value !== null && typeof value === 'object') {
+        return Object.entries(value as Record<string, unknown>).flatMap(([key, entry]) => {
+            const messages = messagesFromErrorValue(entry);
+            return messages.map((message) => (key.length > 0 ? `${key}: ${message}` : message));
+        });
     }
     return [];
+}
+
+/** Extract human-readable messages from the API's "errors" field. */
+export function extractApiFootballErrors(errors: unknown): string[] {
+    return messagesFromErrorValue(errors);
+}
+
+function errorCodeForMessages(messages: string[]): ApiFootballErrorCode {
+    return messages.some((message) => /(plan|limit|request|subscription|quota|rate)/i.test(message))
+        ? 'PLAN_LIMIT'
+        : 'API_FAILURE';
+}
+
+/**
+ * Read an API-Football response. The API can return HTTP 200 or 403 with the
+ * failure in the JSON "errors" field, so errors are checked before the HTTP
+ * status. Messages are surfaced to the admin UI; the key is never included.
+ */
+export async function readApiFootballResponse<T>(
+    res: Response,
+    context: string,
+): Promise<ApiFootballEnvelope<T>> {
+    let body: ApiFootballEnvelope<T> | null = null;
+    try {
+        body = (await res.json()) as ApiFootballEnvelope<T>;
+    } catch {
+        body = null;
+    }
+
+    if (body !== null) {
+        const messages = extractApiFootballErrors(body.errors);
+        if (messages.length > 0) {
+            throw new ApiFootballError(messages.join('; '), errorCodeForMessages(messages));
+        }
+    }
+
+    if (!res.ok) {
+        throw new ApiFootballError(
+            `API-Football returned HTTP ${res.status} for ${context}`,
+            'API_FAILURE',
+        );
+    }
+    if (body === null) {
+        throw new ApiFootballError('API-Football returned an unparseable response', 'API_FAILURE');
+    }
+
+    return body;
 }
 
 function toFixture(f: RawFixture): ApiFootballFixture {
@@ -123,9 +167,23 @@ function toFixture(f: RawFixture): ApiFootballFixture {
     };
 }
 
-async function loadFromApi(date: string): Promise<ApiFootballFixture[]> {
-    const key = process.env.API_FOOTBALL_KEY;
-    if (!key) throw new ApiFootballError('API_FOOTBALL_KEY is not configured', 'MISSING_KEY');
+/** Result of one fixtures fetch for a date: the trimmed fixtures plus the
+ * API's rate-limit budget for the response (when the API sent a header). */
+export interface FixturesFetchResult {
+    fixtures: ApiFootballFixture[];
+    rateLimitRemaining: number | null;
+}
+
+function parseRateLimitRemaining(value: string | null): number | null {
+    if (value === null) return null;
+    const trimmed = value.trim();
+    if (!/^\d+$/.test(trimmed)) return null;
+    const parsed = Number(trimmed);
+    return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+async function loadFromApi(date: string): Promise<FixturesFetchResult> {
+    const key = getApiFootballKey();
 
     let res: Response;
     try {
@@ -136,25 +194,16 @@ async function loadFromApi(date: string): Promise<ApiFootballFixture[]> {
         const reason = error instanceof Error ? error.message : 'network error';
         throw new ApiFootballError(`Failed to reach API-Football: ${reason}`, 'API_FAILURE');
     }
-    if (!res.ok) throw new ApiFootballError(`API-Football returned HTTP ${res.status} for date ${date}`, 'API_FAILURE');
 
-    let body: RawApiResponse;
-    try {
-        body = await res.json();
-    } catch {
-        throw new ApiFootballError('API-Football returned an unparseable response', 'API_FAILURE');
-    }
+    const rateLimitRemaining = parseRateLimitRemaining(res.headers.get('x-ratelimit-requests-remaining'));
 
-    // Free plans report out-of-range dates as errors inside the JSON.
-    const messages = extractErrors(body.errors);
-    if (messages.length > 0) {
-        const code: ApiFootballErrorCode = messages.some((m) => m.toLowerCase().includes('plan'))
-            ? 'PLAN_LIMIT'
-            : 'API_FAILURE';
-        throw new ApiFootballError(messages.join('; '), code);
-    }
-
-    return Array.isArray(body.response) ? body.response.map(toFixture) : [];
+    // Free plans report out-of-range dates and plan limits as JSON errors,
+    // sometimes with HTTP 403. readApiFootballResponse checks them first.
+    const body = await readApiFootballResponse<RawFixture>(res, `date ${date}`);
+    return {
+        fixtures: Array.isArray(body.response) ? body.response.map(toFixture) : [],
+        rateLimitRemaining,
+    };
 }
 
 /**
@@ -171,12 +220,12 @@ export async function fetchFixtures(date: string): Promise<ApiFootballFixture[]>
     if (pending) return pending;
 
     const promise = loadFromApi(date)
-        .then((fixtures) => {
+        .then((result) => {
             cache.set(date, {
-                fixtures,
+                fixtures: result.fixtures,
                 expiresAt: Date.now() + (isToday(date) ? 30 * 60 * 1000 : 3 * 60 * 60 * 1000),
             });
-            return fixtures;
+            return result.fixtures;
         })
         .catch((error: unknown) => {
             if (error instanceof ApiFootballError && error.code === 'PLAN_LIMIT') throw error;
@@ -190,6 +239,14 @@ export async function fetchFixtures(date: string): Promise<ApiFootballFixture[]>
 
     inflight.set(date, promise);
     return promise;
+}
+
+/** Fetch fixtures for a date without the per-date cache and report the
+ * API-Football rate-limit header alongside the fixtures. Used by the
+ * fixture sync: it always needs fresh data and the budget of each
+ * response to enforce its request floor. */
+export async function fetchFixturesDetailed(date: string): Promise<FixturesFetchResult> {
+    return loadFromApi(date);
 }
 
 function toFixtureResult(f: RawFixtureResult): ApiFootballFixtureResult {
@@ -219,8 +276,7 @@ function chunk<T>(items: T[], size: number): T[][] {
  * Returns status + 90-minute score for each fixture the API knows about.
  */
 export async function fetchFixtureResults(ids: number[]): Promise<ApiFootballFixtureResult[]> {
-    const key = process.env.API_FOOTBALL_KEY;
-    if (!key) throw new ApiFootballError('API_FOOTBALL_KEY is not configured', 'MISSING_KEY');
+    const key = getApiFootballKey();
 
     const unique = [...new Set(ids)].filter((id) => Number.isInteger(id) && id > 0);
     const results: ApiFootballFixtureResult[] = [];
@@ -235,25 +291,11 @@ export async function fetchFixtureResults(ids: number[]): Promise<ApiFootballFix
             const reason = error instanceof Error ? error.message : 'network error';
             throw new ApiFootballError(`Failed to reach API-Football: ${reason}`, 'API_FAILURE');
         }
-        if (!res.ok) {
-            throw new ApiFootballError(`API-Football returned HTTP ${res.status} for fixtures by id`, 'API_FAILURE');
-        }
 
-        let body: RawResultApiResponse;
-        try {
-            body = await res.json();
-        } catch {
-            throw new ApiFootballError('API-Football returned an unparseable response', 'API_FAILURE');
-        }
-
-        const messages = extractErrors(body.errors);
-        if (messages.length > 0) {
-            const code: ApiFootballErrorCode = messages.some((m) => m.toLowerCase().includes('plan'))
-                ? 'PLAN_LIMIT'
-                : 'API_FAILURE';
-            throw new ApiFootballError(messages.join('; '), code);
-        }
-
+        const body = await readApiFootballResponse<RawFixtureResult>(
+            res,
+            `fixtures by id (${batch.length})`,
+        );
         if (Array.isArray(body.response)) results.push(...body.response.map(toFixtureResult));
     }
 

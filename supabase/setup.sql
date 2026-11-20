@@ -281,3 +281,17 @@ CREATE INDEX IF NOT EXISTS analysis_results_by_analysis_type ON analysis_results
 
 -- Access rules (existing: RLS enabled, no policies).
 ALTER TABLE analysis_results ENABLE ROW LEVEL SECURITY;
+
+-- ---------------------------------------------------------------------------
+-- sync_state — the singleton `sync_state` row records the last fixture-sync
+-- timestamp. Written by apps/web's fixture sync (lib/sync-fixtures.ts) and
+-- read by the admin Matches page to decide whether to auto-sync on open.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS sync_state (
+    id integer PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    last_synced_at timestamptz NOT NULL
+);
+
+-- Access rules (same as the other tables: RLS enabled, no policies).
+ALTER TABLE sync_state ENABLE ROW LEVEL SECURITY;
