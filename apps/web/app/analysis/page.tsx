@@ -51,6 +51,33 @@ interface AnalysisResult {
   model: string;
 }
 
+interface RunReport {
+  fixturesFound: number;
+  shortlisted: number;
+  predictionsOk: number;
+  predictionsFailed: number;
+  analysed: number;
+  published: { vip: number; paid: number; free: number; unassigned: number };
+  errors: string[];
+  autoPublished: boolean;
+}
+
+interface ProposedPick {
+  externalId: string;
+  fixtureId: string;
+  homeTeam: string;
+  awayTeam: string;
+  league: string;
+  tier: 'vip' | 'paid' | 'free';
+  confidence: number;
+  suggestedBet: string;
+}
+
+interface RunAnalysisResponse extends RunReport {
+  proposedPicks?: ProposedPick[];
+  error?: string;
+}
+
 const typeConfig = {
   free: { label: 'Free', color: 'bg-blue-500', icon: Star, bgColor: 'bg-blue-50 dark:bg-blue-500/10', borderColor: 'border-blue-200 dark:border-blue-500/20', textColor: 'text-blue-600 dark:text-blue-400' },
   paid: { label: 'Paid', color: 'bg-orange-500', icon: TrendingUp, bgColor: 'bg-orange-50 dark:bg-orange-500/10', borderColor: 'border-orange-200 dark:border-orange-500/20', textColor: 'text-orange-600 dark:text-orange-400' },
@@ -166,6 +193,20 @@ function RecommendationCard({ rec, isSelected, onToggle }: RecommendationCardPro
   );
 }
 
+interface RunStatProps {
+  label: string;
+  value: string | number;
+}
+
+function RunStat({ label, value }: RunStatProps) {
+  return (
+    <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-3 text-center">
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">{label}</p>
+      <p className="text-lg font-bold text-zinc-900 dark:text-zinc-50">{value}</p>
+    </div>
+  );
+}
+
 export default function AnalysisPage() {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [analysisType, setAnalysisType] = useState<'daily' | 'weekly'>('daily');
@@ -177,6 +218,9 @@ export default function AnalysisPage() {
   const [success, setSuccess] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'free' | 'paid' | 'vip'>('free');
   const [selectedMatches, setSelectedMatches] = useState<Set<string>>(new Set());
+  const [runReport, setRunReport] = useState<RunReport | null>(null);
+  const [proposedPicks, setProposedPicks] = useState<ProposedPick[]>([]);
+  const [publishing, setPublishing] = useState(false);
 
   const fetchHistory = useCallback(async () => {
     try {
@@ -221,6 +265,8 @@ export default function AnalysisPage() {
     setError(null);
     setSuccess(null);
     setResult(null);
+    setRunReport(null);
+    setProposedPicks([]);
 
     try {
       const res = await fetch('/api/analysis/run', {
@@ -229,16 +275,52 @@ export default function AnalysisPage() {
         body: JSON.stringify({ date: selectedDate, analysisType }),
       });
 
-      const data = await res.json();
+      const data = await res.json() as RunAnalysisResponse;
       if (!res.ok) throw new Error(data.error || 'Analysis failed');
 
-      setSuccess(`Analysis complete! Free: ${data.freeCount}, Paid: ${data.paidCount}, VIP: ${data.vipCount}. Removed: ${data.removedCount}`);
+      const report: RunReport = {
+        fixturesFound: data.fixturesFound ?? 0,
+        shortlisted: data.shortlisted ?? 0,
+        predictionsOk: data.predictionsOk ?? 0,
+        predictionsFailed: data.predictionsFailed ?? 0,
+        analysed: data.analysed ?? 0,
+        published: data.published ?? { vip: 0, paid: 0, free: 0, unassigned: 0 },
+        errors: data.errors ?? [],
+        autoPublished: data.autoPublished ?? false,
+      };
+      setRunReport(report);
+      setProposedPicks(Array.isArray(data.proposedPicks) ? data.proposedPicks : []);
+
+      setSuccess(`Fixtures found: ${report.fixturesFound} · Analysed: ${report.analysed} · Published — VIP: ${report.published.vip}, Paid: ${report.published.paid}, Free: ${report.published.free}`);
       await fetchResultForDate();
       await fetchHistory();
-    } catch (e: any) {
-      setError(e.message || 'Failed to run analysis');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to run analysis');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const publishAll = async () => {
+    setPublishing(true);
+    setError(null);
+
+    try {
+      const res = await fetch('/api/analysis/publish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ picks: proposedPicks.map((p) => ({ externalId: p.externalId, tier: p.tier })) }),
+      });
+
+      const data = await res.json() as { applied?: number; error?: string };
+      if (!res.ok) throw new Error(data.error || 'Publish failed');
+
+      setSuccess(`Published ${data.applied ?? 0} picks!`);
+      setProposedPicks([]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to publish picks');
+    } finally {
+      setPublishing(false);
     }
   };
 
@@ -421,6 +503,50 @@ export default function AnalysisPage() {
           </div>
         )}
       </div>
+
+      {/* Run Report */}
+      {runReport && (
+        <div className="bg-white dark:bg-zinc-900/50 rounded-2xl border border-zinc-200 dark:border-zinc-800 p-6 space-y-4">
+          <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-50">Run Report</h3>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <RunStat label="Fixtures found" value={runReport.fixturesFound} />
+            <RunStat label="Analysed" value={runReport.analysed} />
+            <RunStat label="Predictions ok" value={runReport.predictionsOk} />
+            <RunStat label="Predictions failed" value={runReport.predictionsFailed} />
+            <RunStat label="Published VIP" value={runReport.published.vip} />
+            <RunStat label="Published Paid" value={runReport.published.paid} />
+            <RunStat label="Published Free" value={runReport.published.free} />
+          </div>
+          {runReport.errors.length > 0 && (
+            <ul className="space-y-1">
+              {runReport.errors.map((error, i) => (
+                <li key={i} className="text-xs text-red-600 dark:text-red-400 flex items-start gap-2">
+                  <AlertTriangle size={12} className="shrink-0 mt-0.5" />
+                  {error}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {/* Proposed picks (AUTO_PUBLISH = "false") */}
+      {proposedPicks.length > 0 && (
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-indigo-50 dark:bg-indigo-500/10 rounded-2xl border border-indigo-200 dark:border-indigo-700 p-5">
+          <div className="flex items-center gap-2 text-sm text-indigo-900 dark:text-indigo-100">
+            <Sparkles size={16} />
+            {proposedPicks.length} picks proposed — VIP: {proposedPicks.filter((p) => p.tier === 'vip').length}, Paid: {proposedPicks.filter((p) => p.tier === 'paid').length}, Free: {proposedPicks.filter((p) => p.tier === 'free').length} (unpublished)
+          </div>
+          <button
+            onClick={publishAll}
+            disabled={publishing}
+            className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all disabled:opacity-50"
+          >
+            {publishing ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+            Publish all
+          </button>
+        </div>
+      )}
 
       {/* Results */}
       {result && (
