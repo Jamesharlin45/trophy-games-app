@@ -124,11 +124,36 @@ export function sanitizeProxyMatch(m: Record<string, unknown>): ProxyMatchInput 
 // Queries (ports of packages/backend/convex/matches.ts)
 // ---------------------------------------------------------------------------
 
+/** Extra query options used by the mobile app endpoints. */
+export interface AppMatchQueryOptions {
+    /** Hide AI picks that are still unpublished: rows with tier 'unassigned'
+     * and an external id starting 'af-'. Every other row is unaffected. */
+    excludeUnpublishedPicks?: boolean;
+}
+
+/**
+ * PostgREST filter that keeps every row except unpublished AI picks
+ * (tier = 'unassigned' AND external_id LIKE 'af-%'). NULL tier / external id
+ * rows are kept, and so is every other tier.
+ */
+const EXCLUDE_UNPUBLISHED_PICKS_FILTER =
+    'tier.is.null,tier.neq.unassigned,external_id.is.null,not.and(tier.eq.unassigned,external_id.like.af-*)';
+
+function isUnpublishedPick(row: MatchRow): boolean {
+    return row.tier === 'unassigned' && typeof row.external_id === 'string' && row.external_id.startsWith('af-');
+}
+
 /** api.matches.getAll — newest first, capped at `limit`. */
-export async function getAll(db: SupabaseClient, limit = 100): Promise<DbMatch[]> {
-    const { data } = await db
-        .from('matches')
-        .select('*')
+export async function getAll(
+    db: SupabaseClient,
+    limit = 100,
+    options?: AppMatchQueryOptions,
+): Promise<DbMatch[]> {
+    const base = db.from('matches').select('*');
+    const query = options?.excludeUnpublishedPicks
+        ? base.or(EXCLUDE_UNPUBLISHED_PICKS_FILTER)
+        : base;
+    const { data } = await query
         .order('kickoff', { ascending: false })
         .limit(limit);
     return mapMatches((data ?? []) as MatchRow[]);
@@ -136,20 +161,37 @@ export async function getAll(db: SupabaseClient, limit = 100): Promise<DbMatch[]
 
 /** api.matches.getById — external id first, then the row id as fallback
  * (mirrors the Convex by_match_id index + ctx.db.get fallback). */
-export async function getById(db: SupabaseClient, matchId: string): Promise<DbMatch | null> {
+export async function getById(
+    db: SupabaseClient,
+    matchId: string,
+    options?: AppMatchQueryOptions,
+): Promise<DbMatch | null> {
     const { data } = await db.from('matches').select('*').eq('external_id', matchId).limit(1);
-    if (data && data.length > 0) return mapMatch(data[0] as MatchRow);
+    if (data && data.length > 0) {
+        const row = data[0] as MatchRow;
+        if (options?.excludeUnpublishedPicks && isUnpublishedPick(row)) return null;
+        return mapMatch(row);
+    }
     const byRowId = await db.from('matches').select('*').eq('id', matchId).limit(1);
-    if (byRowId.data && byRowId.data.length > 0) return mapMatch(byRowId.data[0] as MatchRow);
+    if (byRowId.data && byRowId.data.length > 0) {
+        const row = byRowId.data[0] as MatchRow;
+        if (options?.excludeUnpublishedPicks && isUnpublishedPick(row)) return null;
+        return mapMatch(row);
+    }
     return null;
 }
 
 /** api.matches.getByDate — matches on a date, newest first, capped at 100. */
-export async function getByDate(db: SupabaseClient, date: string): Promise<DbMatch[]> {
-    const { data } = await db
-        .from('matches')
-        .select('*')
-        .eq('match_date', date)
+export async function getByDate(
+    db: SupabaseClient,
+    date: string,
+    options?: AppMatchQueryOptions,
+): Promise<DbMatch[]> {
+    const base = db.from('matches').select('*').eq('match_date', date);
+    const query = options?.excludeUnpublishedPicks
+        ? base.or(EXCLUDE_UNPUBLISHED_PICKS_FILTER)
+        : base;
+    const { data } = await query
         .order('kickoff', { ascending: false })
         .limit(100);
     return mapMatches((data ?? []) as MatchRow[]);
@@ -162,12 +204,13 @@ export async function getByTypeAndDate(
     matchType: MatchTier,
     date: string,
     limit = 100,
+    options?: AppMatchQueryOptions,
 ): Promise<DbMatch[]> {
-    const { data } = await db
-        .from('matches')
-        .select('*')
-        .eq('tier', matchType)
-        .eq('match_date', date)
+    const base = db.from('matches').select('*').eq('tier', matchType).eq('match_date', date);
+    const query = options?.excludeUnpublishedPicks
+        ? base.or(EXCLUDE_UNPUBLISHED_PICKS_FILTER)
+        : base;
+    const { data } = await query
         .order('kickoff', { ascending: false })
         .limit(limit);
     return mapMatches((data ?? []) as MatchRow[]);

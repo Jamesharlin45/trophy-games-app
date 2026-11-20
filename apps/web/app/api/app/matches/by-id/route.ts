@@ -15,7 +15,7 @@ export async function GET(request: Request) {
     if (!db) return NextResponse.json(null);
 
     try {
-        return NextResponse.json(await getById(db, matchId));
+        return NextResponse.json(await getById(db, matchId, { excludeUnpublishedPicks: true }));
     } catch (error) {
         console.error('[API App Matches ById] Error:', error);
         return NextResponse.json({ error: 'Failed to load match' }, { status: 500 });
