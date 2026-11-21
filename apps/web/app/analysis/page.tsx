@@ -73,6 +73,12 @@ interface RunReport {
   total: number;
   analysed: number;
   errors: string[];
+  /** Candidates excluded because they had already started. */
+  excludedStarted: number;
+  /** Candidates skipped because they already had stored proposals (no rerun). */
+  skipped: number;
+  /** DeepSeek API calls made across the run. */
+  deepseekCalls: number;
   complete?: { ranked: TierSplit; analysed: number };
 }
 
@@ -92,6 +98,9 @@ interface RunAnalysisResponse {
   total: number;
   analysed: number;
   errors: string[];
+  excludedStarted?: number;
+  skipped?: number;
+  deepseekCalls?: number;
   complete?: { ranked: TierSplit; analysed: number };
   error?: string;
 }
@@ -303,6 +312,7 @@ function RunStat({ label, value }: RunStatProps) {
 export default function AnalysisPage() {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [analysisType, setAnalysisType] = useState<'daily' | 'weekly'>('daily');
+  const [matchesToAnalyse, setMatchesToAnalyse] = useState(10);
   const [loading, setLoading] = useState(false);
   const [approving, setApproving] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
@@ -369,6 +379,9 @@ export default function AnalysisPage() {
     setProposedPicks([]);
 
     const progress: RunProgress = { total: 0, analysed: 0 };
+    let callsMade = 0;
+    let excludedStarted = 0;
+    let skipped = 0;
 
     try {
       // The endpoint processes at most CHUNK_SIZE matches per request; call
@@ -377,7 +390,7 @@ export default function AnalysisPage() {
         const res = await fetch('/api/analysis/run', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ date: selectedDate, analysisType, rerun }),
+          body: JSON.stringify({ date: selectedDate, analysisType, rerun, maxMatches: matchesToAnalyse }),
         });
 
         const data = (await res.json()) as RunAnalysisResponse;
@@ -385,6 +398,9 @@ export default function AnalysisPage() {
 
         progress.total = Math.max(progress.total, data.total ?? 0);
         progress.analysed = data.analysed ?? progress.analysed;
+        callsMade += data.deepseekCalls ?? 0;
+        excludedStarted = Math.max(excludedStarted, data.excludedStarted ?? 0);
+        skipped = data.skipped ?? skipped;
         setRunProgress(progress);
         setRunErrors(data.errors ?? []);
 
@@ -394,6 +410,9 @@ export default function AnalysisPage() {
             total: progress.total,
             analysed: progress.analysed,
             errors: data.errors ?? [],
+            excludedStarted,
+            skipped,
+            deepseekCalls: callsMade,
             complete: data.complete,
           });
           break;
@@ -485,10 +504,11 @@ export default function AnalysisPage() {
         }),
       });
 
-      const data = await res.json();
+      const data = await res.json() as { applied?: number; skipped?: { matchId: string; reason: string }[]; error?: string };
       if (!res.ok) throw new Error(data.error || 'Approval failed');
 
-      setSuccess(`Approved! ${data.applied} matches tagged.`);
+      const skippedCount = Array.isArray(data.skipped) ? data.skipped.length : 0;
+      setSuccess(`Approved! ${data.applied ?? 0} matches tagged.${skippedCount > 0 ? ` Skipped ${skippedCount} (already kicked off or have results).` : ''}`);
       setSelectedMatches(new Set());
       await fetchResultForDate();
     } catch (e) {
@@ -513,10 +533,11 @@ export default function AnalysisPage() {
         }),
       });
 
-      const data = await res.json();
+      const data = await res.json() as { applied?: number; skipped?: { matchId: string; reason: string }[]; error?: string };
       if (!res.ok) throw new Error(data.error || 'Approval failed');
 
-      setSuccess(`Approved! ${data.applied} selected matches tagged.`);
+      const skippedCount = Array.isArray(data.skipped) ? data.skipped.length : 0;
+      setSuccess(`Approved! ${data.applied ?? 0} selected matches tagged.${skippedCount > 0 ? ` Skipped ${skippedCount} (already kicked off or have results).` : ''}`);
       setSelectedMatches(new Set());
       await fetchResultForDate();
     } catch (e) {
@@ -614,6 +635,22 @@ export default function AnalysisPage() {
             </div>
           </div>
 
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Matches to analyse</label>
+            <input
+              type="number"
+              min={1}
+              max={30}
+              step={1}
+              value={matchesToAnalyse}
+              onChange={(e) => {
+                const n = e.target.valueAsNumber;
+                setMatchesToAnalyse(Number.isFinite(n) ? Math.min(30, Math.max(1, Math.floor(n))) : 10);
+              }}
+              className="w-28 px-3 py-2.5 rounded-xl border border-zinc-200 bg-zinc-50 focus:ring-2 focus:ring-indigo-500 outline-none dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-100 text-sm"
+            />
+          </div>
+
           <button
             onClick={runAnalysis}
             disabled={loading}
@@ -692,8 +729,11 @@ export default function AnalysisPage() {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <RunStat label="Total candidates" value={runReport.total} />
             <RunStat label="Analysed" value={runReport.analysed} />
+            <RunStat label="DeepSeek calls" value={runReport.deepseekCalls} />
+            <RunStat label="Skipped" value={runReport.skipped} />
             {runReport.complete && (
               <>
+                <RunStat label="Excluded (started)" value={runReport.excludedStarted} />
                 <RunStat label="Free" value={runReport.complete.ranked.free.length} />
                 <RunStat label="VIP" value={runReport.complete.ranked.vip.length} />
                 <RunStat label="Paid" value={runReport.complete.ranked.paid.length} />
