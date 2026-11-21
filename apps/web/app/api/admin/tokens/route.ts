@@ -62,11 +62,16 @@ export async function DELETE(request: Request) {
     if (!db) return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
     try {
         const { token } = (await request.json()) as { token?: string };
-        await revokeToken(db, token as string);
-        return NextResponse.json({ success: true });
+        if (!token) return NextResponse.json({ error: 'token is required' }, { status: 400 });
+        const changed = await revokeToken(db, token);
+        if (changed === 0) {
+            return NextResponse.json({ error: 'Token not found or already revoked' }, { status: 404 });
+        }
+        return NextResponse.json({ success: true, changed });
     } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
         console.error('[API] Revoke token failed:', error);
-        return NextResponse.json({ error: 'Failed to revoke token' }, { status: 500 });
+        return NextResponse.json({ error: `Failed to revoke token: ${detail}` }, { status: 500 });
     }
 }
 
@@ -75,10 +80,15 @@ export async function PUT(request: Request) {
     if (!db) return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
     try {
         const { token } = (await request.json()) as { token?: string };
-        await reactivateToken(db, token as string);
-        return NextResponse.json({ success: true });
+        if (!token) return NextResponse.json({ error: 'token is required' }, { status: 400 });
+        const changed = await reactivateToken(db, token);
+        if (changed === 0) {
+            return NextResponse.json({ error: 'Token not found or not revoked' }, { status: 404 });
+        }
+        return NextResponse.json({ success: true, changed });
     } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
         console.error('[API] Reactivate token failed:', error);
-        return NextResponse.json({ error: 'Failed to reactivate token' }, { status: 500 });
+        return NextResponse.json({ error: `Failed to reactivate token: ${detail}` }, { status: 500 });
     }
 }

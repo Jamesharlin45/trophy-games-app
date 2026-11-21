@@ -60,6 +60,12 @@ export async function recordPurchase(
     const existing = existingRows && existingRows.length > 0 ? (existingRows[0] as PurchaseRow) : null;
 
     if (existing) {
+        // A revoked purchase must not be resurrected by the app's silent
+        // restore — the user removed access by admin action. Never create or
+        // re-activate a token for it.
+        if (existing.status === 'revoked') {
+            return { success: false, reason: 'revoked' };
+        }
         // Already recorded — just re-grant the access token if needed.
         const { data: tokenRows } = await db
             .from('access_tokens')
@@ -125,13 +131,16 @@ export async function recordPurchase(
 }
 
 /** api.purchases.getActiveSubscription — the newest verified, non-expired
- * purchase for the device; null when there is none (or it is expired). */
+ * purchase for the device; null when there is none (or it is expired).
+ * Revoked purchases never count: revokeToken sets their status to 'revoked'
+ * and only 'verified' rows are accepted here. */
 export async function getActiveSubscription(db: SupabaseClient, deviceId: string): Promise<ActiveSubscription | null> {
     const { data } = await db
         .from('purchases')
         .select('*')
         .eq('device_id', deviceId)
         .eq('status', 'verified')
+        .neq('status', 'revoked')
         .order('created_at', { ascending: false });
     const purchase = data?.find((p) => !p.expires_at || new Date(p.expires_at) > new Date());
     if (!purchase) return null;

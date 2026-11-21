@@ -125,14 +125,70 @@ export async function createToken(
     return { token: input.token };
 }
 
-/** api.tokens.revokeToken — deactivate by token and stamp revoked_at. */
-export async function revokeToken(db: SupabaseClient, token: string): Promise<void> {
-    await db.from('access_tokens').update({ is_active: false, revoked_at: new Date().toISOString() }).eq('token', token);
+/** api.tokens.revokeToken — deactivate by token and stamp revoked_at.
+ * Also revokes every purchase linked to the same device and tier.
+ * Returns how many access_tokens rows the update changed (0 when the
+ * token is unknown or already revoked). */
+export async function revokeToken(db: SupabaseClient, token: string): Promise<number> {
+    // Look the row up by the same `token` column the list maps (getAllTokens).
+    const { data: tokenRows, error: tokenError } = await db
+        .from('access_tokens')
+        .select('id, device_id, type')
+        .eq('token', token)
+        .limit(1);
+    if (tokenError) throw new Error(tokenError.message);
+    const tokenRow = (tokenRows ?? [])[0] as { id: string; device_id: string; type: TokenType } | undefined;
+    if (!tokenRow) return 0;
+
+    const { data: updated, error: updateError } = await db
+        .from('access_tokens')
+        .update({ is_active: false, revoked_at: new Date().toISOString() })
+        .eq('token', token)
+        .select('id');
+    if (updateError) throw new Error(updateError.message);
+
+    // Revoke every purchase linked to the same device and tier.
+    const { error: purchaseError } = await db
+        .from('purchases')
+        .update({ status: 'revoked', updated_at: new Date().toISOString() })
+        .eq('device_id', tokenRow.device_id)
+        .eq('tier', tokenRow.type);
+    if (purchaseError) throw new Error(purchaseError.message);
+
+    return (updated ?? []).length;
 }
 
-/** api.tokens.reactivateToken — reactivate by token and clear failures. */
-export async function reactivateToken(db: SupabaseClient, token: string): Promise<void> {
-    await db.from('access_tokens').update({ is_active: true, revoked_at: null, failed_attempts: 0 }).eq('token', token);
+/** api.tokens.reactivateToken — reactivate by token and clear failures.
+ * Also restores purchases revoked with the access back to 'verified'.
+ * Returns how many access_tokens rows the update changed (0 when the
+ * token is unknown or already active). */
+export async function reactivateToken(db: SupabaseClient, token: string): Promise<number> {
+    const { data: tokenRows, error: tokenError } = await db
+        .from('access_tokens')
+        .select('id, device_id, type')
+        .eq('token', token)
+        .limit(1);
+    if (tokenError) throw new Error(tokenError.message);
+    const tokenRow = (tokenRows ?? [])[0] as { id: string; device_id: string; type: TokenType } | undefined;
+    if (!tokenRow) return 0;
+
+    const { data: updated, error: updateError } = await db
+        .from('access_tokens')
+        .update({ is_active: true, revoked_at: null, failed_attempts: 0 })
+        .eq('id', tokenRow.id)
+        .select('id');
+    if (updateError) throw new Error(updateError.message);
+
+    // Restore purchases revoked with the access back to 'verified'.
+    const { error: purchaseError } = await db
+        .from('purchases')
+        .update({ status: 'verified', updated_at: new Date().toISOString() })
+        .eq('device_id', tokenRow.device_id)
+        .eq('tier', tokenRow.type)
+        .eq('status', 'revoked');
+    if (purchaseError) throw new Error(purchaseError.message);
+
+    return (updated ?? []).length;
 }
 
 /** Extend a token's expiry by `days` from now. Only the stored expiry is

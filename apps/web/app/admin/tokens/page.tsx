@@ -32,10 +32,19 @@ export default function AdminTokensPage() {
     const loadTokens = useCallback(async () => {
         try {
             const res = await fetch('/api/admin/tokens');
+            if (!res.ok) {
+                const data = (await res.json().catch(() => null)) as { error?: string } | null;
+                toast.error(data?.error || 'Failed to load tokens');
+                return;
+            }
             const data = await res.json();
             setTokens(Array.isArray(data) ? data : []);
-        } catch (e) { console.error(e); }
-        setLoading(false);
+        } catch (e) {
+            console.error(e);
+            toast.error('Failed to load tokens');
+        } finally {
+            setLoading(false);
+        }
     }, []);
 
     useEffect(() => {
@@ -78,7 +87,8 @@ export default function AdminTokensPage() {
     };
 
     // "Remove access": deactivate the token (with confirmation) so the user
-    // loses VIP/Paid on their next app refresh.
+    // loses VIP/Paid on their next app refresh. The list is reloaded from the
+    // server after the call so the real status is shown — never a local guess.
     const removeAccess = async (token: Token) => {
         if (!window.confirm(`Remove access for ${token.deviceId} (${token.type})? The user will lose access on their next app refresh.`)) return;
         setBusyToken(token.token);
@@ -88,33 +98,38 @@ export default function AdminTokensPage() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ token: token.token }),
             });
-            const data = await res.json();
-            if (!res.ok || data.error) throw new Error(data.error || 'Failed to remove access');
-            setTokens(prev => prev.map(t => t.token === token.token ? { ...t, isActive: false, revokedAt: new Date().toISOString() } : t));
+            const data = (await res.json().catch(() => null)) as { error?: string } | null;
+            if (!res.ok || data?.error) throw new Error(data?.error || 'Failed to remove access');
+            await loadTokens();
             toast.success('Access removed');
         } catch (e) {
-            toast.error('Failed to remove access');
+            toast.error(e instanceof Error ? e.message : 'Failed to remove access');
         } finally {
             setBusyToken(null);
         }
     };
 
     const reactivateToken = async (token: string) => {
+        setBusyToken(token);
         try {
-            await fetch('/api/admin/tokens', {
+            const res = await fetch('/api/admin/tokens', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ token }),
             });
-            setTokens(prev => prev.map(t => t.token === token ? { ...t, isActive: true, revokedAt: undefined } : t));
+            const data = (await res.json().catch(() => null)) as { error?: string } | null;
+            if (!res.ok || data?.error) throw new Error(data?.error || 'Failed to reactivate token');
+            await loadTokens();
             toast.success('Token reactivated successfully');
         } catch (e) {
-            console.error(e);
-            toast.error('Failed to reactivate token');
+            toast.error(e instanceof Error ? e.message : 'Failed to reactivate token');
+        } finally {
+            setBusyToken(null);
         }
     };
 
-    // "Extend": +7 or +30 days from now on the token's expiry.
+    // "Extend": +7 or +30 days from now on the token's expiry. The list is
+    // reloaded from the server after the call so the real expiry shows.
     const extendTokenDays = async (token: Token, days: 7 | 30) => {
         setBusyToken(token.token);
         try {
@@ -123,12 +138,12 @@ export default function AdminTokensPage() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ token: token.token, days }),
             });
-            const data = await res.json();
-            if (!res.ok || !data.success) throw new Error(data.error || 'Failed to extend');
-            setTokens(prev => prev.map(t => t.token === token.token ? { ...t, expiresAt: data.expiresAt ?? t.expiresAt } : t));
+            const data = (await res.json().catch(() => null)) as { error?: string; success?: boolean; expiresAt?: string } | null;
+            if (!res.ok || !data?.success || !data.expiresAt) throw new Error(data?.error || 'Failed to extend');
+            await loadTokens();
             toast.success(`Extended to ${new Date(data.expiresAt).toLocaleDateString()}`);
         } catch (e) {
-            toast.error('Failed to extend token');
+            toast.error(e instanceof Error ? e.message : 'Failed to extend token');
         } finally {
             setBusyToken(null);
         }
