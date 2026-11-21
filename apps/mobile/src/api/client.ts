@@ -117,6 +117,11 @@ export type SetPurchaseEmailResult =
     | { success: false; reason: string }
     | { success: true; action: 'inserted' | 'updated' | 'already_sent' };
 
+export interface TeamColorResult {
+    /** Dominant colour of the crest, e.g. "#2A4A2A". */
+    hex: string;
+}
+
 export interface RegisterUserResult {
     success: boolean;
     reason?: string;
@@ -215,6 +220,9 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 // ---------------------------------------------------------------------------
 
 export const api = {
+    teamColor: (crestUrl: string) =>
+        request<TeamColorResult>('/team-color', { query: { url: crestUrl } }),
+
     matches: {
         byTypeAndDate: (matchType: MatchTier, date: string, limit?: number) =>
             request<ApiMatch[]>('/matches/by-type-and-date', {

@@ -8,6 +8,14 @@ export default function TabLayout() {
     const { themeColors } = useTheme();
     const insets = useSafeAreaInsets();
 
+    const tabs = [
+        { name: 'index', Icon: Home, key: 'home' },
+        { name: 'paid', Icon: DollarSign, key: 'paid' },
+        { name: 'vip', Icon: Crown, key: 'vip' },
+        { name: 'wins', Icon: CheckCircle, key: 'analysis' },
+        { name: 'market', Icon: Store, key: 'market' },
+    ];
+
     return (
         <Tabs
             screenOptions={{
@@ -28,41 +36,18 @@ export default function TabLayout() {
                 },
             }}
         >
-            <Tabs.Screen
-                name="index"
-                options={{
-                    title: i18n.t('tabs.home'),
-                    tabBarIcon: ({ color }) => <Home color={color} size={22} />,
-                }}
-            />
-            <Tabs.Screen
-                name="paid"
-                options={{
-                    title: i18n.t('tabs.paid'),
-                    tabBarIcon: ({ color }) => <DollarSign color={color} size={22} />,
-                }}
-            />
-            <Tabs.Screen
-                name="vip"
-                options={{
-                    title: i18n.t('tabs.vip'),
-                    tabBarIcon: ({ color }) => <Crown color={color} size={22} />,
-                }}
-            />
-            <Tabs.Screen
-                name="wins"
-                options={{
-                    title: i18n.t('tabs.analysis'),
-                    tabBarIcon: ({ color }) => <CheckCircle color={color} size={22} />,
-                }}
-            />
-            <Tabs.Screen
-                name="market"
-                options={{
-                    title: i18n.t('tabs.market'),
-                    tabBarIcon: ({ color }) => <Store color={color} size={22} />,
-                }}
-            />
+            {tabs.map(({ name, Icon, key }) => (
+                <Tabs.Screen
+                    key={name}
+                    name={name}
+                    options={{
+                        title: i18n.t(`tabs.${key}`),
+                        tabBarIcon: ({ color, focused }) => (
+                            <Icon color={color} size={22} fill={focused ? color : 'none'} />
+                        ),
+                    }}
+                />
+            ))}
         </Tabs>
     );
 }

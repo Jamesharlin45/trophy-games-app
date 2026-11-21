@@ -1,8 +1,9 @@
-import { View, Text, ScrollView, ActivityIndicator, StyleSheet, RefreshControl, TouchableOpacity } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, RefreshControl, TouchableOpacity } from 'react-native';
 import { CheckCircle2, Trophy, TrendingUp } from 'lucide-react-native';
 import { useState, useCallback, useMemo } from 'react';
 import { MatchCard } from '../../components/MatchCard';
 import { DatePickerStrip } from '../../components/DatePickerStrip';
+import { SkeletonList } from '../../components/Skeleton';
 import { useTheme } from '../../context/ThemeContext';
 import type { ThemeColors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
@@ -10,6 +11,7 @@ import { api } from '../../api/client';
 import type { ApiMatch } from '../../api/client';
 import { useScreenQuery } from '../../hooks/useLiveQuery';
 import { useMembershipAccess } from '../../hooks/useMembershipAccess';
+import i18n from '../../locales';
 
 const toTitleCase = (str: string) =>
     str.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
@@ -30,7 +32,6 @@ export default function WinsScreen() {
     const [refreshing, setRefreshing] = useState(false);
     const [selectedLeague, setSelectedLeague] = useState('All');
     const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
-    const [expandedId, setExpandedId] = useState<string | null>(null);
     const access = useMembershipAccess();
 
     const {
@@ -81,10 +82,7 @@ export default function WinsScreen() {
                 <DatePickerStrip
                     dates={dates}
                     selectedDate={selectedDate}
-                    onSelectDate={(date) => {
-                        setSelectedDate(date);
-                        setExpandedId(null);
-                    }}
+                    onSelectDate={(date) => setSelectedDate(date)}
                     labelOverrides={{
                         [new Date().toISOString().split('T')[0]]: 'TODAY',
                     }}
@@ -97,10 +95,7 @@ export default function WinsScreen() {
                     {uniqueLeagues.map(league => (
                         <TouchableOpacity
                             key={league}
-                            onPress={() => {
-                                setSelectedLeague(league);
-                                setExpandedId(null);
-                            }}
+                            onPress={() => setSelectedLeague(league)}
                             style={[
                                 styles.leagueChip,
                                 { backgroundColor: selectedLeague === league ? themeColors.accent : themeColors.surfaceElevated },
@@ -110,7 +105,7 @@ export default function WinsScreen() {
                                 styles.leagueChipText,
                                 { color: selectedLeague === league ? 'white' : themeColors.mutedText }
                             ]}>
-                                {league === 'All' ? 'All' : toTitleCase(league)}
+                                {league === 'All' ? i18n.t('common.all') : toTitleCase(league)}
                             </Text>
                         </TouchableOpacity>
                     ))}
@@ -123,7 +118,7 @@ export default function WinsScreen() {
                     <Trophy size={18} color={themeColors.accent} />
                     <View>
                         <Text style={[styles.statValue, { color: themeColors.text }]}>{winRate}%</Text>
-                        <Text style={[styles.statLabel, { color: themeColors.mutedText }]}>STRIKE RATE</Text>
+                        <Text style={[styles.statLabel, { color: themeColors.mutedText }]}>{i18n.t('wins.strikeRate')}</Text>
                     </View>
                 </View>
                 <View style={[styles.statDivider, { backgroundColor: themeColors.border }]} />
@@ -131,7 +126,7 @@ export default function WinsScreen() {
                     <TrendingUp size={18} color={themeColors.blue10} />
                     <View>
                         <Text style={[styles.statValue, { color: themeColors.text }]}>{winCount}/{dayMatches.length}</Text>
-                        <Text style={[styles.statLabel, { color: themeColors.mutedText }]}>WINS / TOTAL</Text>
+                        <Text style={[styles.statLabel, { color: themeColors.mutedText }]}>{i18n.t('wins.winsTotal')}</Text>
                     </View>
                 </View>
             </View>
@@ -151,22 +146,19 @@ export default function WinsScreen() {
             >
                 <View style={styles.sectionHeader}>
                     <CheckCircle2 size={14} color={themeColors.accent} />
-                    <Text style={[styles.sectionTitle, { color: themeColors.text }]}>PROVEN RESULTS</Text>
+                    <Text style={[styles.sectionTitle, { color: themeColors.text }]}>{i18n.t('wins.section')}</Text>
                 </View>
 
                 {loading ? (
-                    <View style={styles.loadingContainer}>
-                        <ActivityIndicator size="large" color={themeColors.accent} />
-                    </View>
+                    <SkeletonList style={styles.skeletonList} />
                 ) : filteredMatches.length > 0 ? (
                     <View style={styles.fixtureGrid}>
-                        {filteredMatches.map((match) => (
+                        {filteredMatches.map((match, idx) => (
                             <MatchCard
                                 key={match._id || match.id}
                                 match={match}
-                                expanded={expandedId === match.id}
-                                onToggle={() => setExpandedId((prev) => (prev === match.id ? null : match.id))}
                                 access={{ paid: access.paid, vip: access.vip }}
+                                index={idx}
                             />
                         ))}
                     </View>
@@ -175,9 +167,9 @@ export default function WinsScreen() {
                         <View style={[styles.emptyIconWrapper, { backgroundColor: themeColors.surfaceElevated }]}>
                             <Trophy size={36} color={themeColors.mutedText} />
                         </View>
-                        <Text style={[styles.emptyText, { color: themeColors.text }]}>No Results Yet</Text>
+                        <Text style={[styles.emptyText, { color: themeColors.text }]}>{i18n.t('wins.emptyTitle')}</Text>
                         <Text style={[styles.emptySubtext, { color: themeColors.mutedText }]}>
-                            No finished matches for this date.
+                            {i18n.t('wins.emptySub')}
                         </Text>
                     </View>
                 )}
@@ -226,6 +218,7 @@ function getStyles(themeColors: ThemeColors) {
     },
     sectionTitle: { ...typography.sectionTitle },
     loadingContainer: { paddingVertical: 60, alignItems: 'center' },
+    skeletonList: { padding: 8 },
     fixtureGrid: { gap: 8 },
     emptyContainer: { paddingVertical: 70, alignItems: 'center', gap: 14 },
     emptyIconWrapper: {

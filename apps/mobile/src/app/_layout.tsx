@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { View, TouchableOpacity, StyleSheet, Text, Platform } from 'react-native';
+import { useEffect, useState, useCallback } from 'react';
+import { View, TouchableOpacity, StyleSheet, Text, Platform, Image } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import * as NavigationBar from 'expo-navigation-bar';
@@ -8,6 +8,8 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useFonts } from 'expo-font';
 import { Stack, useRouter } from 'expo-router';
 import { Sun, Moon, Bell, Settings } from 'lucide-react-native';
+import SplashLogo from '../assets/images/logo.png';
+import i18n from '../locales';
 import { ThemeProvider as AppThemeProvider, useTheme } from '../context/ThemeContext';
 import type { ThemeColors } from '../theme/colors';
 import { UserProvider, useUser } from '../context/UserContext';
@@ -16,17 +18,12 @@ import { usePushNotifications } from '../hooks/usePushNotifications';
 import { useRestorePurchases } from '../hooks/useRestorePurchases';
 import { useApiQuery } from '../hooks/useLiveQuery';
 import { api } from '../api/client';
+import SplashAnim from '../components/SplashAnim';
 
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
     const [loaded] = useFonts({});
-
-    useEffect(() => {
-        if (loaded) {
-            SplashScreen.hideAsync();
-        }
-    }, [loaded]);
 
     if (!loaded) {
         return null;
@@ -46,6 +43,21 @@ export default function RootLayout() {
 }
 
 function RootLayoutContent() {
+    const [splashDone, setSplashDone] = useState(false);
+
+    const handleSplashDone = useCallback(() => {
+        SplashScreen.hideAsync().catch(() => {});
+        setSplashDone(true);
+    }, []);
+
+    if (!splashDone) {
+        return <SplashAnim onDone={handleSplashDone} />;
+    }
+
+    return <AppContent />;
+}
+
+function AppContent() {
     const router = useRouter();
     const { theme, isDark, themeColors, toggleTheme } = useTheme();
     const { username, isLoading: isUserLoading } = useUser();
@@ -74,7 +86,7 @@ function RootLayoutContent() {
                 console.error('Failed to get deviceId:', e);
             }
         };
-        getDeviceId();
+        void getDeviceId();
     }, []);
 
     const { data: alerts } = useApiQuery(
@@ -118,9 +130,12 @@ function RootLayoutContent() {
                         fontSize: 17,
                     },
                     headerLeft: () => (
-                        <Text style={{ fontWeight: '700', fontSize: 17, color: themeColors.text, marginLeft: 16 }}>
-                            Trophy Games
-                        </Text>
+                        <View style={styles.headerLeft}>
+                            <Image source={SplashLogo} style={styles.headerLogo} />
+                            <Text style={{ fontWeight: '700', fontSize: 17, color: themeColors.text }}>
+                                Trophy Games
+                            </Text>
+                        </View>
                     ),
                     headerRight: () => (
                         <View style={styles.headerRight}>
@@ -131,7 +146,7 @@ function RootLayoutContent() {
                                 <Bell size={22} color={themeColors.text} strokeWidth={2.5} />
                                 {unreadCount > 0 && (
                                     <View style={[styles.badge, { backgroundColor: themeColors.accent }]}>
-                                        <Text style={styles.badgeText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
+                                        <Text style={styles.badgeText}>{unreadCount > 9 ? i18n.t('common.ninePlus') : unreadCount}</Text>
                                     </View>
                                 )}
                             </TouchableOpacity>
@@ -163,7 +178,7 @@ function RootLayoutContent() {
 const ThemeToggle = ({ onToggle, currentTheme, themeColors }: { onToggle: () => void; currentTheme: string; themeColors: ThemeColors }) => {
     const styles = getStyles(themeColors);
     return (
-        <TouchableOpacity onPress={onToggle} style={styles.themeToggle}>
+        <TouchableOpacity onPress={onToggle} style={styles.themeToggle} accessibilityRole="button">
             {currentTheme === 'dark' ? (
                 <Sun size={20} color={themeColors.accent} />
             ) : (
@@ -180,6 +195,18 @@ function getStyles(themeColors: ThemeColors) {
         },
         themeToggle: {
             padding: 12,
+        },
+        headerLeft: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 8,
+            padding: 4,
+        },
+        headerLogo: {
+            width: 22,
+            height: 22,
+            borderRadius: 5,
+            tintColor: themeColors.text,
         },
         headerRight: {
             flexDirection: 'row',

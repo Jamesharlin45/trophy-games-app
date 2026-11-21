@@ -1,7 +1,7 @@
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, ActivityIndicator, Alert, TextInput, Platform } from 'react-native';
-import { useState, useCallback, useEffect } from 'react';
-import { Crown, CheckCircle2, Zap, Trophy, ShieldCheck, CreditCard, Sparkles, Key, Clock, ShoppingCart, ChevronRight, X } from 'lucide-react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, TextInput, Alert, Platform } from 'react-native';
+import { Crown, CheckCircle2, Zap, Trophy, ShieldCheck, CreditCard, Sparkles, Key, Clock, ShoppingCart } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
+import { useState, useCallback, useEffect } from 'react';
 import { useTheme } from '../../context/ThemeContext';
 import type { ThemeColors } from '../../theme/colors';
 import { useUser } from '../../context/UserContext';
@@ -11,7 +11,9 @@ import { useIap, ProductSubscription } from '../../hooks/useIap';
 import * as Application from 'expo-application';
 import { api } from '../../api/client';
 import { useScreenQuery } from '../../hooks/useLiveQuery';
+import { AnimatedPulse } from '../../components/AnimatedPulse';
 import { EmailTokenModal } from '../../components/EmailTokenModal';
+import i18n, { tArray } from '../../locales';
 
 type MemberStatus = 'none' | 'pending' | 'approved' | 'active' | 'loading';
 
@@ -52,7 +54,7 @@ export default function MembershipStoreScreen() {
                     purchaseToken,
                 });
                 if (result.success) {
-                    Alert.alert('Purchase Successful!', `Your ${_tier.toUpperCase()} access is now active.`);
+                    Alert.alert(i18n.t('market.purchaseSuccessTitle'), i18n.t('market.purchaseSuccessBody', { tier: _tier.toUpperCase() }));
                     if (deviceId) {
                         const info = { deviceId, purchaseToken };
                         setEmailPurchase(info);
@@ -60,14 +62,14 @@ export default function MembershipStoreScreen() {
                         setEmailBannerShown(false);
                     }
                 } else {
-                    Alert.alert('Activation Failed', result.reason || 'Could not activate your purchase.');
+                    Alert.alert(i18n.t('market.purchaseActivateTitle'), result.reason || i18n.t('market.purchaseActivateBody'));
                 }
             } catch (e) {
                 console.error('[Market] recordPurchase error:', e);
             }
         },
         onPurchaseError: (msg: string) => {
-            Alert.alert('Purchase Failed', msg);
+            Alert.alert(i18n.t('market.purchaseFailedTitle'), msg);
         },
     });
 
@@ -141,12 +143,12 @@ export default function MembershipStoreScreen() {
                 username || undefined,
             );
             if (result.success) {
-                Alert.alert('Success!', `Your ${type.toUpperCase()} request has been sent to admin.`);
+                Alert.alert(i18n.t('market.requestSuccessTitle'), i18n.t('market.requestSuccessBody', { type: type.toUpperCase() }));
             } else {
-                Alert.alert('Notice', result.reason || 'Request could not be processed.');
+                Alert.alert(i18n.t('market.requestNotice'), result.reason || i18n.t('market.requestFailed'));
             }
         } catch {
-            Alert.alert('Error', 'Failed to send request. Please try again.');
+            Alert.alert(i18n.t('market.requestErrorTitle'), i18n.t('market.requestErrorBody'));
         }
         setRequesting(null);
     };
@@ -161,15 +163,15 @@ export default function MembershipStoreScreen() {
                 username || undefined,
             );
             if (result.valid) {
-                Alert.alert('Success!', 'Your token has been verified. Access granted.');
+                Alert.alert(i18n.t('market.verifySuccessTitle'), i18n.t('market.verifySuccessBody'));
                 setShowTokenInput(false);
                 setTokenInput('');
                 await Promise.all([refetchVip(), refetchPaid()]);
             } else {
-                Alert.alert('Invalid Token', result.reason || 'Token is invalid or already used.');
+                Alert.alert(i18n.t('market.verifyInvalidTitle'), result.reason || i18n.t('market.verifyInvalidBody'));
             }
         } catch {
-            Alert.alert('Error', 'Verification failed. Try again later.');
+            Alert.alert(i18n.t('market.verifyErrorTitle'), i18n.t('market.verifyErrorBody'));
         }
         setVerifyingToken(false);
     };
@@ -182,13 +184,13 @@ export default function MembershipStoreScreen() {
             const result = await iapPurchase(productId);
             if (!result.success && result.reason) {
                 if (!result.reason.includes('cancelled')) {
-                    Alert.alert('Purchase Failed', result.reason);
+                    Alert.alert(i18n.t('market.purchaseFailedTitle'), result.reason);
                 }
             }
             // On success, the onPurchaseSuccess callback above records the purchase.
         } catch (e) {
-            const message = e instanceof Error ? e.message : 'Subscription purchase failed.';
-            Alert.alert('Error', message);
+            const message = e instanceof Error ? e.message : i18n.t('market.subscribeErrorBody');
+            Alert.alert(i18n.t('market.purchaseFailedTitle'), message);
         }
         setPurchasing(null);
     };
@@ -211,15 +213,15 @@ export default function MembershipStoreScreen() {
     // Active IAP product IDs for border highlighting
     const activeProductId = iapActiveSub?.productId ?? null;
 
-    const StatusBadge = ({ status, type: _type, iapActive }: { status: MemberStatus; type: string; iapActive: boolean }) => {
+    const StatusBadge = ({ status, iapActive }: { status: MemberStatus; iapActive: boolean }) => {
         if (status === 'none' || status === 'loading') return null;
 
         const config = iapActive
-            ? { color: themeColors.success, icon: ShoppingCart, label: 'SUBSCRIBED' }
+            ? { color: themeColors.success, icon: ShoppingCart, label: i18n.t('market.statusSubscribed') }
             : {
-                pending: { color: themeColors.warning, icon: Clock, label: 'PENDING' },
-                approved: { color: themeColors.success, icon: CheckCircle2, label: 'APPROVED' },
-                active: { color: themeColors.accent, icon: Crown, label: 'ACTIVE' },
+                pending: { color: themeColors.warning, icon: Clock, label: i18n.t('market.statusPending') },
+                approved: { color: themeColors.success, icon: CheckCircle2, label: i18n.t('market.statusApproved') },
+                active: { color: themeColors.accent, icon: Crown, label: i18n.t('market.statusActive') },
             }[status as 'pending' | 'approved' | 'active'];
 
         if (!config) return null;
@@ -245,42 +247,34 @@ export default function MembershipStoreScreen() {
         if (isLoading) {
             return (
                 <View style={styles.loadingRow}>
-                    <ActivityIndicator color={themeColors.accent} size="small" />
-                    <Text style={[styles.loadingText, { color: themeColors.mutedText }]}>Checking status...</Text>
+                    <AnimatedPulse style={styles.emptyBar} accessibilityRole="button" disabled />
+                    <Text style={[styles.loadingText, { color: themeColors.mutedText }]}>{i18n.t('common.checking')}</Text>
                 </View>
             );
         }
         if (status === 'none') {
             return (
                 <View style={styles.actionGroup}>
-                    <TouchableOpacity
+                    <AnimatedPulse
                         style={[styles.subscribeBtn, { backgroundColor: themeColors.accent }]}
                         onPress={() => handleSubscribe(productId, tier)}
                         disabled={purchasing !== null || iapLoading}
+                        accessibilityRole="button"
                     >
-                        {purchasing === productId ? (
-                            <ActivityIndicator color="white" size="small" />
-                        ) : (
-                            <>
-                                <ShoppingCart size={16} color="white" />
-                                <Text style={styles.subscribeBtnText}>
-                                    {formatPrice(product)
-                                        ? `${formatPrice(product)}${priceSuffix}`
-                                        : 'SUBSCRIBE'}
-                                </Text>
-                            </>
-                        )}
-                    </TouchableOpacity>
+                        <ShoppingCart size={16} color="white" />
+                        <Text style={styles.subscribeBtnText}>
+                            {formatPrice(product)
+                                ? `${formatPrice(product)}${priceSuffix}`
+                                : i18n.t('market.subscribeBtn')}
+                        </Text>
+                    </AnimatedPulse>
                     <TouchableOpacity
                         style={styles.textBtn}
                         onPress={() => handleRequest(tier)}
                         disabled={requesting === tier}
+                        accessibilityRole="button"
                     >
-                        {requesting === tier ? (
-                            <ActivityIndicator color={themeColors.mutedText} size="small" />
-                        ) : (
-                            <Text style={[styles.textBtnLabel, { color: themeColors.mutedText }]}>Request token manually</Text>
-                        )}
+                        <Text style={[styles.textBtnLabel, { color: themeColors.mutedText }]}>{i18n.t('market.requestTokenBtn')}</Text>
                     </TouchableOpacity>
                 </View>
             );
@@ -289,7 +283,7 @@ export default function MembershipStoreScreen() {
             return (
                 <View style={[styles.pendingInfo, { backgroundColor: themeColors.surfaceElevated }]}>
                     <Clock size={16} color={themeColors.mutedText} />
-                    <Text style={[styles.pendingText, { color: themeColors.mutedText }]}>Reviewing your request...</Text>
+                    <Text style={[styles.pendingText, { color: themeColors.mutedText }]}>{i18n.t('market.reviewingBody')}</Text>
                 </View>
             );
         }
@@ -299,8 +293,8 @@ export default function MembershipStoreScreen() {
                 <CheckCircle2 size={16} color={themeColors.accent} />
                 <Text style={[styles.activeInfoText, { color: themeColors.accent }]}>
                     {activeProductId === productId && iapActiveSub?.expiresAt
-                        ? `Subscribed — expires ${new Date(iapActiveSub.expiresAt).toLocaleDateString()}`
-                        : 'Access Active'}
+                        ? i18n.t('market.subscribedExpires', { date: new Date(iapActiveSub.expiresAt).toLocaleDateString() })
+                        : i18n.t('market.accessActive')}
                 </Text>
             </View>
         );
@@ -315,28 +309,25 @@ export default function MembershipStoreScreen() {
                 {/* Email banner: shown after the user skips the post-purchase modal */}
                 {emailBannerShown && emailPurchase ? (
                     <View style={styles.emailBanner}>
-                        <TouchableOpacity style={styles.emailBannerMain} onPress={() => setEmailModal(emailPurchase)}>
+                        <TouchableOpacity style={styles.emailBannerMain} onPress={() => setEmailModal(emailPurchase)} accessibilityRole="button">
                             <Text style={[styles.emailBannerText, { color: themeColors.text }]}>
-                                Add your email to receive your token
+                                {i18n.t('market.emailBanner')}
                             </Text>
-                            <ChevronRight size={16} color={themeColors.accent} />
-                        </TouchableOpacity>
-                        <TouchableOpacity style={styles.emailBannerClose} onPress={() => setEmailBannerShown(false)}>
-                            <X size={14} color={themeColors.mutedText} />
+                            <Key size={16} color={themeColors.accent} />
                         </TouchableOpacity>
                     </View>
                 ) : null}
 
                 {/* Hero section */}
-                <View style={[styles.hero, { backgroundColor: themeColors.surface }]}>
+                <View style={[styles.hero, { backgroundColor: themeColors.surface, borderColor: themeColors.border, borderWidth: 1 }]}>
                     <View style={styles.heroContent}>
                         <View style={[styles.heroBadge, { backgroundColor: themeColors.accent + '20' }]}>
                             <Sparkles size={14} color={themeColors.accent} />
-                            <Text style={[styles.heroBadgeText, { color: themeColors.accent }]}>PREMIUM ACCESS</Text>
+                            <Text style={[styles.heroBadgeText, { color: themeColors.accent }]}>{i18n.t('market.heroBadge')}</Text>
                         </View>
-                        <Text style={[styles.heroTitle, { color: themeColors.text }]}>UNLEASH THE POWER OF AI</Text>
+                        <Text style={[styles.heroTitle, { color: themeColors.text }]}>{i18n.t('market.heroTitle')}</Text>
                         <Text style={[styles.heroSubtitle, { color: themeColors.mutedText }]}>
-                            Get professional-grade predictions and insights with over 90% verified strike rate.
+                            {i18n.t('market.heroSubtitle')}
                         </Text>
                     </View>
                 </View>
@@ -344,26 +335,27 @@ export default function MembershipStoreScreen() {
                 <View style={styles.content}>
                     {/* Token Input Section (if approved) */}
                     {(vipTokenStatus === 'approved' || paidTokenStatus === 'approved' || showTokenInput) && (
-                        <View style={[styles.card, { backgroundColor: themeColors.surface, borderColor: themeColors.accent }]}>
+                        <View style={[styles.card, { backgroundColor: themeColors.surface, borderColor: themeColors.accent, borderWidth: 2 }]}>
                             <View style={styles.cardHeader}>
                                 <Key size={20} color={themeColors.accent} />
-                                <Text style={[styles.cardTitle, { color: themeColors.text }]}>ENTER ACCESS TOKEN</Text>
+                                <Text style={[styles.cardTitle, { color: themeColors.text }]}>{i18n.t('market.tokenTitle')}</Text>
                             </View>
                             <TextInput
                                 style={[styles.input, { backgroundColor: themeColors.surfaceElevated, color: themeColors.text, borderColor: themeColors.border }]}
-                                placeholder="APP-XXXX-XXXX"
+                                placeholder={i18n.t('market.tokenPlaceholder')}
                                 placeholderTextColor={themeColors.mutedText}
                                 value={tokenInput}
                                 onChangeText={setTokenInput}
                                 autoCapitalize="characters"
                             />
-                            <TouchableOpacity
-                                style={[styles.actionBtn, { backgroundColor: themeColors.accent }]}
+                            <AnimatedPulse
+                                style={styles.actionBtn}
                                 onPress={handleVerifyToken}
                                 disabled={verifyingToken || !tokenInput.trim()}
+                                accessibilityRole="button"
                             >
-                                {verifyingToken ? <ActivityIndicator color="white" size="small" /> : <Text style={styles.actionBtnText}>ACTIVATE ACCESS</Text>}
-                            </TouchableOpacity>
+                                <Text style={styles.actionBtnText}>{i18n.t('market.activateBtn')}</Text>
+                            </AnimatedPulse>
                         </View>
                     )}
 
@@ -371,32 +363,34 @@ export default function MembershipStoreScreen() {
                     {iapError && Platform.OS === 'android' && !iapLoading && (
                         <View style={[styles.iapNotice, { backgroundColor: themeColors.surfaceElevated, borderColor: themeColors.border }]}>
                             <Text style={[styles.iapNoticeText, { color: themeColors.mutedText }]}>
-                                ⚠️ Google Play Billing unavailable: {iapError.includes('not available') ? 'This device may not support Google Play Billing, or you may be running in Expo Go (which disables IAP).' : iapError}
+                                {i18n.t('market.iapNotice', { error: iapError.includes('not available') ? i18n.t('market.iapNoticeUnavailable') : iapError })}
                             </Text>
                         </View>
                     )}
 
                     {/* MEMBERSHIP PLANS */}
-                    <Text style={[styles.sectionTitle, { color: themeColors.text }]}>MEMBERSHIP PLANS</Text>
+                    <Text style={[styles.sectionTitle, { color: themeColors.text }]}>{i18n.t('market.sectionTitle')}</Text>
 
                     {/* ── VIP WEEKLY CARD ── */}
-                    <View style={[styles.card, { backgroundColor: themeColors.surface, borderColor: activeProductId === SUBSCRIPTION_PRODUCTS.VIP_WEEKLY.productId ? themeColors.accent + '60' : themeColors.border }]}>
+                    <View style={[
+                        styles.card,
+                        { borderColor: activeProductId === SUBSCRIPTION_PRODUCTS.VIP_WEEKLY.productId ? themeColors.accent + '60' : themeColors.border },
+                    ]}>
                         <View style={styles.cardTop}>
                             <View style={styles.cardHeader}>
                                 <Crown size={24} color={themeColors.accent} />
                                 <View>
-                                    <Text style={[styles.planTitle, { color: themeColors.text }]}>VIP WEEKLY</Text>
-                                    <Text style={[styles.planSubtitle, { color: themeColors.mutedText }]}>7 Days Full Access</Text>
+                                    <Text style={[styles.planTitle, { color: themeColors.text }]}>{i18n.t('market.vipWeeklyTitle')}</Text>
+                                    <Text style={[styles.planSubtitle, { color: themeColors.mutedText }]}>{i18n.t('market.vipWeeklySubtitle')}</Text>
                                 </View>
                             </View>
                             <StatusBadge
                                 status={vipStatus}
-                                type="vip"
                                 iapActive={activeProductId === SUBSCRIPTION_PRODUCTS.VIP_WEEKLY.productId}
                             />
                         </View>
                         <View style={styles.features}>
-                            {['Daily Elite AI Predictions', '90%+ Strike Rate Accuracy', 'Exclusive Match Insights', 'Priority Support'].map((f, i) => (
+                            {tArray('market.vipWeeklyFeatures').map((f, i) => (
                                 <View key={i} style={styles.featureLine}>
                                     <ShieldCheck size={14} color={themeColors.accent} />
                                     <Text style={[styles.featureText, { color: themeColors.text }]}>{f}</Text>
@@ -413,23 +407,25 @@ export default function MembershipStoreScreen() {
                     </View>
 
                     {/* ── VIP MONTHLY CARD ── */}
-                    <View style={[styles.card, { backgroundColor: themeColors.surface, borderColor: activeProductId === SUBSCRIPTION_PRODUCTS.VIP_MONTHLY.productId ? themeColors.accent + '60' : themeColors.border }]}>
+                    <View style={[
+                        styles.card,
+                        { borderColor: activeProductId === SUBSCRIPTION_PRODUCTS.VIP_MONTHLY.productId ? themeColors.accent + '60' : themeColors.border },
+                    ]}>
                         <View style={styles.cardTop}>
                             <View style={styles.cardHeader}>
                                 <Crown size={24} color={themeColors.accent} />
                                 <View>
-                                    <Text style={[styles.planTitle, { color: themeColors.text }]}>VIP MONTHLY</Text>
-                                    <Text style={[styles.planSubtitle, { color: themeColors.mutedText }]}>30 Days Full Access</Text>
+                                    <Text style={[styles.planTitle, { color: themeColors.text }]}>{i18n.t('market.vipMonthlyTitle')}</Text>
+                                    <Text style={[styles.planSubtitle, { color: themeColors.mutedText }]}>{i18n.t('market.vipMonthlySubtitle')}</Text>
                                 </View>
                             </View>
                             <StatusBadge
                                 status={vipStatus}
-                                type="vip"
                                 iapActive={activeProductId === SUBSCRIPTION_PRODUCTS.VIP_MONTHLY.productId}
                             />
                         </View>
                         <View style={styles.features}>
-                            {['Daily Elite AI Predictions', '90%+ Strike Rate Accuracy', 'Exclusive Match Insights', 'Priority Support'].map((f, i) => (
+                            {tArray('market.vipMonthlyFeatures').map((f, i) => (
                                 <View key={i} style={styles.featureLine}>
                                     <ShieldCheck size={14} color={themeColors.accent} />
                                     <Text style={[styles.featureText, { color: themeColors.text }]}>{f}</Text>
@@ -439,7 +435,7 @@ export default function MembershipStoreScreen() {
                         {/* Best value badge */}
                         <View style={[styles.savingsBadge, { backgroundColor: themeColors.accent + '15', borderColor: themeColors.accent + '30' }]}>
                             <Zap size={11} color={themeColors.accent} />
-                            <Text style={[styles.savingsText, { color: themeColors.accent }]}>BEST VALUE — Save vs weekly</Text>
+                            <Text style={[styles.savingsText, { color: themeColors.accent }]}>{i18n.t('market.bestValue')}</Text>
                         </View>
                         {renderCardActions(
                             SUBSCRIPTION_PRODUCTS.VIP_MONTHLY.productId,
@@ -451,23 +447,25 @@ export default function MembershipStoreScreen() {
                     </View>
 
                     {/* ── PAID MONTHLY CARD ── */}
-                    <View style={[styles.card, { backgroundColor: themeColors.surface, borderColor: activeProductId === SUBSCRIPTION_PRODUCTS.PAID_MONTHLY.productId ? themeColors.accent + '60' : themeColors.border }]}>
+                    <View style={[
+                        styles.card,
+                        { borderColor: activeProductId === SUBSCRIPTION_PRODUCTS.PAID_MONTHLY.productId ? themeColors.accent + '60' : themeColors.border },
+                    ]}>
                         <View style={styles.cardTop}>
                             <View style={styles.cardHeader}>
                                 <Trophy size={24} color={themeColors.accent} />
                                 <View>
-                                    <Text style={[styles.planTitle, { color: themeColors.text }]}>PAID MONTHLY</Text>
-                                    <Text style={[styles.planSubtitle, { color: themeColors.mutedText }]}>30 Days Full Access</Text>
+                                    <Text style={[styles.planTitle, { color: themeColors.text }]}>{i18n.t('market.paidMonthlyTitle')}</Text>
+                                    <Text style={[styles.planSubtitle, { color: themeColors.mutedText }]}>{i18n.t('market.paidMonthlySubtitle')}</Text>
                                 </View>
                             </View>
                             <StatusBadge
                                 status={paidStatus}
-                                type="paid"
                                 iapActive={activeProductId === SUBSCRIPTION_PRODUCTS.PAID_MONTHLY.productId}
                             />
                         </View>
                         <View style={styles.features}>
-                            {['Curated premium predictions', 'Detailed AI match analysis', 'Match insights & value bets', 'Higher accuracy predictions'].map((f, i) => (
+                            {tArray('market.paidMonthlyFeatures').map((f, i) => (
                                 <View key={i} style={styles.featureLine}>
                                     <ShieldCheck size={14} color={themeColors.accent} />
                                     <Text style={[styles.featureText, { color: themeColors.text }]}>{f}</Text>
@@ -485,9 +483,9 @@ export default function MembershipStoreScreen() {
 
                     {/* Support / Info */}
                     <View style={[styles.footer, { backgroundColor: themeColors.surfaceElevated }]}>
-                        <InfoSection icon={ShieldCheck} title="Verified Results" desc="All our predictions are verified by independent sources." />
+                        <InfoSection icon={ShieldCheck} title={i18n.t('market.infoTitle1')} desc={i18n.t('market.infoDesc1')} />
                         <View style={styles.divider} />
-                        <InfoSection icon={CreditCard} title="Secure Payments" desc="Payments processed securely via Google Play Billing." />
+                        <InfoSection icon={CreditCard} title={i18n.t('market.infoTitle2')} desc={i18n.t('market.infoDesc2')} />
                     </View>
                 </View>
             </ScrollView>
@@ -529,9 +527,13 @@ function getStyles(themeColors: ThemeColors) {
     hero: {
         padding: 30,
         paddingTop: 40,
-        borderBottomLeftRadius: 32,
-        borderBottomRightRadius: 32,
+        borderRadius: 24,
         marginBottom: 20,
+        shadowColor: themeColors.shadow,
+        shadowOpacity: 0.3,
+        shadowRadius: 12,
+        shadowOffset: { width: 0, height: 4 },
+        elevation: 4,
     },
     heroContent: { alignItems: 'flex-start' },
     heroBadge: {
@@ -552,8 +554,12 @@ function getStyles(themeColors: ThemeColors) {
         padding: 20,
         borderRadius: 24,
         borderWidth: 1,
-        borderColor: themeColors.border,
         gap: 16,
+        shadowColor: themeColors.shadow,
+        shadowOpacity: 0.2,
+        shadowRadius: 10,
+        shadowOffset: { width: 0, height: 2 },
+        elevation: 3,
     },
     cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
     cardTitle: { ...typography.cardTitle },
@@ -576,10 +582,6 @@ function getStyles(themeColors: ThemeColors) {
     description: { ...typography.body },
     // ── IAP / Subscribe ──
     subscribeBtn: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 10,
         height: 52,
         borderRadius: 16,
     },
@@ -589,8 +591,9 @@ function getStyles(themeColors: ThemeColors) {
         height: 36,
         alignItems: 'center',
         justifyContent: 'center',
+        minHeight: 36,
     },
-    textBtnLabel: { fontSize: 12, fontWeight: '500' },
+    textBtnLabel: { fontSize: 12, fontWeight: '500', minHeight: 36, alignItems: 'center', justifyContent: 'center' },
     loadingRow: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -599,6 +602,7 @@ function getStyles(themeColors: ThemeColors) {
         paddingVertical: 14,
     },
     loadingText: { fontSize: 13 },
+    emptyBar: { height: 20, width: 160, borderRadius: 8 },
     // ── Generic ──
     actionBtn: {
         height: 52,

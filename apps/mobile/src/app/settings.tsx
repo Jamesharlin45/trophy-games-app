@@ -4,23 +4,19 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { Settings, Globe, LogOut, Palette, Moon, Sun, Smartphone } from 'lucide-react-native';
 import { accents, type AccentType } from '../theme/colors';
-import i18n from '../locales';
+import i18n, { tArray } from '../locales';
 
 const MODE_OPTIONS = [
-    { mode: 'light', Icon: Sun, label: 'Light' },
-    { mode: 'dark', Icon: Moon, label: 'Dark' },
-    { mode: 'system', Icon: Smartphone, label: 'System' },
+    { mode: 'light', Icon: Sun, labelKey: 'settings.light' as const },
+    { mode: 'dark', Icon: Moon, labelKey: 'settings.dark' as const },
+    { mode: 'system', Icon: Smartphone, labelKey: 'settings.system' as const },
 ] as const;
 
 export default function SettingsScreen() {
     const { themeColors, theme, accent, setTheme, setAccent } = useTheme();
     const { locale, setLocale } = useLanguage();
 
-    const languages = [
-        { code: 'en', name: 'English' },
-        { code: 'fr', name: 'Français' },
-        { code: 'es', name: 'Español' },
-    ];
+    const languages = tArray<{ code: string; name: string }>('settings.languages');
 
     return (
         <ScrollView style={[styles.container, { backgroundColor: themeColors.background }]}>
@@ -37,7 +33,7 @@ export default function SettingsScreen() {
 
                 <Text style={[styles.rowLabel, { color: themeColors.mutedText }]}>{i18n.t('settings.mode')}</Text>
                 <View style={styles.themeOptions}>
-                    {MODE_OPTIONS.map(({ mode, Icon, label }) => {
+                    {MODE_OPTIONS.map(({ mode, Icon, labelKey }) => {
                         const isSelected = theme === mode;
                         return (
                             <TouchableOpacity
@@ -48,9 +44,12 @@ export default function SettingsScreen() {
                                     isSelected && { borderColor: themeColors.accent, backgroundColor: themeColors.accent + '20' },
                                 ]}
                                 onPress={() => setTheme(mode)}
+                                accessibilityRole="button"
                             >
                                 <Icon size={20} color={isSelected ? themeColors.accent : themeColors.mutedText} />
-                                <Text style={[styles.themeBtnText, { color: isSelected ? themeColors.accent : themeColors.mutedText }]}>{label}</Text>
+                                <Text style={[styles.themeBtnText, { color: isSelected ? themeColors.accent : themeColors.mutedText }]}>
+                                    {i18n.t(labelKey)}
+                                </Text>
                             </TouchableOpacity>
                         );
                     })}
@@ -62,6 +61,7 @@ export default function SettingsScreen() {
                         <TouchableOpacity
                             key={key}
                             accessibilityLabel={accents[key].label}
+                            accessibilityRole="button"
                             style={[
                                 styles.accentDot,
                                 { backgroundColor: accents[key].accent },
@@ -84,16 +84,20 @@ export default function SettingsScreen() {
                             key={lang.code}
                             style={[
                                 styles.langOption,
-                                { borderColor: locale === lang.code ? themeColors.accent : themeColors.border }
+                                { borderColor: locale === lang.code ? themeColors.accent : themeColors.border },
+                                locale === lang.code && { shadowColor: themeColors.accent, shadowRadius: 4, shadowOpacity: 0.4, elevation: 2 },
                             ]}
                             onPress={() => {
                                 setLocale(lang.code);
                             }}
+                            accessibilityRole="button"
                         >
-                            <Text style={[
-                                styles.langText,
-                                { color: locale === lang.code ? themeColors.accent : themeColors.mutedText }
-                            ]}>
+                            <Text
+                                style={[
+                                    styles.langText,
+                                    { color: locale === lang.code ? themeColors.accent : themeColors.mutedText },
+                                ]}
+                            >
                                 {lang.name}
                             </Text>
                         </TouchableOpacity>
@@ -101,16 +105,23 @@ export default function SettingsScreen() {
                 </View>
             </View>
 
+            {/* Sign out — outlined so it looks tappable */}
             <TouchableOpacity
-                style={[styles.btn, { backgroundColor: themeColors.surfaceElevated }]}
+                style={[
+                    styles.signOutBtn,
+                    { borderColor: themeColors.accent, backgroundColor: 'transparent' },
+                ]}
                 onPress={() => {
                     // Logic to clear user token / username would go here
                     // Then redirect to onboarding
                     // router.replace('/onboarding');
                 }}
+                accessibilityRole="button"
+                accessibilityLabel={i18n.t('settings.signOut')}
+                activeOpacity={0.7}
             >
-                <LogOut size={20} color={themeColors.mutedText} />
-                <Text style={[styles.btnText, { color: themeColors.mutedText }]}>Sign Out / Change Username</Text>
+                <LogOut size={20} color={themeColors.accent} />
+                <Text style={[styles.btnText, { color: themeColors.accent }]}>{i18n.t('settings.signOut')}</Text>
             </TouchableOpacity>
 
         </ScrollView>
@@ -173,7 +184,6 @@ const styles = StyleSheet.create({
     accentDots: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 12,
     },
     accentDot: {
         width: 30,
@@ -195,14 +205,16 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: '500',
     },
-    btn: {
+    signOutBtn: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
         gap: 10,
         padding: 16,
         borderRadius: 16,
+        borderWidth: 2,
         marginTop: 20,
+        minHeight: 48,
     },
     btnText: {
         fontSize: 16,
