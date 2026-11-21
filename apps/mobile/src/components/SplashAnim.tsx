@@ -6,7 +6,7 @@
 import { Image, Text, View } from 'react-native';
 import { useEffect } from 'react';
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withDelay, withTiming } from 'react-native-reanimated';
-import SplashLogo from '../assets/images/logo.png';
+import SplashLogo from '../../assets/images/logo.png';
 import i18n from '../locales';
 
 export default function SplashAnim({ onDone }: { onDone: () => void }) {

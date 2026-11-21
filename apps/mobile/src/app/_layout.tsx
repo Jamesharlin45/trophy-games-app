@@ -8,7 +8,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useFonts } from 'expo-font';
 import { Stack, useRouter } from 'expo-router';
 import { Sun, Moon, Bell, Settings } from 'lucide-react-native';
-import SplashLogo from '../assets/images/logo.png';
+import SplashLogo from '../../assets/images/logo.png';
 import i18n from '../locales';
 import { ThemeProvider as AppThemeProvider, useTheme } from '../context/ThemeContext';
 import type { ThemeColors } from '../theme/colors';
