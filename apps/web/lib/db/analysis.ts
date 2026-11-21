@@ -1,29 +1,37 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { fetchFixtures, type ApiFootballFixture } from '../api-football';
 import { fetchFixturePrediction, type ApiFixturePrediction } from '../api-football-predictions';
+import { syncFixtures } from '../sync-fixtures';
 import { createAlert } from './alerts';
-import { getById, utcMatchDate } from './matches';
-import type { AiPrediction, DbMatch, MatchTier } from './types';
+import { getById } from './matches';
+import type { AiPrediction, MatchRow, MatchTier } from './types';
 
 // --- DeepSeek config (ports packages/backend/convex/analysis.ts) ---
 
 const DEEPSEEK_API_URL = 'https://api.deepseek.com/v1/chat/completions';
 const DEEPSEEK_MODEL = 'deepseek-v4-flash';
 
-// --- Automated daily picks (API-Football → DeepSeek) ---
+// --- Automated daily picks (stored af-* matches → DeepSeek) ---
+
+/** Read an env var as a number with a fallback when unset or non-numeric. */
+function envNumber(name: string, fallback: number): number {
+    const raw = process.env[name]?.trim();
+    if (raw === undefined || raw === '') return fallback;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : fallback;
+}
 
 /** Confidence floor: picks below this are dropped after the DeepSeek
  * verifier, before ranking. */
-export const MIN_CONFIDENCE = 65;
+export const MIN_CONFIDENCE = envNumber('MIN_CONFIDENCE', 65);
 
 /** Tier sizes when ranking the kept picks: top VIP_COUNT → vip, next
  * PAID_COUNT → paid, next FREE_COUNT → free. */
-export const VIP_COUNT = 3;
-export const PAID_COUNT = 4;
-export const FREE_COUNT = 3;
+export const VIP_COUNT = envNumber('VIP_COUNT', 3);
+export const PAID_COUNT = envNumber('PAID_COUNT', 4);
+export const FREE_COUNT = envNumber('FREE_COUNT', 3);
 
 /** Max /predictions?fixture= calls per run. */
-export const MAX_PREDICTION_CALLS = 25;
+export const MAX_PREDICTION_CALLS = envNumber('MAX_PREDICTION_CALLS', 25);
 
 /** Names of the priority competitions: top European leagues, Champions and
  * Europa Leagues, the UAE Pro League and the Saudi Pro League. */
@@ -40,46 +48,35 @@ const PRIORITY_LEAGUE_NAMES = [
     'Saudi Pro League',
 ];
 
-/** Ids of the priority competitions, in priority order — derived from the
- * fixtures response by name (see derivePriorityIds); the run logs which
- * were found. */
-export const PRIORITY_LEAGUE_IDS: number[] = [];
-
-/** Names are matched case- and whitespace-insensitively: the API sometimes
- * writes "LaLiga", "LaLiga" or the UAE/Saudi Pro Leagues as "Pro League"
- * (distinguished by country). */
+/** Names are matched case- and whitespace-insensitively: the stored league
+ * names sometimes spell the UAE/Saudi Pro Leagues as "Pro League"
+ * (distinguished by the country stored by syncFixtures). */
 function normalizeLeagueName(value: string): string {
     return value.toLowerCase().replace(/\s+/g, '');
 }
 
-function leagueMatchesPriority(fixture: ApiFootballFixture, name: string): boolean {
-    if (normalizeLeagueName(fixture.league.name) === normalizeLeagueName(name)) return true;
-    const leagueName = fixture.league.name.toLowerCase();
-    const country = fixture.league.country.toLowerCase();
-    const normalized = normalizeLeagueName(name);
-    if (normalized === 'uaeproleague' && leagueName === 'pro league' && country.includes('emirates')) return true;
-    if (normalized === 'saudiproleague' && leagueName === 'pro league' && country.includes('saudi')) return true;
+/** True when a stored match's league is a priority competition: by name, or
+ * the UAE/Saudi Pro Leagues stored as "Pro League" (country match). */
+function isPriorityStoredMatch(match: StoredMatchContext): boolean {
+    const name = normalizeLeagueName(match.league);
+    const country = normalizeLeagueName(match.country ?? '');
+    for (const priorityName of PRIORITY_LEAGUE_NAMES) {
+        const normalized = normalizeLeagueName(priorityName);
+        if (normalized === name) return true;
+        if (normalized === 'uaeproleague' && name === 'proleague' && country.includes('emirates')) return true;
+        if (normalized === 'saudiproleague' && name === 'proleague' && country.includes('saudi')) return true;
+    }
     return false;
 }
 
-/** Derive PRIORITY_LEAGUE_IDS from the fixtures response: for every
- * priority name present, record the league id and log it. */
-function derivePriorityIds(fixtures: ApiFootballFixture[]): void {
-    PRIORITY_LEAGUE_IDS.length = 0;
-    for (const name of PRIORITY_LEAGUE_NAMES) {
-        const fixture = fixtures.find((f) => leagueMatchesPriority(f, name));
-        if (fixture) {
-            PRIORITY_LEAGUE_IDS.push(fixture.league.id);
-            console.log(`[AnalysisRun] Priority league found in fixtures: id=${fixture.league.id} name=${fixture.league.name} (${fixture.league.country})`);
-        }
-    }
-}
+/** Statuses that mean "not started yet" — anything else has kicked off.
+ * 'SCHEDULED' is included because syncFixtures stores upcoming fixtures as
+ * status "Scheduled". */
+const NOT_STARTED_STATUSES = ['', 'NS', 'TBD', 'Canc', 'PPD', 'Not Started', 'SCHEDULED'];
 
-/** True when the fixture has already kicked off (anything but upcoming
- * statuses), so it is not worth predicting for. */
-function isFixtureStarted(fixture: ApiFootballFixture): boolean {
-    const status = fixture.status.trim().toUpperCase();
-    return !['', 'NS', 'TBD', 'Canc', 'PPD', 'Not Started'].includes(status);
+/** True when the status means the match has not kicked off yet. */
+function isStatusStarted(status: string): boolean {
+    return !NOT_STARTED_STATUSES.includes(status.trim().toUpperCase());
 }
 
 /** Allowed markets for picks: every market the final score can grade. */
@@ -494,15 +491,15 @@ function hasPredictionData(prediction: ApiFixturePrediction): boolean {
     return Boolean(form && (form.home !== undefined || form.away !== undefined));
 }
 
-function buildAnalystPrompt(shortlist: ApiFootballFixture[], predictions: Map<number, ApiFixturePrediction>): string {
-    const lines = shortlist.map((fixture) => {
-        const prediction = predictions.get(fixture.id);
+function buildAnalystPrompt(shortlist: StoredMatchContext[], predictions: Map<number, ApiFixturePrediction>): string {
+    const lines = shortlist.map((m) => {
+        const prediction = predictions.get(m.id);
         const detail = describePrediction(prediction);
         const base = [
-            String(fixture.id),
-            `${fixture.homeTeam.name} vs ${fixture.awayTeam.name}`,
-            `| ${fixture.league.name}`,
-            `| ${fixture.date}`,
+            String(m.id),
+            `${m.homeTeam} vs ${m.awayTeam}`,
+            `| ${m.league}`,
+            `| ${m.date}`,
         ];
         if (detail) base.push(`| ${detail}`);
         return base.join(' ');
@@ -538,6 +535,66 @@ Picks:
 ${lines.join('\n')}`;
 }
 
+/** A stored af-* match as used by the DeepSeek prompts and ranking — the
+ * analogue of the old ApiFootballFixture shortlist, now read from the
+ * matches table (lib/sync-fixtures.ts). */
+interface StoredMatchContext {
+    /** Parsed API-Football fixture id (matches.external_id is `af-<id>`). */
+    id: number;
+    /** matches.external_id (`af-<id>`). */
+    externalId: string;
+    /** matches.id (the Supabase uuid). */
+    dbId: string;
+    homeTeam: string;
+    awayTeam: string;
+    league: string;
+    /** Country from details (stored by syncFixtures). */
+    country?: string;
+    /** Kickoff (matches.kickoff). */
+    date: string;
+    status: string;
+}
+
+/** Country of a stored match from the details jsonb (undefined when unset). */
+function storedCountry(row: MatchRow): string | undefined {
+    const value = row.details?.country;
+    return typeof value === 'string' && value !== '' ? value : undefined;
+}
+
+/** The stored matches to analyse for a date: rows with an `af-` external id
+ * and tier 'unassigned' that have no prediction yet and are not started. */
+async function getStoredPendingMatches(db: SupabaseClient, date: string): Promise<StoredMatchContext[]> {
+    const { data } = await db
+        .from('matches')
+        .select('*')
+        .like('external_id', 'af-%')
+        .eq('tier', 'unassigned')
+        .is('ai_prediction', null)
+        .eq('match_date', date)
+        .order('kickoff', { ascending: true })
+        .limit(MAX_PREDICTION_CALLS);
+
+    const contexts: StoredMatchContext[] = [];
+    for (const row of (data ?? []) as MatchRow[]) {
+        const externalId = row.external_id ?? '';
+        const id = Number(externalId.slice(3));
+        if (!Number.isInteger(id) || id <= 0) continue;
+        if (isStatusStarted(row.status)) continue;
+        contexts.push({
+            id,
+            externalId,
+            dbId: row.id,
+            homeTeam: row.home_team,
+            awayTeam: row.away_team,
+            league: row.league,
+            country: storedCountry(row),
+            date: row.kickoff,
+            status: row.status,
+        });
+    }
+    return contexts;
+}
+
 /** Picks proposed for publication when AUTO_PUBLISH is "false": they are
  * created as unassigned matches, and the Analysis page offers "Publish
  * all" to apply the proposed tiers. */
@@ -553,13 +610,13 @@ export interface ProposedPick {
 }
 
 export interface RunAutomatedAnalysisResult {
-    /** Fixtures returned by the fixtures endpoint for the date. */
+    /** Stored af- matches for the date (read before analysis). */
     fixturesFound: number;
-    /** Shortlisted fixtures (priority first), capped at MAX_PREDICTION_CALLS. */
+    /** Shortlisted matches (priority first), capped at MAX_PREDICTION_CALLS. */
     shortlisted: number;
     predictionsOk: number;
     predictionsFailed: number;
-    /** Picks kept by the verifier with confidence ≥ MIN_CONFIDENCE and ranked for insertion. */
+    /** Picks kept by the verifier with confidence ≥ MIN_CONFIDENCE and ranked. */
     analysed: number;
     published: { vip: number; paid: number; free: number; unassigned: number };
     autoPublished: boolean;
@@ -569,12 +626,13 @@ export interface RunAutomatedAnalysisResult {
     removedCount: number;
 }
 
-/** Automated daily picks run: fetch the date's fixtures from API-Football,
- * shortlist (priority leagues first), fetch /predictions for each, send the
- * shortlist (with API percentages/advice/form) to the DeepSeek analyst +
- * verifier in ONE batched call, keep picks with confidence ≥ MIN_CONFIDENCE,
- * rank them (VIP_COUNT → vip, PAID_COUNT → paid, FREE_COUNT → free) and
- * create the picks as matches ("af-<fixtureId>"). */
+/** Automated daily picks run: read the STORED af- matches for the date
+ * (sync them via syncFixtures first when none are stored), shortlist
+ * (priority matches first), fetch /predictions for each, send the shortlist
+ * (with API percentages/advice/form) to the DeepSeek analyst + verifier in
+ * ONE batched call, keep picks with confidence ≥ MIN_CONFIDENCE, rank them
+ * (VIP_COUNT → vip, PAID_COUNT → paid, FREE_COUNT → free) and UPDATE the
+ * existing stored rows (tier, ai_prediction) — no duplicate inserts. */
 export async function runAutomatedAnalysis(
     db: SupabaseClient,
     input: { date: string },
@@ -583,44 +641,35 @@ export async function runAutomatedAnalysis(
     if (!apiKey) throw new Error('API_FOOTBALL_KEY not configured');
     const errors: string[] = [];
 
-    // 1. Fetch the date's fixtures (1 request; the cached helper).
-    const allFixtures = await fetchFixtures(input.date);
-    const fixturesFound = allFixtures.length;
-    if (fixturesFound === 0) throw new Error(`No fixtures found for ${input.date}`);
-
-    // 1a. Skip women/youth/reserve competitions; skip fixtures that have started.
-    const eligible: ApiFootballFixture[] = [];
-    for (const fixture of allFixtures) {
-        const leagueName = `${fixture.league.name} ${fixture.league.country}`.toLowerCase();
-        if (/women|youth|reserve/.test(leagueName) || /\bu\d{2}\b/i.test(leagueName)) {
-            console.log(`[AnalysisRun] Skipping (women/youth/reserve): id=${fixture.id} league=${fixture.league.name}`);
-            continue;
-        }
-        if (isFixtureStarted(fixture)) {
-            console.log(`[AnalysisRun] Skipping (already started): id=${fixture.id} league=${fixture.league.name} status=${fixture.status}`);
-            continue;
-        }
-        eligible.push(fixture);
+    // 1. Read the STORED af- matches for the date (tier 'unassigned', no
+    //    prediction yet, not started). Sync first only if none are stored.
+    let stored = await getStoredPendingMatches(db, input.date);
+    if (stored.length === 0) {
+        const sync = await syncFixtures(db, input.date);
+        errors.push(...sync.errors);
+        stored = await getStoredPendingMatches(db, input.date);
     }
+    const fixturesFound = stored.length;
+    if (fixturesFound === 0) throw new Error(`No fixtures found for ${input.date}`);
+    const byExternalId = new Map(stored.map((m) => [m.externalId, m]));
 
-    // 2. Shortlist: priority leagues first (ids derived from the fixtures
-    //    response and logged), then the rest; cap at MAX_PREDICTION_CALLS.
-    derivePriorityIds(allFixtures);
-    const prioritySet = new Set(PRIORITY_LEAGUE_IDS);
+    // 2. Shortlist: priority matches first, then the rest; cap at
+    //    MAX_PREDICTION_CALLS.
+    const prioritySet = new Set(stored.filter(isPriorityStoredMatch).map((m) => m.id));
     const shortlist = [
-        ...eligible.filter((f) => prioritySet.has(f.league.id)),
-        ...eligible.filter((f) => !prioritySet.has(f.league.id)),
+        ...stored.filter((m) => prioritySet.has(m.id)),
+        ...stored.filter((m) => !prioritySet.has(m.id)),
     ].slice(0, MAX_PREDICTION_CALLS);
     const shortlisted = shortlist.length;
 
-    // 3. /predictions?fixture= for each shortlisted fixture (≤ MAX_PREDICTION_CALLS).
+    // 3. /predictions?fixture= for each shortlisted match (≤ MAX_PREDICTION_CALLS).
     const predictions = new Map<number, ApiFixturePrediction>();
-    for (const fixture of shortlist) {
-        const result = await fetchFixturePrediction(fixture.id);
+    for (const match of shortlist) {
+        const result = await fetchFixturePrediction(match.id);
         if (result.ok && result.prediction && hasPredictionData(result.prediction)) {
-            predictions.set(fixture.id, result.prediction);
+            predictions.set(match.id, result.prediction);
         } else {
-            errors.push(`predictions ${fixture.id}: ${result.error ?? 'no prediction returned'}`);
+            errors.push(`predictions ${match.id}: ${result.error ?? 'no prediction returned'}`);
         }
     }
     const predictionsOk = predictions.size;
@@ -654,25 +703,24 @@ export async function runAutomatedAnalysis(
         }
     }
 
-    // 6. Create the picks in the matches table (skip fixtures that exist).
+    // 6. UPDATE the stored rows (tier, ai_prediction) instead of inserting duplicates.
     const autoPublish = process.env.AUTO_PUBLISH?.toLowerCase() !== 'false';
-    const inserted = await insertPicks(db, shortlist, rankedPicks, autoPublish);
-    errors.push(...inserted.errors);
+    const updateOutcome = await updateStoredPicks(db, rankedPicks, autoPublish, byExternalId);
+    errors.push(...updateOutcome.errors);
 
     // 7. At most one summary alert per run, only if SEND_SUMMARY_ALERT is "true".
     if (process.env.SEND_SUMMARY_ALERT?.toLowerCase() === 'true') {
         try {
             await createAlert(db, {
                 title: 'Daily Picks Ready',
-                body: `Analysed ${rankedPicks.length} fixtures — published ${inserted.vip + inserted.paid + inserted.free} picks (VIP ${inserted.vip}, Paid ${inserted.paid}, Free ${inserted.free}).`,
+                body: `Analysed ${rankedPicks.length} fixtures — published ${updateOutcome.vip + updateOutcome.paid + updateOutcome.free} picks (VIP ${updateOutcome.vip}, Paid ${updateOutcome.paid}, Free ${updateOutcome.free}).`,
             });
         } catch (alertError) {
             errors.push(`summary alert: ${alertError instanceof Error ? alertError.message : String(alertError)}`);
         }
     }
 
-    const totalRequests = 1 + predictionsOk + 2; // fixtures + predictions + DeepSeek (analyst + verifier)
-    console.log(`[AnalysisRun] Done for ${input.date}: fixtures=${fixturesFound} shortlisted=${shortlisted} predictions=${predictionsOk}/${predictionsFailed} picks=${rankedPicks.length} apiRequests=${totalRequests} (limit 40)`);
+    console.log(`[AnalysisRun] Done for ${input.date}: stored=${fixturesFound} shortlisted=${shortlisted} predictions=${predictionsOk}/${predictionsFailed} picks=${rankedPicks.length} updated=${updateOutcome.vip + updateOutcome.paid + updateOutcome.free + updateOutcome.unassigned}`);
 
     return {
         fixturesFound,
@@ -681,10 +729,10 @@ export async function runAutomatedAnalysis(
         predictionsFailed,
         analysed: rankedPicks.length,
         published: {
-            vip: inserted.vip,
-            paid: inserted.paid,
-            free: inserted.free,
-            unassigned: autoPublish ? 0 : inserted.unassigned,
+            vip: updateOutcome.vip,
+            paid: updateOutcome.paid,
+            free: updateOutcome.free,
+            unassigned: autoPublish ? 0 : updateOutcome.unassigned,
         },
         autoPublished: autoPublish,
         proposedPicks: autoPublish
@@ -705,8 +753,8 @@ export async function runAutomatedAnalysis(
     };
 }
 
-/** Outcome of insertPicks. */
-interface InsertPicksOutcome {
+/** Outcome of updateStoredPicks. */
+interface UpdatePicksOutcome {
     vip: number;
     paid: number;
     free: number;
@@ -714,59 +762,44 @@ interface InsertPicksOutcome {
     errors: string[];
 }
 
-/** Insert ranked picks as matches with external ids "af-<fixtureId>". Picks
- * for fixtures that already exist are skipped, so pressing the button twice
- * creates no duplicates. */
-async function insertPicks(
+/** UPDATE the stored af-* rows (tier, ai_prediction) for the ranked picks.
+ * The rows were stored by syncFixtures and are still tier 'unassigned', so
+ * this updates rather than duplicating them. Rows that are missing are
+ * skipped. */
+async function updateStoredPicks(
     db: SupabaseClient,
-    shortlist: ApiFootballFixture[],
     picks: RankedPick[],
     autoPublish: boolean,
-): Promise<InsertPicksOutcome> {
-    const byFixtureId = new Map<number, ApiFootballFixture>(shortlist.map((f) => [f.id, f]));
-    const outcome: InsertPicksOutcome = { vip: 0, paid: 0, free: 0, unassigned: 0, errors: [] };
+    byExternalId: Map<string, StoredMatchContext>,
+): Promise<UpdatePicksOutcome> {
+    const outcome: UpdatePicksOutcome = { vip: 0, paid: 0, free: 0, unassigned: 0, errors: [] };
     const now = new Date().toISOString();
 
     for (const pick of picks) {
-        const fixture = byFixtureId.get(Number(pick.fixtureId));
-        if (!fixture) continue;
-        const externalId = `af-${fixture.id}`;
-        const existing = await getById(db, externalId);
-        if (existing) continue; // never duplicate an existing pick
-
+        const externalId = `af-${pick.fixtureId}`;
+        const stored = byExternalId.get(externalId);
+        if (!stored) {
+            outcome.errors.push(`no stored match for ${externalId}`);
+            continue;
+        }
         const tier: MatchTier = autoPublish ? pick.tier : 'unassigned';
-        const details: Record<string, unknown> = {};
-        if (fixture.league.logo) details.leagueLogo = fixture.league.logo;
-        if (fixture.homeTeam.logo) details.homeTeamLogo = fixture.homeTeam.logo;
-        if (fixture.awayTeam.logo) details.awayTeamLogo = fixture.awayTeam.logo;
-        if (fixture.league.country) details.country = fixture.league.country;
-
-        const { error } = await db.from('matches').insert({
-            external_id: externalId,
-            home_team: fixture.homeTeam.name,
-            away_team: fixture.awayTeam.name,
-            league: fixture.league.name,
-            kickoff: fixture.date,
-            status: fixture.status,
-            score: '0-0',
-            match_date: utcMatchDate(fixture.date),
-            tier,
-            trending: null,
-            odds: null,
-            ai_prediction: {
-                prediction: `${fixture.homeTeam.name} vs ${fixture.awayTeam.name} — ${pick.suggestedBet}`,
-                confidence: pick.confidence,
-                reasoning: pick.reasoning,
-                suggestedBet: pick.suggestedBet,
-                generatedAt: now,
-            },
-            is_history: false,
-            details: Object.keys(details).length > 0 ? details : null,
-        });
+        const { error } = await db
+            .from('matches')
+            .update({
+                tier,
+                ai_prediction: {
+                    prediction: `${pick.homeTeam} vs ${pick.awayTeam} — ${pick.suggestedBet}`,
+                    confidence: pick.confidence,
+                    reasoning: pick.reasoning,
+                    suggestedBet: pick.suggestedBet,
+                    generatedAt: now,
+                },
+            })
+            .eq('id', stored.dbId);
         if (error) {
-            const message = error.message || 'unknown insert error';
-            outcome.errors.push(`insert ${externalId}: ${message}`);
-            console.error(`[AnalysisRun] Insert failed for ${externalId}:`, message);
+            const message = error.message || 'unknown update error';
+            outcome.errors.push(`update ${externalId}: ${message}`);
+            console.error(`[AnalysisRun] Update failed for ${externalId}:`, message);
             continue;
         }
         if (autoPublish) outcome[pick.tier] += 1;

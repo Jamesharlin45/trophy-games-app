@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { Key, Plus, Trash2, RotateCcw, RefreshCw, Clock, CheckCircle2, XCircle, Crown, DollarSign } from 'lucide-react';
+import { Key, Plus, RotateCcw, RefreshCw, Clock, CheckCircle2, XCircle, Crown, DollarSign, Ban, Hourglass } from 'lucide-react';
 import { toast } from 'sonner';
+import { cn, daysLeftLabel } from '@/lib/utils';
 
 interface Token {
     _id: string;
@@ -14,6 +15,9 @@ interface Token {
     createdAt: string;
     expiresAt?: string;
     isActive: boolean;
+    /** Set when the access was removed via "Remove access" (or by the cron
+     * when it marked the grant expired). */
+    revokedAt?: string;
 }
 
 export default function AdminTokensPage() {
@@ -23,6 +27,7 @@ export default function AdminTokensPage() {
     const [form, setForm] = useState({ deviceId: '', username: '', type: 'vip' as 'vip' | 'paid', matchId: '', expiresAt: '' });
     const [showForm, setShowForm] = useState(false);
     const [copiedToken, setCopiedToken] = useState<string | null>(null);
+    const [busyToken, setBusyToken] = useState<string | null>(null);
 
     const loadTokens = useCallback(async () => {
         try {
@@ -72,18 +77,25 @@ export default function AdminTokensPage() {
         setCreating(false);
     };
 
-    const revokeToken = async (token: string) => {
+    // "Remove access": deactivate the token (with confirmation) so the user
+    // loses VIP/Paid on their next app refresh.
+    const removeAccess = async (token: Token) => {
+        if (!window.confirm(`Remove access for ${token.deviceId} (${token.type})? The user will lose access on their next app refresh.`)) return;
+        setBusyToken(token.token);
         try {
-            await fetch('/api/admin/tokens', {
+            const res = await fetch('/api/admin/tokens', {
                 method: 'DELETE',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ token }),
+                body: JSON.stringify({ token: token.token }),
             });
-            setTokens(prev => prev.map(t => t.token === token ? { ...t, isActive: false } : t));
-            toast.success('Token revoked successfully');
+            const data = await res.json();
+            if (!res.ok || data.error) throw new Error(data.error || 'Failed to remove access');
+            setTokens(prev => prev.map(t => t.token === token.token ? { ...t, isActive: false, revokedAt: new Date().toISOString() } : t));
+            toast.success('Access removed');
         } catch (e) {
-            console.error(e);
-            toast.error('Failed to revoke token');
+            toast.error('Failed to remove access');
+        } finally {
+            setBusyToken(null);
         }
     };
 
@@ -94,11 +106,31 @@ export default function AdminTokensPage() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ token }),
             });
-            setTokens(prev => prev.map(t => t.token === token ? { ...t, isActive: true } : t));
+            setTokens(prev => prev.map(t => t.token === token ? { ...t, isActive: true, revokedAt: undefined } : t));
             toast.success('Token reactivated successfully');
         } catch (e) {
             console.error(e);
             toast.error('Failed to reactivate token');
+        }
+    };
+
+    // "Extend": +7 or +30 days from now on the token's expiry.
+    const extendTokenDays = async (token: Token, days: 7 | 30) => {
+        setBusyToken(token.token);
+        try {
+            const res = await fetch('/api/admin/tokens/extend', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token: token.token, days }),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || 'Failed to extend');
+            setTokens(prev => prev.map(t => t.token === token.token ? { ...t, expiresAt: data.expiresAt ?? t.expiresAt } : t));
+            toast.success(`Extended to ${new Date(data.expiresAt).toLocaleDateString()}`);
+        } catch (e) {
+            toast.error('Failed to extend token');
+        } finally {
+            setBusyToken(null);
         }
     };
 
@@ -237,25 +269,35 @@ export default function AdminTokensPage() {
                                         <td className="px-4 py-3 text-xs text-zinc-500 whitespace-nowrap">{new Date(token.createdAt).toLocaleDateString()}</td>
                                         <td className="px-4 py-3 text-xs text-zinc-500 whitespace-nowrap">
                                             {token.expiresAt
-                                                ? <span className={isExpired(token.expiresAt) ? 'text-red-500' : ''}>{new Date(token.expiresAt).toLocaleDateString()}</span>
+                                                ? <span>{new Date(token.expiresAt).toLocaleDateString()} <span className={cn(isExpired(token.expiresAt) ? 'text-red-500' : 'text-zinc-400')}>({daysLeftLabel(token.expiresAt)})</span></span>
                                                 : 'Never'
                                             }
                                         </td>
                                         <td className="px-4 py-3 text-center">
-                                            {token.isActive && !isExpired(token.expiresAt)
-                                                ? <span className="inline-flex items-center gap-1 text-xs text-brand-green"><CheckCircle2 size={12} />Active</span>
-                                                : <span className="inline-flex items-center gap-1 text-xs text-zinc-400"><XCircle size={12} />Inactive</span>
+                                            {token.revokedAt
+                                                ? <span className="inline-flex items-center gap-1 text-xs text-red-500"><Ban size={12} />Revoked</span>
+                                                : token.isActive && !isExpired(token.expiresAt)
+                                                    ? <span className="inline-flex items-center gap-1 text-xs text-brand-green"><CheckCircle2 size={12} />Active</span>
+                                                    : <span className="inline-flex items-center gap-1 text-xs text-zinc-400"><XCircle size={12} />Inactive</span>
                                             }
                                         </td>
-                                        <td className="px-4 py-3 text-center flex justify-center gap-2">
-                                            {token.isActive ? (
-                                                <button onClick={() => revokeToken(token.token)} className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors" title="Revoke">
-                                                    <Trash2 size={16} />
-                                                </button>
-                                            ) : (
-                                                <button onClick={() => reactivateToken(token.token)} className="p-1.5 text-blue-500 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors" title="Reactivate">
+                                        <td className="px-4 py-3 text-center flex justify-center gap-2 flex-wrap">
+                                            {token.revokedAt ? null : !token.isActive ? (
+                                                <button onClick={() => reactivateToken(token.token)} disabled={busyToken === token.token} className="p-1.5 text-blue-500 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors disabled:opacity-50" title="Reactivate">
                                                     <RotateCcw size={16} />
                                                 </button>
+                                            ) : (
+                                                <>
+                                                    <button onClick={() => removeAccess(token)} disabled={busyToken === token.token} className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50" title="Remove access">
+                                                        <Ban size={12} />Remove access
+                                                    </button>
+                                                    <button onClick={() => extendTokenDays(token, 7)} disabled={busyToken === token.token} className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50" title="Extend +7 days">
+                                                        <Hourglass size={12} />Extend +7d
+                                                    </button>
+                                                    <button onClick={() => extendTokenDays(token, 30)} disabled={busyToken === token.token} className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50" title="Extend +30 days">
+                                                        <Hourglass size={12} />Extend +30d
+                                                    </button>
+                                                </>
                                             )}
                                         </td>
                                     </tr>

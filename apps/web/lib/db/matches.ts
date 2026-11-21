@@ -228,6 +228,21 @@ export async function getByTypeAndDate(
     return mapMatches((data ?? []) as MatchRow[]);
 }
 
+/** Admin-only: stored unpublished fixtures for a date — rows with an
+ * external id starting 'af-' and tier 'unassigned', i.e. exactly the set the
+ * mobile endpoints exclude (see excludeUnpublishedPicks). Newest first. */
+export async function getUnpublishedFixtures(db: SupabaseClient, date: string): Promise<DbMatch[]> {
+    const { data } = await db
+        .from('matches')
+        .select('*')
+        .eq('match_date', date)
+        .eq('tier', 'unassigned')
+        .like('external_id', 'af-%')
+        .order('kickoff', { ascending: false })
+        .limit(100);
+    return mapMatches((data ?? []) as MatchRow[]);
+}
+
 /** api.matches.getHistory — the mobile Wins feed: status Finished/FT or
  * flagged history, newest first. */
 export async function getHistory(db: SupabaseClient, limit = 100): Promise<DbMatch[]> {

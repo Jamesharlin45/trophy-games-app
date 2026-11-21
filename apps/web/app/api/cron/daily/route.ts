@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createDb } from '@/lib/db/client';
 import { runAutomatedAnalysis } from '@/lib/db/analysis';
+import { markExpiredGrantsAsExpired } from '@/lib/db/tokens';
+import { syncFixtures, type SyncFixturesResult } from '@/lib/sync-fixtures';
 import { settleMatches } from '@/lib/settle';
 import { isCronRequestAuthorized } from '@/lib/cron-auth';
 
@@ -8,8 +10,13 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 // GET /api/cron/daily — once-a-day job (Vercel Cron, 05:00 UTC):
-//   1. settle finished af-* picks from past matches
-//   2. run the same automatic analysis as the "Run Analysis" button for today
+//   1. sync today's fixtures into the matches table (new rows start as
+//      tier 'unassigned' af-* matches)
+//   2. settle finished af-* picks from past matches
+//   2b. mark expired grants as expired (is_active = false)
+//   3. run the same automatic analysis as the "Run Analysis" button for today
+//      (runAutomatedAnalysis reads the stored matches; it syncs itself when
+//      none are stored)
 export async function GET(req: Request) {
     if (!process.env.CRON_SECRET) {
         return NextResponse.json({ error: 'CRON_SECRET is not configured' }, { status: 503 });
@@ -25,6 +32,16 @@ export async function GET(req: Request) {
 
     const date = new Date().toISOString().split('T')[0];
 
+    // 1. Sync today's fixtures (best effort: analysis syncs when needed).
+    let sync: SyncFixturesResult | null = null;
+    let syncError: string | null = null;
+    try {
+        sync = await syncFixtures(db, date);
+    } catch (error) {
+        syncError = error instanceof Error ? error.message : String(error);
+        console.error('[Cron Daily] Sync failed:', error);
+    }
+
     let settle;
     try {
         settle = await settleMatches(db);
@@ -35,9 +52,20 @@ export async function GET(req: Request) {
                 date,
                 error: 'Settlement failed',
                 detail: error instanceof Error ? error.message : String(error),
+                sync,
+                syncError,
             },
             { status: 500 },
         );
+    }
+
+    // 2b. Mark expired grants as expired (is_active = false) so the app
+    // endpoints count them as inactive even before anyone revokes them.
+    let expiredMarked = 0;
+    try {
+        expiredMarked = await markExpiredGrantsAsExpired(db);
+    } catch (error) {
+        console.error('[Cron Daily] Marking expired grants failed:', error);
     }
 
     let analysis: Awaited<ReturnType<typeof runAutomatedAnalysis>> | null = null;
@@ -52,7 +80,10 @@ export async function GET(req: Request) {
     return NextResponse.json({
         date,
         ok: analysisError === null,
+        sync,
+        syncError,
         settle,
+        expiredMarked,
         analysis,
         analysisError,
     });

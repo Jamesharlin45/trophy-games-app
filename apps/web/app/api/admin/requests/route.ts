@@ -1,6 +1,12 @@
 import { NextResponse } from 'next/server';
 import { createDb } from '@/lib/db/client';
-import { approveMembershipRequest, getAllRequests, rejectMembershipRequest } from '@/lib/db/tokens';
+import {
+    approveMembershipRequest,
+    extendMembershipRequestToken,
+    getAllRequests,
+    rejectMembershipRequest,
+    revokeMembershipRequest,
+} from '@/lib/db/tokens';
 import type { TokenType } from '@/lib/db/tokens';
 
 export const dynamic = 'force-dynamic';
@@ -34,11 +40,12 @@ export async function POST(request: Request) {
     const db = createDb();
     if (!db) return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
     try {
-        const { requestId, action, matchId, expiresAt } = (await request.json()) as {
+        const { requestId, action, matchId, expiresAt, days } = (await request.json()) as {
             requestId?: string;
             action?: string;
             matchId?: string;
             expiresAt?: string;
+            days?: 7 | 30;
         };
 
         if (!requestId || !action) {
@@ -59,6 +66,21 @@ export async function POST(request: Request) {
         if (action === 'reject') {
             await rejectMembershipRequest(db, { requestId });
             return NextResponse.json({ success: true });
+        }
+
+        if (action === 'revoke') {
+            const result = await revokeMembershipRequest(db, requestId);
+            if (!result.success) return NextResponse.json({ error: 'Request not found' }, { status: 404 });
+            return NextResponse.json({ success: true });
+        }
+
+        if (action === 'extend') {
+            if (days !== 7 && days !== 30) {
+                return NextResponse.json({ error: 'days must be 7 or 30' }, { status: 400 });
+            }
+            const result = await extendMembershipRequestToken(db, requestId, days);
+            if (!result.success) return NextResponse.json({ error: 'Request has no issued token' }, { status: 400 });
+            return NextResponse.json({ success: true, expiresAt: result.expiresAt });
         }
 
         return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
