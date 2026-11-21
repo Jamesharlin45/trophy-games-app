@@ -6,6 +6,10 @@ import { NextResponse } from 'next/server';
 //   /api/admin/:path*                   admin API routes
 //   /matches, /leagues, /history, /analysis   dashboard pages
 //   /api/analysis/*, /api/ai/*          AI analysis / suggestion routes
+// Note: the cron endpoints (/api/cron/* — sync, settle, daily) are
+// intentionally NOT in this list: they are called by cron jobs and are
+// authenticated by isCronRequestAuthorized (CRON_SECRET) instead of the
+// Basic Auth here.
 export const config = {
   matcher: [
     '/admin/:path*',
