@@ -16,6 +16,8 @@ export interface DbAccessToken {
     isClaimed: boolean;
     claimedAt?: string;
     failedAttempts?: number;
+    /** When the access was removed via "Remove access" (admin or cron). */
+    revokedAt?: string;
 }
 
 export interface DbMembershipRequest {
@@ -27,6 +29,10 @@ export interface DbMembershipRequest {
     requestedAt: string;
     resolvedAt?: string;
     issuedToken?: string;
+    /** When the granted access was removed via "Remove access" on the
+     * requests page. The status column stays 'approved' — see
+     * supabase/access_revoke_expiry.sql. */
+    revokedAt?: string;
 }
 
 interface AccessTokenRow {
@@ -42,6 +48,7 @@ interface AccessTokenRow {
     is_claimed: boolean;
     claimed_at: string | null;
     failed_attempts: number | null;
+    revoked_at: string | null;
 }
 
 interface MembershipRequestRow {
@@ -53,6 +60,7 @@ interface MembershipRequestRow {
     requested_at: string;
     resolved_at: string | null;
     issued_token: string | null;
+    revoked_at: string | null;
 }
 
 function mapToken(row: AccessTokenRow): DbAccessToken {
@@ -69,6 +77,7 @@ function mapToken(row: AccessTokenRow): DbAccessToken {
         isClaimed: row.is_claimed,
         claimedAt: row.claimed_at ?? undefined,
         failedAttempts: row.failed_attempts ?? undefined,
+        revokedAt: row.revoked_at ?? undefined,
     };
 }
 
@@ -82,6 +91,7 @@ function mapRequest(row: MembershipRequestRow): DbMembershipRequest {
         requestedAt: row.requested_at,
         resolvedAt: row.resolved_at ?? undefined,
         issuedToken: row.issued_token ?? undefined,
+        revokedAt: row.revoked_at ?? undefined,
     };
 }
 
@@ -115,14 +125,80 @@ export async function createToken(
     return { token: input.token };
 }
 
-/** api.tokens.revokeToken — deactivate by token. */
+/** api.tokens.revokeToken — deactivate by token and stamp revoked_at. */
 export async function revokeToken(db: SupabaseClient, token: string): Promise<void> {
-    await db.from('access_tokens').update({ is_active: false }).eq('token', token);
+    await db.from('access_tokens').update({ is_active: false, revoked_at: new Date().toISOString() }).eq('token', token);
 }
 
 /** api.tokens.reactivateToken — reactivate by token and clear failures. */
 export async function reactivateToken(db: SupabaseClient, token: string): Promise<void> {
-    await db.from('access_tokens').update({ is_active: true, failed_attempts: 0 }).eq('token', token);
+    await db.from('access_tokens').update({ is_active: true, revoked_at: null, failed_attempts: 0 }).eq('token', token);
+}
+
+/** Extend a token's expiry by `days` from now. Only the stored expiry is
+ * moved — used by the Tokens page (Extend +7d/+30d). */
+export async function extendToken(db: SupabaseClient, token: string, days: number): Promise<{ success: boolean; expiresAt?: string }> {
+    const { data } = await db
+        .from('access_tokens')
+        .select('id')
+        .eq('token', token)
+        .limit(1);
+    const row = (data ?? [])[0] as { id: string } | undefined;
+    if (!row) return { success: false };
+    const expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+    await db.from('access_tokens').update({ expires_at: expiresAt }).eq('id', row.id);
+    return { success: true, expiresAt };
+}
+
+/** Remove granted access from an approved membership request: marks the
+ * request revoked_at and deactivates the issued token. Used by the
+ * Requests page ("Remove access"). */
+export async function revokeMembershipRequest(db: SupabaseClient, requestId: string): Promise<{ success: boolean }> {
+    const { data } = await db
+        .from('membership_requests')
+        .select('status, issued_token')
+        .eq('id', requestId)
+        .limit(1);
+    const request = (data ?? [])[0] as { status: string; issued_token: string | null } | undefined;
+    if (!request) return { success: false };
+    const now = new Date().toISOString();
+    await db.from('membership_requests').update({ revoked_at: now }).eq('id', requestId);
+    if (request.status === 'approved' && request.issued_token) {
+        await db.from('access_tokens').update({ is_active: false, revoked_at: now }).eq('token', request.issued_token);
+    }
+    return { success: true };
+}
+
+/** Extend the token issued by an approved membership request by `days`. */
+export async function extendMembershipRequestToken(
+    db: SupabaseClient,
+    requestId: string,
+    days: number,
+): Promise<{ success: boolean; expiresAt?: string }> {
+    const { data } = await db
+        .from('membership_requests')
+        .select('issued_token')
+        .eq('id', requestId)
+        .limit(1);
+    const request = (data ?? [])[0] as { issued_token: string | null } | undefined;
+    if (!request?.issued_token) return { success: false };
+    return extendToken(db, request.issued_token, days);
+}
+
+/** Mark grants whose expiry has passed as expired (is_active = false) so the
+ * app endpoints count them as inactive even before anyone revokes them.
+ * Returns the number of grants marked. */
+export async function markExpiredGrantsAsExpired(db: SupabaseClient): Promise<number> {
+    const now = new Date().toISOString();
+    const { data } = await db
+        .from('access_tokens')
+        .select('id')
+        .eq('is_active', true)
+        .lt('expires_at', now);
+    const ids = ((data ?? []) as Array<{ id: string }>).map((row) => row.id);
+    if (ids.length === 0) return 0;
+    await db.from('access_tokens').update({ is_active: false }).in('id', ids);
+    return ids.length;
 }
 
 /** api.tokens.getAllRequests — all membership requests, newest first. */
@@ -234,11 +310,13 @@ interface AccessTokenLookupRow {
     is_active: boolean;
     is_claimed: boolean;
     claimed_at: string | null;
+    revoked_at: string | null;
 }
 
 interface MembershipRequestLookupRow {
     id: string;
     status: RequestStatus;
+    revoked_at: string | null;
 }
 
 /** Port of the Convex user lookup in verifyTokenImpl: by username when
@@ -292,6 +370,7 @@ async function verifyTokenImpl(
     }
 
     if (!tokenDoc.is_active) return { valid: false, reason: 'Token is inactive' };
+    if (tokenDoc.revoked_at) return { valid: false, reason: 'Token revoked' };
 
     // Strict username binding check (if provided during token creation).
     if (tokenDoc.username && tokenDoc.username !== args.username) {
@@ -412,7 +491,7 @@ export async function getMembershipStatus(
     }
 
     const validToken = tokenRows.find(
-        (t) => (!t.expires_at || new Date(t.expires_at) > new Date()) && t.is_claimed !== false,
+        (t) => !t.revoked_at && (!t.expires_at || new Date(t.expires_at) > new Date()) && t.is_claimed !== false,
     );
     if (validToken) {
         return { status: 'active', token: validToken.token, matchId: validToken.match_id ?? undefined };
@@ -420,7 +499,7 @@ export async function getMembershipStatus(
 
     const { data: requestRows } = await db
         .from('membership_requests')
-        .select('id, status')
+        .select('id, status, revoked_at')
         .eq('device_id', input.deviceId)
         .eq('type', input.type)
         .order('created_at', { ascending: false })
@@ -429,5 +508,8 @@ export async function getMembershipStatus(
         return { status: 'none' };
     }
     const request = requestRows[0] as MembershipRequestLookupRow;
+    // A revoked latest request means the user has no access — don't fall
+    // through to an older approved request.
+    if (request.revoked_at) return { status: 'none' };
     return { status: request.status, requestId: request.id };
 }

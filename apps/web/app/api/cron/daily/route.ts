@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createDb } from '@/lib/db/client';
 import { runAutomatedAnalysis } from '@/lib/db/analysis';
+import { markExpiredGrantsAsExpired } from '@/lib/db/tokens';
 import { syncFixtures, type SyncFixturesResult } from '@/lib/sync-fixtures';
 import { settleMatches } from '@/lib/settle';
 import { isCronRequestAuthorized } from '@/lib/cron-auth';
@@ -12,6 +13,7 @@ export const maxDuration = 60;
 //   1. sync today's fixtures into the matches table (new rows start as
 //      tier 'unassigned' af-* matches)
 //   2. settle finished af-* picks from past matches
+//   2b. mark expired grants as expired (is_active = false)
 //   3. run the same automatic analysis as the "Run Analysis" button for today
 //      (runAutomatedAnalysis reads the stored matches; it syncs itself when
 //      none are stored)
@@ -57,6 +59,15 @@ export async function GET(req: Request) {
         );
     }
 
+    // 2b. Mark expired grants as expired (is_active = false) so the app
+    // endpoints count them as inactive even before anyone revokes them.
+    let expiredMarked = 0;
+    try {
+        expiredMarked = await markExpiredGrantsAsExpired(db);
+    } catch (error) {
+        console.error('[Cron Daily] Marking expired grants failed:', error);
+    }
+
     let analysis: Awaited<ReturnType<typeof runAutomatedAnalysis>> | null = null;
     let analysisError: string | null = null;
     try {
@@ -72,6 +83,7 @@ export async function GET(req: Request) {
         sync,
         syncError,
         settle,
+        expiredMarked,
         analysis,
         analysisError,
     });
