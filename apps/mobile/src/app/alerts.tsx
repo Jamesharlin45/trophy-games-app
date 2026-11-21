@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useState, useEffect } from 'react';
 import { api } from '../api/client';
 import { useScreenQuery } from '../hooks/useLiveQuery';
+import i18n from '../locales';
 
 export default function AlertsScreen() {
     const { themeColors } = useTheme();
@@ -58,10 +59,10 @@ export default function AlertsScreen() {
                 <View style={styles.headerIcon}>
                     <Bell size={20} color={themeColors.text} />
                 </View>
-                <Text style={[styles.headerTitle, { color: themeColors.text }]}>ALERTS</Text>
+                <Text style={[styles.headerTitle, { color: themeColors.text }]}>{i18n.t('alerts.title')}</Text>
                 {alerts && alerts.some(a => !(a.readBy ?? []).includes(deviceId || "unknown")) && (
-                    <TouchableOpacity onPress={handleMarkAllRead} style={styles.markReadText}>
-                        <Text style={{ color: themeColors.accent, fontSize: 12, fontWeight: '700' }}>Mark all read</Text>
+                    <TouchableOpacity onPress={handleMarkAllRead} style={styles.markReadText} accessibilityRole="button">
+                        <Text style={{ color: themeColors.accent, fontSize: 12, fontWeight: '700' }}>{i18n.t('alerts.markAllRead')}</Text>
                     </TouchableOpacity>
                 )}
             </View>
@@ -103,9 +104,9 @@ export default function AlertsScreen() {
                 ) : (
                     <View style={styles.emptyState}>
                         <Bell size={48} color={themeColors.mutedText} style={styles.emptyIcon} />
-                        <Text style={[styles.emptyTitle, { color: themeColors.text }]}>No Alerts</Text>
+                        <Text style={[styles.emptyTitle, { color: themeColors.text }]}>{i18n.t('alerts.emptyTitle')}</Text>
                         <Text style={[styles.emptySubtitle, { color: themeColors.mutedText }]}>
-                            You don't have any notifications right now.
+                            {i18n.t('alerts.emptySub')}
                         </Text>
                     </View>
                 )}

@@ -4,8 +4,6 @@
  * them their access token, as a backup copy for other devices and
  * reinstalls. Skipping it posts to the server only if an address was
  * entered; the parent shows a "reopen" banner afterwards.
- *
- * After sending: "Your token will arrive by email in about 10 minutes."
  */
 
 import {
@@ -22,6 +20,7 @@ import { useTheme } from '../context/ThemeContext';
 import type { ThemeColors } from '../theme/colors';
 import { typography } from '../theme/typography';
 import { api } from '../api/client';
+import i18n from '../locales';
 
 interface EmailTokenModalProps {
     visible: boolean;
@@ -75,10 +74,10 @@ export function EmailTokenModal({
             if (result.success) {
                 setSent(true);
             } else {
-                setError(result.reason || 'Could not save your email. Try again.');
+                setError(result.reason || i18n.t('market.emailModalError'));
             }
         } catch {
-            setError('Could not save your email. Try again.');
+            setError(i18n.t('market.emailModalError'));
         } finally {
             setSending(false);
         }
@@ -89,12 +88,12 @@ export function EmailTokenModal({
             <View style={styles.overlay}>
                 <View style={styles.dialog}>
                     <Mail size={20} color={themeColors.accent} />
-                    <Text style={[styles.title, { color: themeColors.text }]}>Your token by email</Text>
+                    <Text style={[styles.title, { color: themeColors.text }]}>{i18n.t('market.emailModalTitle')}</Text>
                     <Text style={[styles.subtitle, { color: themeColors.mutedText }]}>
-                        Your token will arrive by email in about 10 minutes.
+                        {i18n.t('market.emailModalTimeout')}
                     </Text>
-                    <TouchableOpacity style={styles.doneBtn} onPress={onClose}>
-                        <Text style={styles.doneBtnText}>Done</Text>
+                    <TouchableOpacity style={styles.doneBtn} onPress={onClose} accessibilityRole="button">
+                        <Text style={styles.doneBtnText}>{i18n.t('common.cancel')}</Text>
                     </TouchableOpacity>
                 </View>
             </View>
@@ -105,13 +104,13 @@ export function EmailTokenModal({
         <View style={styles.overlay}>
             <View style={styles.dialog}>
                 <Mail size={20} color={themeColors.accent} />
-                <Text style={[styles.title, { color: themeColors.text }]}>Your token by email</Text>
+                <Text style={[styles.title, { color: themeColors.text }]}>{i18n.t('market.emailModalTitle')}</Text>
                 <Text style={[styles.subtitle, { color: themeColors.mutedText }]}>
-                    Enter the email address where we should mail you your access token. We'll send it about 10 minutes after your purchase — it works on every device and after reinstalls.
+                    {i18n.t('market.emailModalBody')}
                 </Text>
                 <TextInput
                     style={[styles.input, { color: themeColors.text }]}
-                    placeholder="you@example.com"
+                    placeholder={i18n.t('market.emailModalPlaceholder')}
                     placeholderTextColor={themeColors.mutedText}
                     value={email}
                     onChangeText={setEmail}
@@ -126,15 +125,16 @@ export function EmailTokenModal({
                     style={[styles.sendBtn, { backgroundColor: themeColors.accent }]}
                     onPress={handleSend}
                     disabled={!emailValid || sending}
+                    accessibilityRole="button"
                 >
                     {sending ? (
                         <ActivityIndicator color="white" size="small" />
                     ) : (
-                        <Text style={styles.sendBtnText}>Send my token</Text>
+                        <Text style={styles.sendBtnText}>{i18n.t('market.emailModalSend')}</Text>
                     )}
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.skipBtn} onPress={onSkipped}>
-                    <Text style={[styles.skipBtnText, { color: themeColors.mutedText }]}>Skip for now</Text>
+                <TouchableOpacity style={styles.skipBtn} onPress={onSkipped} accessibilityRole="button">
+                    <Text style={[styles.skipBtnText, { color: themeColors.mutedText }]}>{i18n.t('market.emailModalSkip')}</Text>
                 </TouchableOpacity>
             </View>
         </View>

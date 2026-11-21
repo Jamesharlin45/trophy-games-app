@@ -1,18 +1,57 @@
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Image, ActivityIndicator } from 'react-native';
+/**
+ * Match overview page.
+ *
+ * Header: back, share (system share sheet), league name, both crests, team
+ * names, a VS pill with kickoff time and a live countdown within 24 h.
+ * Status line: LIVE / FT / Upcoming. Background: gradient from the home team
+ * colour fading into the app background.
+ *
+ * Tabs: "Overview" (default); "Odds" only when detailedOdds exists. The tab
+ * bar is a plain list so new tabs can be added later.
+ *
+ * Overview: main pick card (pick, odds, confidence bar + %, risk badge,
+ * market view bar), small cards in a two-column grid for extra fields,
+ * "Why this pick" bullets, sources as compact chips linking the site domain.
+ */
+
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { ChevronLeft, Zap, ShieldCheck, Goal, Lock, Sparkles } from 'lucide-react-native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+    ChevronLeft,
+    ChevronRight,
+    Share2,
+    Eye,
+    ChartBar,
+    Goal,
+    Link2,
+    Lock,
+    Crown,
+    TrendingUp,
+    Flag,
+    Zap,
+} from 'lucide-react-native';
+import type { LucideIcon } from 'lucide-react-native';
+import * as ShareAPI from 'expo-sharing';
+import * as Linking from 'expo-linking';
+import { api } from '../../api/client';
+import type { ApiMatch } from '../../api/client';
+import { fetchMatchStats } from '../../api/footystats';
+import type { MatchDetailData } from '../../api/footystats';
 import { useTheme } from '../../context/ThemeContext';
 import type { ThemeColors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
-import { getCountryFlagUrl } from '../../lib/flags';
-import { fetchMatchStats } from '../../api/footystats';
-import type { MatchDetailData } from '../../api/footystats';
-import { api } from '../../api/client';
-import type { ApiMatch } from '../../api/client';
-import i18n from '../../locales';
+import { headerBgColor, headerTextColor, readableCopy } from '../../lib/colors';
+import { useTeamColors } from '../../hooks/useTeamColors';
 import { useMembershipAccess } from '../../hooks/useMembershipAccess';
+import { TeamCrest } from '../../components/TeamCrest';
+import { VsPill } from '../../components/VsPill';
+import { AnimatedBar } from '../../components/AnimatedBar';
+import { OverviewTabs } from '../../components/OverviewTabs';
+import { AnimatedPulse } from '../../components/AnimatedPulse';
+import { SkeletonList } from '../../components/Skeleton';
+import i18n from '../../locales';
 
 type MatchViewModel = Omit<
     ApiMatch,
@@ -20,34 +59,48 @@ type MatchViewModel = Omit<
 > &
     Partial<MatchDetailData>;
 
+type AiPrediction = NonNullable<MatchViewModel['aiPrediction']>;
+type Risk = AiPrediction['risk'];
+type Odds13 = { home?: string; draw?: string; away?: string };
 
-const TeamLogo = ({ uri, name, textColor }: { uri?: string; name: string; textColor: string }) => {
-    const [failed, setFailed] = useState(false);
-    const { themeColors } = useTheme();
-    const logoStyles = getLogoStyles(themeColors);
-    const initials = name.split(' ').slice(0, 2).map((w: string) => w[0]).join('').toUpperCase();
-    const flagUri = !uri || failed ? getCountryFlagUrl(name) : undefined;
+function formatTime(date: Date): string {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
 
-    if (flagUri) {
-        return (
-            <View style={logoStyles.flagBox}>
-                <Image source={{ uri: flagUri }} style={logoStyles.flag} />
-            </View>
-        );
+function formatRemaining(ms: number): string {
+    if (ms <= 0) return '';
+    const secs = Math.floor(ms / 1000);
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    const s = secs % 60;
+    if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function useCountdown(targetMs: number): string {
+    const [remaining, setRemaining] = useState(() => Math.max(0, targetMs - Date.now()));
+    useEffect(() => {
+        if (remaining <= 0) return undefined;
+        const id = setInterval(() => {
+            setRemaining((r) => Math.max(0, r - 1000));
+        }, 1000);
+        return () => clearInterval(id);
+    }, [remaining]);
+    return formatRemaining(remaining);
+}
+
+function domainOf(url: string): string {
+    try {
+        return new URL(url).hostname.replace(/^www\./, '');
+    } catch {
+        const host = url.replace(/^https?:\/\//, '').split('/')[0];
+        return host.replace(/^www\./, '');
     }
-    if (uri && !failed) {
-        return <Image source={{ uri }} style={logoStyles.img} onError={() => setFailed(true)} />;
-    }
-    return <Text style={[logoStyles.initials, { color: textColor }]}>{initials}</Text>;
-};
+}
 
-function getLogoStyles(themeColors: ThemeColors) {
-    return StyleSheet.create({
-    img: { width: 46, height: 46, resizeMode: 'contain' },
-    flagBox: { width: 46, height: 46, borderRadius: 12, overflow: 'hidden', backgroundColor: themeColors.glass, alignItems: 'center', justifyContent: 'center' },
-    flag: { width: 46, height: 30, resizeMode: 'cover' },
-    initials: { fontSize: 18, fontWeight: '800', letterSpacing: 1 },
-    });
+function textFor(key: string, fallback: string): string {
+    const value = i18n.t(key);
+    return typeof value === 'string' && value.length > 0 ? value : fallback;
 }
 
 export default function MatchDetailScreen() {
@@ -59,73 +112,74 @@ export default function MatchDetailScreen() {
 
     const [match, setMatch] = useState<MatchViewModel | null>(null);
     const [loading, setLoading] = useState(true);
+    const [tab, setTab] = useState('overview');
+
+    const teamColors = useTeamColors(match?.homeTeamLogo, match?.awayTeamLogo);
 
     useFocusEffect(
         useCallback(() => {
             let cancelled = false;
 
             const loadMatch = async () => {
-            setLoading(true);
+                setLoading(true);
 
-            // 1. Start with instant placeholder from navigation params.
-            let base: MatchViewModel | null = null;
-            if (matchData) {
-                try {
-                    const parsed: unknown = JSON.parse(decodeURIComponent(matchData as string));
-                    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-                        base = parsed as MatchViewModel;
-                        if (!cancelled) setMatch(base);
+                // 1. Start with instant placeholder from navigation params.
+                let base: MatchViewModel | null = null;
+                if (matchData) {
+                    try {
+                        const parsed: unknown = JSON.parse(decodeURIComponent(matchData as string));
+                        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                            base = parsed as MatchViewModel;
+                            if (!cancelled) setMatch(base);
+                        }
+                    } catch (parseError) {
+                        console.warn('[Match Detail] Failed to parse matchData param:', parseError);
                     }
-                } catch (parseError) {
-                    console.warn('[Match Detail] Failed to parse matchData param:', parseError);
                 }
-            }
 
-            // 2. The API record gives the overlay (matchType, scores, status).
-            let merged: MatchViewModel | null = base;
-            try {
-                const remoteMatch = await api.matches.byId(id as string);
-                if (remoteMatch) {
-                    const patch = Object.fromEntries(
-                        Object.entries(remoteMatch).filter(([, v]) => v !== undefined && v !== '')
-                    ) as Partial<MatchViewModel>;
-                    const next: MatchViewModel = {
-                        ...(base ?? {}),
-                        ...patch,
-                        league: remoteMatch.league || base?.league || '',
-                        country: remoteMatch.country || base?.country,
-                    } as MatchViewModel;
-                    merged = next;
-                    if (!cancelled) setMatch(next);
+                // 2. The API record gives the overlay (matchType, scores, status).
+                let merged: MatchViewModel | null = base;
+                try {
+                    const remoteMatch = await api.matches.byId(id as string);
+                    if (remoteMatch) {
+                        const patch = Object.fromEntries(
+                            Object.entries(remoteMatch).filter(([, v]) => v !== undefined && v !== ''),
+                        ) as Partial<MatchViewModel>;
+                        const next: MatchViewModel = {
+                            ...(base ?? {}),
+                            ...patch,
+                            league: remoteMatch.league || base?.league || '',
+                            country: remoteMatch.country || base?.country,
+                        } as MatchViewModel;
+                        merged = next;
+                        if (!cancelled) setMatch(next);
+                    }
+                } catch (apiError) {
+                    console.warn('[Match Detail] Match lookup failed:', apiError);
                 }
-            } catch (apiError) {
-                console.warn('[Match Detail] Match lookup failed:', apiError);
-            }
 
-            // 3. Fetch the rich match-stats from the API (same source as web) —
-            //    form, H2H, corners, xG, potentials, stats, lineups, detailed odds.
-            try {
-                const stats = await fetchMatchStats(id as string);
-                if (stats && !cancelled) {
-                    const richPatch = Object.fromEntries(
-                        Object.entries(stats).filter(([, v]) =>
-                            v !== undefined && v !== '' && !(Array.isArray(v) && v.length === 0)
-                        )
-                    ) as Partial<MatchViewModel>;
-                    setMatch({
-                        ...(merged ?? {}),
-                        ...richPatch,
-                        // List/API stay authoritative for these basics.
-                        league: merged?.league || stats.league,
-                        country: merged?.country || stats.country,
-                        matchType: merged?.matchType,
-                    } as MatchViewModel);
+                // 3. Fetch the rich match-stats from the API (same source as web).
+                try {
+                    const stats = await fetchMatchStats(id as string);
+                    if (stats && !cancelled) {
+                        const richPatch = Object.fromEntries(
+                            Object.entries(stats).filter(([, v]) =>
+                                v !== undefined && v !== '' && !(Array.isArray(v) && v.length === 0),
+                            ),
+                        ) as Partial<MatchViewModel>;
+                        setMatch({
+                            ...(merged ?? {}),
+                            ...richPatch,
+                            league: merged?.league || stats.league,
+                            country: merged?.country || stats.country,
+                            matchType: merged?.matchType,
+                        } as MatchViewModel);
+                    }
+                } catch (statsError) {
+                    console.warn('[Match Detail] match-stats fetch failed:', statsError);
                 }
-            } catch (statsError) {
-                console.warn('[Match Detail] match-stats fetch failed:', statsError);
-            }
 
-            if (!cancelled) setLoading(false);
+                if (!cancelled) setLoading(false);
             };
 
             void loadMatch();
@@ -133,53 +187,214 @@ export default function MatchDetailScreen() {
         }, [id, matchData]),
     );
 
+    // ---- Derived state (hooks first, so ordering stays stable) ----
+    const isLive = match?.status?.includes('Live') || match?.status === 'Halftime' || match?.status === 'HT';
+    const isFinished = match?.status === 'Finished' || match?.status === 'FT';
+    const odds1x2: Odds13 | undefined = match?.detailedOdds?.ft?.['1x2'];
+    const hasDetailedOdds = Boolean(
+        (odds1x2?.home && odds1x2.home !== '') ||
+        (odds1x2?.draw && odds1x2.draw !== '') ||
+        (odds1x2?.away && odds1x2.away !== ''),
+    );
+    const kickoff = match ? new Date(match.timestamp) : new Date(0);
+    const kickMs = match ? kickoff.getTime() : 0;
+
+    const tabs = useMemo(
+        () => [
+            { id: 'overview', label: textFor('matchDetail.tabOverview', 'Overview'), Icon: Eye },
+            ...(hasDetailedOdds ? [{ id: 'odds', label: textFor('matchDetail.tabOdds', 'Odds'), Icon: ChartBar }] : []),
+        ],
+        [hasDetailedOdds],
+    );
+    const activeTab = tabs.find((t) => t.id === tab) ? tab : 'overview';
+    const countdown = useCountdown(kickMs);
+
     if (loading && !match) {
         return (
-            <SafeAreaView style={[styles.container, { backgroundColor: themeColors.background, justifyContent: 'center', alignItems: 'center' }]} edges={['left', 'right']}>
-                <ActivityIndicator size="large" color={themeColors.accent} />
+            <SafeAreaView style={[styles.container, { paddingTop: 12 }]} edges={['left', 'right']}>
+                <SkeletonList style={{ paddingHorizontal: 16, width: '100%' }} />
             </SafeAreaView>
         );
     }
 
     if (!match) {
         return (
-            <SafeAreaView style={[styles.container, { backgroundColor: themeColors.background, justifyContent: 'center', alignItems: 'center' }]} edges={['left', 'right']}>
-                <Text style={{ color: themeColors.mutedText, fontSize: 16, textAlign: 'center', paddingHorizontal: 24 }}>
-                    {i18n.t('matchDetail.unavailable')}
-                </Text>
-                <TouchableOpacity onPress={() => router.back()} style={styles.backCta} accessibilityRole="button">
-                    <Text style={{ color: themeColors.accent, fontWeight: '700', fontSize: 16 }}>{i18n.t('matchDetail.goBack')}</Text>
-                </TouchableOpacity>
+            <SafeAreaView style={styles.container} edges={['left', 'right']}>
+                <View style={styles.unavailableWrap}>
+                    <Text style={[styles.unavailableText, { color: themeColors.mutedText }]}>
+                        {i18n.t('matchDetail.unavailable')}
+                    </Text>
+                    <TouchableOpacity onPress={() => router.back()} style={styles.backCta} accessibilityRole="button">
+                        <Text style={[styles.backCtaText, { color: themeColors.accent }]}>{i18n.t('matchDetail.goBack')}</Text>
+                    </TouchableOpacity>
+                </View>
             </SafeAreaView>
         );
     }
 
-    const isLive = match.status?.includes('Live') || match.status === 'Halftime' || match.status === 'HT';
-    const isFinished = match.status === 'Finished' || match.status === 'FT';
-
     const ai = match.aiPrediction;
     const pickText = ai?.pick || ai?.suggestedBet || ai?.prediction;
     const hasPrediction = typeof pickText === 'string' && pickText.trim().length > 0;
-    const isLocked =
-        (match.matchType === 'paid' && !access.paid) || (match.matchType === 'vip' && !access.vip);
+    // Locked state: only after membership status is known to be locked, so the
+    // loading state can show a skeleton instead.
+    const isLocked = access.loading
+        ? false
+        : (match.matchType === 'paid' && !access.paid) || (match.matchType === 'vip' && !access.vip);
     const lockTier = match.matchType === 'vip' ? 'vip' : 'paid';
     const confidence = typeof ai?.confidence === 'number' ? Math.max(0, Math.min(100, ai.confidence)) : undefined;
     const risk = ai?.risk;
     const reasoningLines = Array.isArray(ai?.reasoning) ? ai.reasoning.filter(Boolean) : [];
     const sources = Array.isArray(ai?.sources) ? ai.sources.filter(Boolean) : [];
-    const oddsLabel = (() => {
-        if (match.odds?.home || match.odds?.draw || match.odds?.away) {
-            const parts = [match.odds.home, match.odds.draw, match.odds.away].filter(
-                (v): v is string => Boolean(v && v !== ''),
-            );
-            if (parts.length > 0) return parts.join(' / ');
+
+    const nowMs = Date.now();
+    const showCountdown = kickMs > 0 && kickMs > nowMs && kickMs - nowMs < 24 * 60 * 60 * 1000;
+
+    const scoreText = (match.homeScore !== undefined && match.awayScore !== undefined)
+        ? `${match.homeScore} - ${match.awayScore}`
+        : '';
+    const showScore = (isLive || isFinished) && match.homeScore !== undefined && match.awayScore !== undefined;
+
+    const vsLabel = isFinished
+        ? textFor('matchDetail.statusFinished', 'FT')
+        : isLive
+            ? `${textFor('matchDetail.statusLive', 'LIVE')} • ${showScore ? scoreText : ''}`.trim()
+            : `${textFor('matchDetail.vs', 'VS')} — ${kickMs > 0 ? formatTime(kickoff) : ''}`.trim();
+
+    const statusText = isFinished
+        ? textFor('matchDetail.statusFinished', 'FT')
+        : isLive
+            ? textFor('matchDetail.statusLive', 'LIVE')
+            : textFor('matchDetail.upcoming', 'Upcoming');
+
+    const homeColor = headerBgColor(teamColors.home, themeColors.accent);
+    const awayColor = headerBgColor(teamColors.away, themeColors.accent);
+    const headerText = headerTextColor(homeColor, themeColors.accentText, themeColors.text);
+
+    const shareUrl = `trophy-games://match/${match.id}`;
+    const handleShare = async () => {
+        try {
+            const available = await ShareAPI.isAvailableAsync();
+            if (available) {
+                await ShareAPI.shareAsync(shareUrl);
+            } else {
+                await Linking.openURL(shareUrl);
+            }
+        } catch {
+            // Sharing is a convenience — never block the screen.
         }
-        const h = match.detailedOdds?.ft?.['1x2']?.home;
-        const d = match.detailedOdds?.ft?.['1x2']?.draw;
-        const a = match.detailedOdds?.ft?.['1x2']?.away;
-        const parts = [h, d, a].filter((v): v is string => Boolean(v && v !== ''));
-        return parts.length > 0 ? parts.join(' / ') : '—';
-    })();
+    };
+
+    const sourceList = useMemo(
+        () => sources.map((s) => ({ key: s, domain: domainOf(s), url: s })),
+        [sources],
+    );
+
+    return (
+        <SafeAreaView style={styles.container} edges={['left', 'right', 'top']}>
+            <View style={[styles.headerBg, { backgroundColor: homeColor }]} />
+            <View style={[styles.headerFade, { backgroundColor: themeColors.background }]} />
+            <View style={[styles.headerAwayBlend, { backgroundColor: awayColor }]} />
+
+            <View style={styles.headerInner}>
+                <View style={styles.headerTop}>
+                    <TouchableOpacity onPress={() => router.back()} style={styles.headerLeftBtn} accessibilityRole="button">
+                        <ChevronLeft size={26} color={headerText} />
+                    </TouchableOpacity>
+                    <Text style={[styles.headerTitle, { color: headerText }]} numberOfLines={1}>
+                        {match.league || textFor('matchDetail.matchDetails', 'Match Details')}
+                    </Text>
+                    <TouchableOpacity onPress={handleShare} style={styles.headerRightBtn} accessibilityRole="button" accessibilityLabel={textFor('matchDetail.share', 'Share')}>
+                        <Share2 size={22} color={headerText} />
+                    </TouchableOpacity>
+                </View>
+
+                <View style={styles.teamsRow}>
+                    <TeamCrest
+                        uri={match.homeTeamLogo}
+                        name={match.homeTeam}
+                        size={46}
+                        teamColor={readableCopy(teamColors.home)}
+                        fallbackColors={[themeColors.accent, themeColors.glass]}
+                    />
+                    <Text style={[styles.teamNameBig, { color: headerText }]} numberOfLines={2}>{match.homeTeam}</Text>
+                    <VsPill accent={themeColors.accent} accentText={themeColors.accentText} label={vsLabel} height={34} />
+                    {showCountdown ? <Text style={[styles.countdownText, { color: headerText }]}>{countdown}</Text> : null}
+                    <Text style={[styles.teamNameBig, { color: headerText }]} numberOfLines={2}>{match.awayTeam}</Text>
+                    <TeamCrest
+                        uri={match.awayTeamLogo}
+                        name={match.awayTeam}
+                        size={46}
+                        teamColor={readableCopy(teamColors.away)}
+                        fallbackColors={[themeColors.accent, themeColors.glass]}
+                    />
+                </View>
+
+                {showScore && <Text style={[styles.scoreBig, { color: themeColors.accent }]}>{scoreText}</Text>}
+                <Text style={[styles.statusText, { color: headerText }]}>{statusText}</Text>
+            </View>
+
+            <OverviewTabs tabs={tabs} active={activeTab} onChange={setTab} />
+
+            <ScrollView
+                style={styles.content}
+                contentContainerStyle={styles.scrollContent}
+                showsVerticalScrollIndicator={false}
+                key={activeTab}
+            >
+                {activeTab === 'overview' ? (
+                    <OverviewContent
+                        match={match}
+                        isLocked={isLocked}
+                        accessLoading={access.loading}
+                        hasPrediction={hasPrediction}
+                        pickText={pickText}
+                        confidence={confidence}
+                        risk={risk}
+                        reasoningLines={reasoningLines}
+                        sourceList={sourceList}
+                        lockTier={lockTier}
+                        onUnlock={() => router.push(lockTier === 'vip' ? '/(tabs)/vip' : '/(tabs)/paid')}
+                    />
+                ) : (
+                    <OddsContent match={match} />
+                )}
+            </ScrollView>
+        </SafeAreaView>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Overview tab
+// ---------------------------------------------------------------------------
+
+function OverviewContent({
+    match,
+    isLocked,
+    accessLoading,
+    hasPrediction,
+    pickText,
+    confidence,
+    risk,
+    reasoningLines,
+    sourceList,
+    lockTier,
+    onUnlock,
+}: {
+    match: MatchViewModel;
+    isLocked: boolean;
+    accessLoading: boolean;
+    hasPrediction: boolean;
+    pickText: string | undefined;
+    confidence: number | undefined;
+    risk: Risk;
+    reasoningLines: string[];
+    sourceList: { key: string; domain: string; url: string }[];
+    lockTier: string;
+    onUnlock: () => void;
+}) {
+    const { themeColors } = useTheme();
+    const styles = getStyles(themeColors);
+
     const riskColor = (() => {
         if (risk === 'low') return themeColors.success;
         if (risk === 'medium') return themeColors.warning;
@@ -187,1032 +402,683 @@ export default function MatchDetailScreen() {
         return themeColors.mutedText;
     })();
 
-    return (
-        <SafeAreaView style={[styles.container, { backgroundColor: themeColors.background }]} edges={['left', 'right']}>
-            {/* Custom Header */}
-            <View style={[styles.customHeader, { backgroundColor: themeColors.background }]}>
-                <TouchableOpacity onPress={() => router.back()} style={styles.headerLeft}>
-                    <ChevronLeft size={24} color={themeColors.text} />
-                </TouchableOpacity>
-                <Text style={[styles.headerTitle, { color: themeColors.text }]}>
-                    {match.league
-                        ? match.league.replace(/\w\S*/g, (w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-                        : i18n.t('matchDetail.matchDetails')}
-                </Text>
-                <View style={styles.headerRight} />
+    if (accessLoading) {
+        return <SkeletonList style={{ paddingHorizontal: 16, width: '100%' }} />;
+    }
+
+    if (isLocked) {
+        return <LockedPickCard lockTier={lockTier} onUnlock={onUnlock} />;
+    }
+
+    if (!hasPrediction) {
+        return (
+            <View style={styles.emptyState}>
+                <Crown size={24} color={themeColors.accent} />
+                <Text style={[styles.emptyTitle, { color: themeColors.text }]}>{textFor('matchDetail.noPredictionTitle', 'No prediction yet')}</Text>
+                <Text style={[styles.emptyBody, { color: themeColors.mutedText }]}>{textFor('matchDetail.noPredictionBody', 'Check back later for AI analysis.')}</Text>
             </View>
+        );
+    }
 
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+    const oddValues: { label: string; value?: string }[] = [];
+    const dOdds: Odds13 | undefined = match.detailedOdds?.ft?.['1x2'];
+    if (dOdds?.home) oddValues.push({ label: textFor('matchDetail.home', 'HOME'), value: dOdds.home });
+    if (dOdds?.draw) oddValues.push({ label: textFor('matchDetail.draw', 'DRAW'), value: dOdds.draw });
+    if (dOdds?.away) oddValues.push({ label: textFor('matchDetail.away', 'AWAY'), value: dOdds.away });
 
-                {/* Hero Scoreboard */}
-                <View style={[styles.scoreboard, { backgroundColor: themeColors.surfaceElevated }]}>
-                    <View style={styles.leagueRow}>
-                        <ShieldCheck size={11} color={themeColors.mutedText} />
-                        <Text style={[styles.leagueText, { color: themeColors.mutedText }]}>
-                            {match.league?.replace(/\w\S*/g, (w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())}
-                        </Text>
-                        {match.country && (
-                            <Text style={[styles.countryText, { color: themeColors.mutedText }]}>• {match.country}</Text>
-                        )}
-                    </View>
+    const marketTotal = oddValues.reduce((acc, v) => acc + (Number.parseFloat(v.value ?? '') || 0), 0);
 
-                    {/* Status Badge */}
-                    <View style={[
-                        styles.statusBadge,
-                        {
-                            backgroundColor: isLive ? themeColors.danger : isFinished ? themeColors.surface : themeColors.surface,
-                        }
-                    ]}>
-                        {isLive && <View style={styles.liveDot} />}
-                        <Text
-                            style={[styles.statusText, { color: isLive ? 'white' : themeColors.mutedText }]}
-                        >
-                            {isLive
-                                ? match.status?.toUpperCase()
-                                : isFinished
-                                    ? i18n.t('matchDetail.fullTime')
-                                    : i18n.t('matchDetail.upcoming')}
-                        </Text>
-                    </View>
+    return (
+        <View style={styles.overviewContent}>
+            <PickCard
+                pickText={pickText}
+                confidence={confidence}
+                risk={risk}
+                riskColor={riskColor}
+                suggestedBet={match.aiPrediction?.suggestedBet}
+                oddValues={oddValues}
+            />
 
-                    {/* Teams + Score */}
-                    <View style={styles.teamsRow}>
-                        <View style={styles.teamCol}>
-                            <View style={[styles.logoBox, { backgroundColor: themeColors.surface }]}>
-                                <TeamLogo uri={match.homeTeamLogo} name={match.homeTeam} textColor={themeColors.mutedText} />
-                            </View>
-                            <Text style={[styles.teamName, { color: themeColors.text }]} numberOfLines={2}>{match.homeTeam}</Text>
-                            {match.homeStanding && (
-                                <Text style={[styles.standingText, { color: themeColors.mutedText }]}>#{match.homeStanding}</Text>
-                            )}
-                        </View>
-
-                        <View style={styles.scoreCol}>
-                            {(match.homeScore !== undefined) ? (
-                                <Text style={[styles.scoreText, { color: themeColors.accent }]}>
-                                    {match.homeScore} — {match.awayScore}
-                                </Text>
-                            ) : (
-                                <Text style={[styles.vsText, { color: themeColors.text }]}>VS</Text>
-                            )}
-                            <Text style={[styles.kickoffText, { color: themeColors.mutedText }]}>
-                                {new Date(match.timestamp).toLocaleString([], {
-                                    weekday: 'short', month: 'short', day: 'numeric',
-                                    hour: '2-digit', minute: '2-digit'
-                                })}
-                            </Text>
-                            {(match.htHomeScore !== undefined && match.htAwayScore !== undefined) && (
-                                <Text style={[styles.htText, { color: themeColors.mutedText }]}>
-                                    HT {match.htHomeScore} - {match.htAwayScore}
-                                </Text>
-                            )}
-                            {match.isTrending && (
-                                <View style={[styles.hotBadge, { backgroundColor: themeColors.orange9 }]}>
-                                    <Zap size={9} color="white" fill="white" />
-                                    <Text style={styles.hotText}>HOT</Text>
-                                </View>
-                            )}
-                        </View>
-
-                        <View style={styles.teamCol}>
-                            <View style={[styles.logoBox, { backgroundColor: themeColors.surface }]}>
-                                <TeamLogo uri={match.awayTeamLogo} name={match.awayTeam} textColor={themeColors.mutedText} />
-                            </View>
-                            <Text style={[styles.teamName, { color: themeColors.text }]} numberOfLines={2}>{match.awayTeam}</Text>
-                            {match.awayStanding && (
-                                <Text style={[styles.standingText, { color: themeColors.mutedText }]}>#{match.awayStanding}</Text>
-                            )}
-                        </View>
+            {marketTotal > 0 && (
+                <View style={styles.pickCard}>
+                    <SectionTitle Icon={ChartBar} title={textFor('matchDetail.marketView', 'Market view (from odds)')} />
+                    <AnimatedBar value={marketTotal} height={10} radius={5} color={themeColors.accent} trackColor={themeColors.surfaceElevated} />
+                    <View style={styles.marketLabels}>
+                        {oddValues.map((v, i) => (
+                            <Text key={i} style={[styles.marketLabel, { color: themeColors.text }]}>{v.value}</Text>
+                        ))}
                     </View>
                 </View>
+            )}
 
-                {/* AI Prediction */}
-                <View style={styles.outerPad}>
-                    <Text style={[styles.sectionLabel, { color: themeColors.mutedText }]}>{i18n.t('matchDetail.pick').toUpperCase()}</Text>
-                    <View style={[styles.predictionSection, { backgroundColor: themeColors.surface, borderColor: themeColors.border }]}>
-                        {isLocked ? (
-                            <View style={styles.predictionLocked}>
-                                <View style={styles.predictionLockedHeader}>
-                                    <Lock size={18} color={themeColors.accent} />
-                                    <Text style={[styles.predictionLockedTitle, { color: themeColors.text }]}>
-                                        {i18n.t('matchDetail.lockedTitle')}
-                                    </Text>
-                                </View>
-                                <View style={[styles.maskLine, { backgroundColor: themeColors.surfaceElevated }]} />
-                                <View style={[styles.maskLine, styles.maskLineShort, { backgroundColor: themeColors.surfaceElevated }]} />
-                                <Text style={[styles.predictionEmptyBody, { color: themeColors.mutedText }]}>
-                                    {i18n.t('matchDetail.lockedBody')}
+            <ExtraFields match={match} />
+
+            {reasoningLines.length > 0 ? (
+                <View style={styles.whySection}>
+                    <SectionTitle Icon={TrendingUp} title={textFor('matchDetail.whyPick', 'Why this pick')} />
+                    {reasoningLines.map((line, i) => (
+                        <View key={`${i}-${line.slice(0, 20)}`} style={[styles.bulletCard, { backgroundColor: themeColors.surface }]}>
+                            <Text style={[styles.bulletText, { color: themeColors.text }]}>• {line}</Text>
+                        </View>
+                    ))}
+                </View>
+            ) : null}
+
+            {sourceList.length > 0 ? (
+                <View style={styles.whySection}>
+                    <SectionTitle Icon={Link2} title={textFor('matchDetail.sources', 'Sources')} />
+                    <View style={styles.sourcesRow}>
+                        {sourceList.map((s) => (
+                            <TouchableOpacity
+                                key={s.key}
+                                style={[styles.sourceChip, { backgroundColor: themeColors.surfaceElevated, borderColor: themeColors.border }]}
+                                onPress={() => void Linking.openURL(s.url)}
+                                accessibilityRole="link"
+                                accessibilityLabel={`${s.domain}`}
+                            >
+                                <Text style={[styles.sourceChipText, { color: themeColors.mutedText }]} numberOfLines={1}>
+                                    {s.domain}
                                 </Text>
-                                <TouchableOpacity
-                                    style={[styles.unlockBtn, { backgroundColor: themeColors.accent }]}
-                                    onPress={() => router.push(lockTier === 'vip' ? '/(tabs)/vip' : '/(tabs)/paid')}
-                                    activeOpacity={0.85}
-                                    accessibilityRole="button"
-                                >
-                                    <Text style={[styles.unlockBtnText, { color: themeColors.accentText }]}>
-                                        {lockTier === 'vip' ? i18n.t('matchDetail.unlockVip') : i18n.t('matchDetail.unlockPremium')}
-                                    </Text>
-                                </TouchableOpacity>
-                            </View>
-                        ) : hasPrediction ? (
-                            <View style={styles.predictionBody}>
-                                <View style={styles.predictionPickRow}>
-                                    <Sparkles size={18} color={themeColors.accent} />
-                                    <Text style={[styles.predictionPickLabel, { color: themeColors.mutedText }]}>
-                                        {i18n.t('matchDetail.pick')}
-                                    </Text>
-                                </View>
-                                <Text style={[styles.predictionPickValue, { color: themeColors.text }]}>{String(pickText)}</Text>
-
-                                <View style={styles.predictionField}>
-                                    <Text style={[styles.predictionFieldLabel, { color: themeColors.mutedText }]}>
-                                        {i18n.t('matchDetail.confidence')}
-                                    </Text>
-                                    <View style={styles.confidenceRow}>
-                                        <View style={[styles.confTrack, { backgroundColor: themeColors.surfaceElevated }]}>
-                                            <View
-                                                style={[
-                                                    styles.confFill,
-                                                    { width: `${confidence ?? 0}%`, backgroundColor: themeColors.accent },
-                                                ]}
-                                            />
-                                        </View>
-                                        <Text style={[styles.confPct, { color: themeColors.text }]}>
-                                            {confidence !== undefined ? `${confidence}%` : '—'}
-                                        </Text>
-                                    </View>
-                                </View>
-
-                                <View style={styles.predictionInline}>
-                                    <Text style={[styles.predictionFieldLabel, { color: themeColors.mutedText }]}>
-                                        {i18n.t('matchDetail.risk')}
-                                    </Text>
-                                    <View
-                                        style={[
-                                            styles.riskBadge,
-                                            { backgroundColor: `${riskColor}22`, borderColor: `${riskColor}55` },
-                                        ]}
-                                    >
-                                        <Text style={[styles.riskText, { color: riskColor }]}>
-                                            {risk ? i18n.t(`risk.${risk}`) : '—'}
-                                        </Text>
-                                    </View>
-                                </View>
-
-                                <View style={styles.predictionField}>
-                                    <Text style={[styles.predictionFieldLabel, { color: themeColors.mutedText }]}>
-                                        {i18n.t('matchDetail.odds')}
-                                    </Text>
-                                    <Text style={[styles.predictionFieldValue, { color: themeColors.text }]}>{oddsLabel}</Text>
-                                </View>
-
-                                {reasoningLines.length > 0 ? (
-                                    <View style={styles.predictionField}>
-                                        <Text style={[styles.predictionFieldLabel, { color: themeColors.mutedText }]}>
-                                            {i18n.t('matchDetail.reasoning')}
-                                        </Text>
-                                        <View style={styles.reasoningList}>
-                                            {reasoningLines.map((line, idx) => (
-                                                <Text key={`${idx}-${line.slice(0, 12)}`} style={[styles.reasoningItem, { color: themeColors.text }]}>
-                                                    • {line}
-                                                </Text>
-                                            ))}
-                                        </View>
-                                    </View>
-                                ) : null}
-
-                                {sources.length > 0 ? (
-                                    <View style={styles.predictionField}>
-                                        <Text style={[styles.predictionFieldLabel, { color: themeColors.mutedText }]}>
-                                            {i18n.t('matchDetail.sources')}
-                                        </Text>
-                                        <View style={styles.reasoningList}>
-                                            {sources.map((source, idx) => (
-                                                <Text key={`${idx}-${source.slice(0, 12)}`} style={[styles.sourceItem, { color: themeColors.mutedText }]}>
-                                                    • {source}
-                                                </Text>
-                                            ))}
-                                        </View>
-                                    </View>
-                                ) : null}
-                            </View>
-                        ) : (
-                            <View style={styles.predictionEmpty}>
-                                <Sparkles size={20} color={themeColors.mutedText} />
-                                <Text style={[styles.predictionEmptyTitle, { color: themeColors.text }]}>
-                                    {i18n.t('matchDetail.noPredictionTitle')}
-                                </Text>
-                                <Text style={[styles.predictionEmptyBody, { color: themeColors.mutedText }]}>
-                                    {i18n.t('matchDetail.noPredictionBody')}
-                                </Text>
-                            </View>
-                        )}
+                                <ChevronRight size={14} color={themeColors.mutedText} />
+                            </TouchableOpacity>
+                        ))}
                     </View>
                 </View>
-
-                {/* Match Predictions (pre-match probability potentials) */}
-                {match.potentials && match.potentials.length > 0 && (
-                    <View style={styles.outerPad}>
-                        <Text style={[styles.sectionLabel, { color: themeColors.mutedText }]}>MATCH PREDICTIONS</Text>
-                        <View style={[styles.potentialCard, { backgroundColor: themeColors.surface }]}>
-                            {match.potentials.map((p, i: number) => (
-                                <View key={i} style={styles.potentialRow}>
-                                    <Text style={[styles.potentialLabel, { color: themeColors.text }]}>{p.label}</Text>
-                                    {p.percent !== undefined ? (
-                                        <View style={styles.potentialBarWrap}>
-                                            <View style={[styles.potentialBarTrack, { backgroundColor: themeColors.surfaceElevated }]}>
-                                                <View style={[styles.potentialBarFill, { width: `${p.percent}%`, backgroundColor: themeColors.accent }]} />
-                                            </View>
-                                            <Text style={[styles.potentialPct, { color: themeColors.accent }]}>{p.percent}%</Text>
-                                        </View>
-                                    ) : (
-                                        <Text style={[styles.potentialPct, { color: themeColors.accent }]}>{p.value}</Text>
-                                    )}
-                                </View>
-                            ))}
-                        </View>
-                    </View>
-                )}
-
-                {/* Market Odds - Show detailedOdds if available, otherwise fall back to basic odds */}
-                {(match.detailedOdds || match.odds) && (
-                    <View style={styles.outerPad}>
-                        <Text style={[styles.sectionLabel, { color: themeColors.mutedText }]}>MARKET ODDS</Text>
-                        <View style={styles.oddsGrid}>
-                            <View style={[styles.oddsTile, { backgroundColor: themeColors.surface }]}>
-                                <Text style={[styles.tileLabel, { color: themeColors.mutedText }]}>FULL TIME 1X2</Text>
-                                <View style={styles.oddsRow}>
-                                    <View style={styles.oddsCell}>
-                                        <Text style={[styles.oddsVal, { color: themeColors.accent }]}>
-                                            {match.detailedOdds?.ft?.['1x2']?.home || match.odds?.home || '—'}
-                                        </Text>
-                                        <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>HOME</Text>
-                                    </View>
-                                    <View style={[styles.oddsDivider, { backgroundColor: themeColors.border }]} />
-                                    <View style={styles.oddsCell}>
-                                        <Text style={[styles.oddsVal, { color: themeColors.text }]}>
-                                            {match.detailedOdds?.ft?.['1x2']?.draw || match.odds?.draw || '—'}
-                                        </Text>
-                                        <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>DRAW</Text>
-                                    </View>
-                                    <View style={[styles.oddsDivider, { backgroundColor: themeColors.border }]} />
-                                    <View style={styles.oddsCell}>
-                                        <Text style={[styles.oddsVal, { color: themeColors.text }]}>
-                                            {match.detailedOdds?.ft?.['1x2']?.away || match.odds?.away || '—'}
-                                        </Text>
-                                        <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>AWAY</Text>
-                                    </View>
-                                </View>
-                            </View>
-
-                            {match.detailedOdds?.ft?.['ou'] && (
-                                <View style={[styles.oddsTile, { backgroundColor: themeColors.surface }]}>
-                                    <Text style={[styles.tileLabel, { color: themeColors.mutedText }]}>GOALS OVER / UNDER</Text>
-                                    <View style={styles.oddsRow}>
-                                        <View style={styles.oddsCell}>
-                                            <Text style={[styles.oddsVal, { color: themeColors.text }]}>{match.detailedOdds.ft['ou'].over || '—'}</Text>
-                                            <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>OVER {match.detailedOdds.ft['ou'].line}</Text>
-                                        </View>
-                                        <View style={[styles.oddsDivider, { backgroundColor: themeColors.border }]} />
-                                        <View style={styles.oddsCell}>
-                                            <Text style={[styles.oddsVal, { color: themeColors.text }]}>{match.detailedOdds.ft['ou'].under || '—'}</Text>
-                                            <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>UNDER {match.detailedOdds.ft['ou'].line}</Text>
-                                        </View>
-                                    </View>
-                                </View>
-                            )}
-                        </View>
-                    </View>
-                )}
-
-                {/* Detailed Odds */}
-                {match.detailedOdds && (
-                    <View style={styles.outerPad}>
-                        <Text style={[styles.sectionLabel, { color: themeColors.mutedText }]}>DETAILED ODDS</Text>
-                        <View style={styles.oddsGrid}>
-                            {/* FT 1X2 */}
-                            <View style={[styles.oddsTile, { backgroundColor: themeColors.surface }]}>
-                                <Text style={[styles.tileLabel, { color: themeColors.mutedText }]}>FULL TIME 1X2</Text>
-                                <View style={styles.oddsRow}>
-                                    <View style={styles.oddsCell}>
-                                        <Text style={[styles.oddsVal, { color: themeColors.accent }]}>{match.detailedOdds.ft?.['1x2'].home || '—'}</Text>
-                                        <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>HOME</Text>
-                                    </View>
-                                    <View style={[styles.oddsDivider, { backgroundColor: themeColors.border }]} />
-                                    <View style={styles.oddsCell}>
-                                        <Text style={[styles.oddsVal, { color: themeColors.text }]}>{match.detailedOdds.ft?.['1x2'].draw || '—'}</Text>
-                                        <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>DRAW</Text>
-                                    </View>
-                                    <View style={[styles.oddsDivider, { backgroundColor: themeColors.border }]} />
-                                    <View style={styles.oddsCell}>
-                                        <Text style={[styles.oddsVal, { color: themeColors.text }]}>{match.detailedOdds.ft?.['1x2'].away || '—'}</Text>
-                                        <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>AWAY</Text>
-                                    </View>
-                                </View>
-                            </View>
-
-                            {/* FT O/U */}
-                            {match.detailedOdds.ft?.ou && (
-                                <View style={[styles.oddsTile, { backgroundColor: themeColors.surface }]}>
-                                    <Text style={[styles.tileLabel, { color: themeColors.mutedText }]}>FT OVER / UNDER ({match.detailedOdds.ft.ou.line})</Text>
-                                    <View style={styles.oddsRow}>
-                                        <View style={styles.oddsCell}>
-                                            <Text style={[styles.oddsVal, { color: themeColors.text }]}>{match.detailedOdds.ft.ou.over}</Text>
-                                            <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>OVER</Text>
-                                        </View>
-                                        <View style={[styles.oddsDivider, { backgroundColor: themeColors.border }]} />
-                                        <View style={styles.oddsCell}>
-                                            <Text style={[styles.oddsVal, { color: themeColors.text }]}>{match.detailedOdds.ft.ou.under}</Text>
-                                            <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>UNDER</Text>
-                                        </View>
-                                    </View>
-                                </View>
-                            )}
-
-                            {/* FT AH */}
-                            {match.detailedOdds.ft?.ah && (
-                                <View style={[styles.oddsTile, { backgroundColor: themeColors.surface }]}>
-                                    <Text style={[styles.tileLabel, { color: themeColors.mutedText }]}>FT ASIAN HANDICAP ({match.detailedOdds.ft.ah.line})</Text>
-                                    <View style={styles.oddsRow}>
-                                        <View style={styles.oddsCell}>
-                                            <Text style={[styles.oddsVal, { color: themeColors.text }]}>{match.detailedOdds.ft.ah.home}</Text>
-                                            <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>HOME</Text>
-                                        </View>
-                                        <View style={[styles.oddsDivider, { backgroundColor: themeColors.border }]} />
-                                        <View style={styles.oddsCell}>
-                                            <Text style={[styles.oddsVal, { color: themeColors.text }]}>{match.detailedOdds.ft.ah.away}</Text>
-                                            <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>AWAY</Text>
-                                        </View>
-                                    </View>
-                                </View>
-                            )}
-
-                            {/* HT 1X2 */}
-                            {match.detailedOdds.ht?.['1x2'] && (match.detailedOdds.ht['1x2'].home || match.detailedOdds.ht['1x2'].draw || match.detailedOdds.ht['1x2'].away) && (
-                                <View style={[styles.oddsTile, { backgroundColor: themeColors.surface }]}>
-                                    <Text style={[styles.tileLabel, { color: themeColors.mutedText }]}>HALF TIME 1X2</Text>
-                                    <View style={styles.oddsRow}>
-                                        <View style={styles.oddsCell}>
-                                            <Text style={[styles.oddsVal, { color: themeColors.accent }]}>{match.detailedOdds.ht['1x2'].home || '—'}</Text>
-                                            <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>HOME</Text>
-                                        </View>
-                                        <View style={[styles.oddsDivider, { backgroundColor: themeColors.border }]} />
-                                        <View style={styles.oddsCell}>
-                                            <Text style={[styles.oddsVal, { color: themeColors.text }]}>{match.detailedOdds.ht['1x2'].draw || '—'}</Text>
-                                            <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>DRAW</Text>
-                                        </View>
-                                        <View style={[styles.oddsDivider, { backgroundColor: themeColors.border }]} />
-                                        <View style={styles.oddsCell}>
-                                            <Text style={[styles.oddsVal, { color: themeColors.text }]}>{match.detailedOdds.ht['1x2'].away || '—'}</Text>
-                                            <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>AWAY</Text>
-                                        </View>
-                                    </View>
-                                </View>
-                            )}
-                        </View>
-                    </View>
-                )}
-
-                {/* Bookmaker Odds Comparison */}
-                {match.oddsComparison && match.oddsComparison.length > 0 && (
-                    <View style={styles.outerPad}>
-                        <Text style={[styles.sectionLabel, { color: themeColors.mutedText }]}>ODDS COMPARISON</Text>
-                        <View style={styles.oddsGrid}>
-                            {match.oddsComparison.map((m, i: number) => (
-                                <View key={i} style={[styles.oddsTile, { backgroundColor: themeColors.surface }]}>
-                                    <Text style={[styles.tileLabel, { color: themeColors.mutedText }]}>{m.market.toUpperCase()}</Text>
-                                    {m.selections.map((sel, j: number) => {
-                                        const vals = sel.odds.map((o) => parseFloat(o.value)).filter((n: number) => !isNaN(n));
-                                        const best = vals.length ? Math.max(...vals) : null;
-                                        return (
-                                            <View key={j} style={styles.ocRow}>
-                                                <Text style={[styles.ocSelection, { color: themeColors.text }]} numberOfLines={2}>{sel.name}</Text>
-                                                <ScrollView
-                                                    horizontal
-                                                    showsHorizontalScrollIndicator={false}
-                                                    style={styles.ocScrollWrap}
-                                                    contentContainerStyle={styles.ocScroll}
-                                                >
-                                                    {sel.odds.map((o, k: number) => {
-                                                        const isBest = best !== null && parseFloat(o.value) === best;
-                                                        return (
-                                                            <View
-                                                                key={k}
-                                                                style={[
-                                                                    styles.ocChip,
-                                                                    { backgroundColor: themeColors.surfaceElevated, borderColor: 'transparent' },
-                                                                    isBest && { backgroundColor: `${themeColors.accent}1A`, borderColor: themeColors.accent },
-                                                                ]}
-                                                            >
-                                                                <Text style={[styles.ocBookie, { color: themeColors.mutedText }]} numberOfLines={1}>{o.bookie}</Text>
-                                                                <Text style={[styles.ocValue, { color: isBest ? themeColors.accent : themeColors.text }]}>{o.value}</Text>
-                                                            </View>
-                                                        );
-                                                    })}
-                                                </ScrollView>
-                                            </View>
-                                        );
-                                    })}
-                                </View>
-                            ))}
-                        </View>
-                    </View>
-                )}
-
-                {/* H2H Summary */}
-                {match.h2h?.summary && (
-                    <View style={styles.outerPad}>
-                        <Text style={[styles.sectionLabel, { color: themeColors.mutedText }]}>HEAD TO HEAD</Text>
-                        <View style={[styles.h2hCard, { backgroundColor: themeColors.surface }]}>
-                            <View style={styles.h2hRow}>
-                                <View style={styles.h2hStat}>
-                                    <Text style={[styles.h2hVal, { color: themeColors.accent }]}>{match.h2h.summary.wins}</Text>
-                                    <Text style={[styles.h2hLabel, { color: themeColors.mutedText }]}>HOME WINS</Text>
-                                </View>
-                                <View style={styles.h2hStat}>
-                                    <Text style={[styles.h2hVal, { color: themeColors.text }]}>{match.h2h.summary.draws}</Text>
-                                    <Text style={[styles.h2hLabel, { color: themeColors.mutedText }]}>DRAWS</Text>
-                                </View>
-                                <View style={styles.h2hStat}>
-                                    <Text style={[styles.h2hVal, { color: themeColors.text }]}>{match.h2h.summary.losses}</Text>
-                                    <Text style={[styles.h2hLabel, { color: themeColors.mutedText }]}>AWAY WINS</Text>
-                                </View>
-                            </View>
-                            {/* Visual bar */}
-                            <View style={styles.h2hBar}>
-                                <View style={[styles.h2hBarSegment, {
-                                    backgroundColor: themeColors.accent,
-                                    flex: match.h2h.summary.wins || 1,
-                                }]} />
-                                <View style={[styles.h2hBarSegment, {
-                                    backgroundColor: themeColors.border,
-                                    flex: match.h2h.summary.draws || 1,
-                                }]} />
-                                <View style={[styles.h2hBarSegment, {
-                                    backgroundColor: themeColors.mutedText,
-                                    flex: match.h2h.summary.losses || 1,
-                                }]} />
-                            </View>
-                        </View>
-                    </View>
-                )}
-
-                {/* H2H History */}
-                {match.h2h?.history && match.h2h.history.length > 0 && (
-                    <View style={styles.outerPad}>
-                        <Text style={[styles.sectionLabel, { color: themeColors.mutedText }]}>H2H HISTORY</Text>
-                        <View style={[styles.h2hHistoryCard, { backgroundColor: themeColors.surface }]}>
-                            {match.h2h.history.map((h, i: number) => (
-                                <View key={i} style={[styles.h2hHistoryRow, i < match.h2h!.history!.length - 1 && { borderBottomWidth: 1, borderBottomColor: themeColors.border }]}>
-                                    <View style={styles.h2hHistoryLeft}>
-                                        <Text style={[styles.h2hHistoryLeague, { color: themeColors.mutedText }]}>{h.league}</Text>
-                                        <Text style={[styles.h2hHistoryTeams, { color: themeColors.text }]}>{h.home} vs {h.away}</Text>
-                                    </View>
-                                    <View style={styles.h2hHistoryRight}>
-                                        <Text style={[styles.h2hHistoryScore, { color: themeColors.accent }]}>{h.score}</Text>
-                                        <Text style={[styles.h2hHistoryDate, { color: themeColors.mutedText }]}>{h.date}</Text>
-                                    </View>
-                                </View>
-                            ))}
-                        </View>
-                    </View>
-                )}
-
-                {/* Team Form */}
-                {(match.homeForm || match.awayForm) && (
-                    <View style={styles.outerPad}>
-                        <Text style={[styles.sectionLabel, { color: themeColors.mutedText }]}>RECENT FORM</Text>
-                        <View style={[styles.formCard, { backgroundColor: themeColors.surface }]}>
-                            {match.homeForm && (
-                                <View style={styles.formRow}>
-                                    <Text style={[styles.formTeam, { color: themeColors.text }]}>{match.homeTeam}</Text>
-                                    <View style={styles.formStreak}>
-                                        {match.homeForm.split('').slice(0, 5).map((char: string, i: number) => (
-                                            <View key={i} style={[styles.formBadge, {
-                                                backgroundColor: char === 'W' ? themeColors.success : char === 'D' ? themeColors.orange9 : themeColors.danger
-                                            }]}>
-                                                <Text style={styles.formBadgeText}>{char}</Text>
-                                            </View>
-                                        ))}
-                                    </View>
-                                </View>
-                            )}
-                            {match.awayForm && (
-                                <View style={[styles.formRow, match.homeForm && { borderTopWidth: 1, borderTopColor: themeColors.border, paddingTop: 12, marginTop: 12 }]}>
-                                    <Text style={[styles.formTeam, { color: themeColors.text }]}>{match.awayTeam}</Text>
-                                    <View style={styles.formStreak}>
-                                        {match.awayForm.split('').slice(0, 5).map((char: string, i: number) => (
-                                            <View key={i} style={[styles.formBadge, {
-                                                backgroundColor: char === 'W' ? themeColors.success : char === 'D' ? themeColors.orange9 : themeColors.danger
-                                            }]}>
-                                                <Text style={styles.formBadgeText}>{char}</Text>
-                                            </View>
-                                        ))}
-                                    </View>
-                                </View>
-                            )}
-                        </View>
-                    </View>
-                )}
-
-                {/* Lineups */}
-                {((match.homeLineup?.length ?? 0) > 0 || (match.awayLineup?.length ?? 0) > 0) && (
-                    <View style={styles.outerPad}>
-                        <Text style={[styles.sectionLabel, { color: themeColors.mutedText }]}>STARTING LINEUPS</Text>
-                        <View style={[styles.lineupCard, { backgroundColor: themeColors.surface }]}>
-                            <View style={styles.lineupCols}>
-                                <View style={styles.lineupCol}>
-                                    <Text style={[styles.lineupTeam, { color: themeColors.accent }]} numberOfLines={1}>{match.homeTeam}</Text>
-                                    {(match.homeLineup || []).map((p, i: number) => (
-                                        <Text key={i} style={[styles.lineupPlayer, { color: themeColors.text }]} numberOfLines={1}>
-                                            {p.number ? `${p.number}. ` : ''}{p.name}
-                                        </Text>
-                                    ))}
-                                </View>
-                                <View style={[styles.lineupDivider, { backgroundColor: themeColors.border }]} />
-                                <View style={styles.lineupCol}>
-                                    <Text style={[styles.lineupTeam, { color: themeColors.text }]} numberOfLines={1}>{match.awayTeam}</Text>
-                                    {(match.awayLineup || []).map((p, i: number) => (
-                                        <Text key={i} style={[styles.lineupPlayer, { color: themeColors.text }]} numberOfLines={1}>
-                                            {p.number ? `${p.number}. ` : ''}{p.name}
-                                        </Text>
-                                    ))}
-                                </View>
-                            </View>
-                        </View>
-                    </View>
-                )}
-
-                {/* Expected Goals (xG) */}
-                {(match.homeXg !== undefined || match.awayXg !== undefined) && (
-                    <View style={styles.outerPad}>
-                        <Text style={[styles.sectionLabel, { color: themeColors.mutedText }]}>EXPECTED GOALS (xG)</Text>
-                        <View style={[styles.xgCard, { backgroundColor: themeColors.surface }]}>
-                            <Text style={[styles.xgVal, { color: themeColors.accent }]}>{(match.homeXg ?? 0).toFixed(2)}</Text>
-                            <Text style={[styles.xgLabel, { color: themeColors.mutedText }]}>xG</Text>
-                            <Text style={[styles.xgVal, { color: themeColors.text }]}>{(match.awayXg ?? 0).toFixed(2)}</Text>
-                        </View>
-                    </View>
-                )}
-
-                {/* Match Stats (possession, shots, etc.) */}
-                {match.stats && match.stats.length > 0 && (
-                    <View style={styles.outerPad}>
-                        <Text style={[styles.sectionLabel, { color: themeColors.mutedText }]}>MATCH STATS</Text>
-                        <View style={[styles.statsCard, { backgroundColor: themeColors.surface }]}>
-                            {match.stats.map((s, i: number) => {
-                                const total = (s.home + s.away) || 1;
-                                const homePct = Math.round((s.home / total) * 100);
-                                return (
-                                    <View key={i} style={styles.statBlock}>
-                                        <View style={styles.statValues}>
-                                            <Text style={[styles.statNum, { color: themeColors.text }]}>{s.home}{s.percent ? '%' : ''}</Text>
-                                            <Text style={[styles.statLabel, { color: themeColors.mutedText }]}>{s.label}</Text>
-                                            <Text style={[styles.statNum, { color: themeColors.text }]}>{s.away}{s.percent ? '%' : ''}</Text>
-                                        </View>
-                                        <View style={[styles.statBarTrack, { backgroundColor: themeColors.surfaceElevated }]}>
-                                            <View style={[styles.statBarFill, { width: `${homePct}%`, backgroundColor: themeColors.accent }]} />
-                                        </View>
-                                    </View>
-                                );
-                            })}
-                        </View>
-                    </View>
-                )}
-
-                {/* Goal Timeline */}
-                {match.goals && match.goals.length > 0 && (
-                    <View style={styles.outerPad}>
-                        <Text style={[styles.sectionLabel, { color: themeColors.mutedText }]}>GOALS</Text>
-                        <View style={[styles.timelineCard, { backgroundColor: themeColors.surface }]}>
-                            {match.goals.map((g, i: number) => (
-                                <View key={i} style={[styles.goalRow, g.team === 'away' && styles.goalRowAway]}>
-                                    <Goal size={14} color={themeColors.accent} />
-                                    <View style={[styles.goalInfo, g.team === 'away' && { alignItems: 'flex-end' }]}>
-                                        <Text style={[styles.goalScorer, { color: themeColors.text }]}>{g.scorer} {g.time}'</Text>
-                                        {g.assist && (
-                                            <Text style={[styles.goalAssist, { color: themeColors.mutedText }]}>assist: {g.assist}</Text>
-                                        )}
-                                    </View>
-                                </View>
-                            ))}
-                        </View>
-                    </View>
-                )}
-
-                {/* Corner Stats */}
-                {(match.homeCorners !== undefined || match.awayCorners !== undefined) && (
-                    <View style={styles.outerPad}>
-                        <Text style={[styles.sectionLabel, { color: themeColors.mutedText }]}>CORNER STATS</Text>
-                        <View style={[styles.infoCard, { backgroundColor: themeColors.surface }]}>
-                            <View style={styles.infoRow}>
-                                <Text style={[styles.infoKey, { color: themeColors.mutedText }]}>{match.homeTeam}</Text>
-                                <Text style={[styles.infoVal, { color: themeColors.text }]}>{match.homeCorners ?? 0}</Text>
-                            </View>
-                            <View style={[styles.infoRow, { borderTopWidth: 1, borderTopColor: themeColors.border, paddingTop: 12 }]}>
-                                <Text style={[styles.infoKey, { color: themeColors.mutedText }]}>{match.awayTeam}</Text>
-                                <Text style={[styles.infoVal, { color: themeColors.text }]}>{match.awayCorners ?? 0}</Text>
-                            </View>
-                        </View>
-                    </View>
-                )}
-
-                {/* Match Info */}
-                {(match.stadium || match.attendance || (match.tvStations?.length ?? 0) > 0 || match.referee || match.weather) && (
-                    <View style={styles.outerPad}>
-                        <Text style={[styles.sectionLabel, { color: themeColors.mutedText }]}>MATCH INFO</Text>
-                        <View style={[styles.infoCard, { backgroundColor: themeColors.surface }]}>
-                            {match.stadium && (
-                                <View style={styles.infoRow}>
-                                    <Text style={[styles.infoKey, { color: themeColors.mutedText }]}>VENUE</Text>
-                                    <Text style={[styles.infoVal, { color: themeColors.text }]} numberOfLines={1}>{match.stadium}</Text>
-                                </View>
-                            )}
-                            {match.attendance && (
-                                <View style={styles.infoRow}>
-                                    <Text style={[styles.infoKey, { color: themeColors.mutedText }]}>ATTENDANCE</Text>
-                                    <Text style={[styles.infoVal, { color: themeColors.text }]}>{match.attendance.toLocaleString()}</Text>
-                                </View>
-                            )}
-                            {match.tvStations && match.tvStations.length > 0 && (
-                                <View style={styles.infoRow}>
-                                    <Text style={[styles.infoKey, { color: themeColors.mutedText }]}>TV</Text>
-                                    <Text style={[styles.infoVal, { color: themeColors.text }]} numberOfLines={1}>{match.tvStations.join(', ')}</Text>
-                                </View>
-                            )}
-                            {match.referee && (
-                                <View style={styles.infoRow}>
-                                    <Text style={[styles.infoKey, { color: themeColors.mutedText }]}>REFEREE</Text>
-                                    <Text style={[styles.infoVal, { color: themeColors.text }]}>{match.referee}</Text>
-                                </View>
-                            )}
-                            {match.weather && (
-                                <View style={styles.infoRow}>
-                                    <Text style={[styles.infoKey, { color: themeColors.mutedText }]}>WEATHER</Text>
-                                    <Text style={[styles.infoVal, { color: themeColors.text }]}>{match.weather}</Text>
-                                </View>
-                            )}
-                        </View>
-                    </View>
-                )}
-
-            </ScrollView>
-        </SafeAreaView>
+            ) : null}
+        </View>
     );
 }
 
+function SectionTitle({ Icon, title, color }: { Icon: LucideIcon; title: string; color?: string }) {
+    const { themeColors } = useTheme();
+    return (
+        <View style={sectionTitleStyles.row}>
+            <Icon size={14} color={color ?? themeColors.accent} />
+            <Text style={[sectionTitleStyles.text, { color: themeColors.text }]}>{title}</Text>
+        </View>
+    );
+}
+
+const sectionTitleStyles = StyleSheet.create({
+    row: { flexDirection: 'row', alignItems: 'center', gap: 8, marginVertical: 14 },
+    text: { fontSize: 13, fontWeight: '700', letterSpacing: 0.5 },
+});
+
+function LockedPickCard({ lockTier, onUnlock }: { lockTier: string; onUnlock: () => void }) {
+    const { themeColors } = useTheme();
+    const styles = getStyles(themeColors);
+    return (
+        <View style={styles.pickCard}>
+            <View style={styles.pickHeader}>
+                <Lock size={18} color={themeColors.accent} />
+                <Text style={[styles.pickCardTitle, { color: themeColors.text }]}>{textFor('matchDetail.lockedTitle', 'Prediction locked')}</Text>
+            </View>
+            <AnimatedPulse
+                style={[styles.unlockBtn, { backgroundColor: themeColors.accent }]}
+                onPress={onUnlock}
+                accessibilityRole="button"
+            >
+                <Text style={[styles.unlockBtnText, { color: themeColors.accentText }]}>
+                    {lockTier === 'vip' ? textFor('matchDetail.unlockVip', 'Unlock with VIP') : textFor('matchDetail.unlockPremium', 'Unlock with Premium')}
+                </Text>
+            </AnimatedPulse>
+        </View>
+    );
+}
+
+function PickCard({
+    pickText,
+    confidence,
+    risk,
+    riskColor,
+    suggestedBet,
+    oddValues,
+}: {
+    pickText: string | undefined;
+    confidence: number | undefined;
+    risk: Risk;
+    riskColor: string;
+    suggestedBet?: string;
+    oddValues: { label: string; value?: string }[];
+}) {
+    const { themeColors } = useTheme();
+    const styles = getStyles(themeColors);
+
+    const listedOdds = oddValues.filter((v) => v.value !== undefined);
+
+    return (
+        <View style={[styles.pickCard, { backgroundColor: themeColors.surface, borderColor: themeColors.border }]}>
+            <SectionTitle Icon={TrendingUp} title={textFor('matchDetail.pick', 'Pick')} color={themeColors.accent} />
+            <Text style={[styles.pickValue, { color: themeColors.text }]} numberOfLines={3}>
+                {pickText}
+            </Text>
+            {suggestedBet ? (
+                <Text style={[styles.suggestedChipText, { color: themeColors.accent }]}>
+                    {`${textFor('matchDetail.suggestedBet', 'Suggested bet')}: ${suggestedBet}`}
+                </Text>
+            ) : null}
+
+            <View style={styles.confidenceWrap}>
+                <Text style={[styles.fieldLabel, { color: themeColors.mutedText }]}>{textFor('matchDetail.confidence', 'Confidence')}</Text>
+                <AnimatedBar value={confidence ?? 0} height={8} radius={4} color={themeColors.accent} trackColor={themeColors.surfaceElevated} />
+                <Text style={[styles.pctText, { color: themeColors.text }]}>
+                    {confidence !== undefined ? `${confidence}%` : '—'}
+                </Text>
+            </View>
+
+            <View style={styles.riskRow}>
+                <Text style={[styles.fieldLabel, { color: themeColors.mutedText }]}>{textFor('matchDetail.risk', 'Risk')}</Text>
+                <View style={[styles.riskBadge, { backgroundColor: `${riskColor}22`, borderColor: `${riskColor}55` }]}>
+                    <Text style={[styles.riskBadgeText, { color: riskColor }]}>{risk ? textFor(`risk.${risk}`, risk) : '—'}</Text>
+                </View>
+            </View>
+
+            {listedOdds.length > 0 ? (
+                <View style={styles.oddsRow}>
+                    {listedOdds.map((v, i) => (
+                        <Text key={i} style={[styles.oddsStaticVal, i === 0 ? { color: themeColors.accent } : { color: themeColors.text }]}>
+                            {v.value}
+                        </Text>
+                    ))}
+                </View>
+            ) : null}
+        </View>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Extras grid
+// ---------------------------------------------------------------------------
+
+interface ExtraRow {
+    key: string;
+    Icon: LucideIcon;
+    label: string;
+    full?: boolean;
+    content?: React.ReactNode;
+}
+
+function ExtraFields({ match }: { match: MatchViewModel }) {
+    const rows = buildExtraRows(match);
+    const { themeColors } = useTheme();
+    const styles = getStyles(themeColors);
+    if (rows.length === 0) return null;
+
+    const renderCard = (row: ExtraRow) => (
+        <View key={row.key} style={[styles.extraCard, row.full ? styles.extraCardFull : styles.extraCardCol, { backgroundColor: themeColors.surface }]}>
+            <SectionTitle Icon={row.Icon} title={row.label} color={themeColors.accent} />
+            {row.content}
+        </View>
+    );
+
+    // Two-column grid: non-full rows in pairs, full-width rows below.
+    const gridRows = rows.filter((r) => !r.full);
+    const fullRows = rows.filter((r) => r.full);
+    const pairs: ({ left?: ExtraRow; right?: ExtraRow })[] = [];
+    for (let i = 0; i < gridRows.length; i += 2) {
+        pairs.push({ left: gridRows[i], right: gridRows[i + 1] });
+    }
+
+    return (
+        <View style={styles.extraGrid}>
+            {pairs.map((pair, i) => (
+                <View key={i} style={styles.extraPair}>
+                    {pair.left ? renderCard(pair.left) : <View style={styles.extraCol} />}
+                    {pair.right ? renderCard(pair.right) : <View style={styles.extraCol} />}
+                </View>
+            ))}
+            {fullRows.map((row) => renderCard(row))}
+        </View>
+    );
+}
+
+function FormBadge({ char, themeColors }: { char: string; themeColors: ThemeColors }) {
+    const styles = getStyles(themeColors);
+    const color = char === 'W' ? themeColors.success : char === 'D' ? themeColors.warning : themeColors.danger;
+    return (
+        <View style={[styles.formBadge, { backgroundColor: color }]}>
+            <Text style={styles.formBadgeText}>{char}</Text>
+        </View>
+    );
+}
+
+function buildExtraRows(match: MatchViewModel): ExtraRow[] {
+    const rows: ExtraRow[] = [];
+    const { themeColors } = useTheme();
+    const styles = getStyles(themeColors);
+
+    if (match.potentials && match.potentials.length > 0) {
+        rows.push({
+            key: 'potentials',
+            Icon: ChartBar,
+            label: textFor('matchDetail.potentials', 'Predicted probabilities'),
+            full: true,
+            content: (
+                <View style={styles.extraList}>
+                    {match.potentials.map((p, i) => (
+                        <View key={i} style={styles.extraListItem}>
+                            <Text style={[styles.potentialLabel, { color: themeColors.text }]} numberOfLines={1}>{p.label}</Text>
+                            <View style={[styles.potentialTrack, { backgroundColor: themeColors.surfaceElevated }]}>
+                                <AnimatedBar value={p.percent ?? 0} height={8} radius={4} color={themeColors.accent} />
+                            </View>
+                            <Text style={[styles.pctText, { color: themeColors.text }]}>{p.percent !== undefined ? `${p.percent}%` : p.value}</Text>
+                        </View>
+                    ))}
+                </View>
+            ),
+        });
+    }
+
+    const h2h = match.h2h;
+    if (h2h?.summary) {
+        const s = h2h.summary;
+        rows.push({
+            key: 'h2h-summary',
+            Icon: Flag,
+            label: textFor('matchDetail.h2hSummary', 'Head to head'),
+            content: (
+                <View style={styles.h2hRow}>
+                    <View style={styles.h2hStat}>
+                        <Text style={[styles.h2hVal, { color: themeColors.accent }]}>{s.wins}</Text>
+                        <Text style={[styles.h2hLabel, { color: themeColors.mutedText }]}>{textFor('matchDetail.homeWins', 'HOME WINS')}</Text>
+                    </View>
+                    <View style={styles.h2hStat}>
+                        <Text style={[styles.h2hVal, { color: themeColors.text }]}>{s.draws}</Text>
+                        <Text style={[styles.h2hLabel, { color: themeColors.mutedText }]}>{textFor('matchDetail.draws', 'DRAWS')}</Text>
+                    </View>
+                    <View style={styles.h2hStat}>
+                        <Text style={[styles.h2hVal, { color: themeColors.text }]}>{s.losses}</Text>
+                        <Text style={[styles.h2hLabel, { color: themeColors.mutedText }]}>{textFor('matchDetail.awayWins', 'AWAY WINS')}</Text>
+                    </View>
+                </View>
+            ),
+        });
+    }
+
+    if (match.homeForm) {
+        rows.push({
+            key: 'form-home',
+            Icon: Goal,
+            label: `${match.homeTeam} — ${textFor('matchDetail.form', 'Recent form')}`,
+            content: <FormStreak form={match.homeForm} />,
+        });
+    }
+    if (match.awayForm) {
+        rows.push({
+            key: 'form-away',
+            Icon: Goal,
+            label: `${match.awayTeam} — ${textFor('matchDetail.form', 'Recent form')}`,
+            content: <FormStreak form={match.awayForm} />,
+        });
+    }
+
+    if (match.homeXg !== undefined || match.awayXg !== undefined) {
+        rows.push({
+            key: 'xg',
+            Icon: TrendingUp,
+            label: textFor('matchDetail.xg', 'Expected goals (xG)'),
+            content: (
+                <View style={styles.xgRow}>
+                    <Text style={[styles.xgVal, { color: themeColors.accent }]}>{(match.homeXg ?? 0).toFixed(2)}</Text>
+                    <Text style={[styles.xgLabel, { color: themeColors.mutedText }]}>{textFor('matchDetail.home', 'HOME')}</Text>
+                    <Text style={[styles.xgVal, { color: themeColors.text }]}>{(match.awayXg ?? 0).toFixed(2)}</Text>
+                    <Text style={[styles.xgLabel, { color: themeColors.mutedText }]}>{textFor('matchDetail.away', 'AWAY')}</Text>
+                </View>
+            ),
+        });
+    }
+
+    if (h2h?.history && h2h.history.length > 0) {
+        rows.push({
+            key: 'h2h-history',
+            Icon: Flag,
+            label: textFor('matchDetail.h2hHistory', 'H2H HISTORY'),
+            full: true,
+            content: (
+                <View style={styles.h2hHistoryCard}>
+                    {h2h.history.map((h, i) => (
+                        <View key={i} style={[styles.h2hHistoryRow, i > 0 && { borderTopWidth: 1, borderTopColor: themeColors.border }]}>
+                            <View style={styles.h2hHistoryLeft}>
+                                <Text style={[styles.h2hHistoryLeague, { color: themeColors.mutedText }]}>{h.league}</Text>
+                                <Text style={[styles.h2hHistoryTeams, { color: themeColors.text }]}>{h.home} vs {h.away}</Text>
+                            </View>
+                            <View style={styles.h2hHistoryRight}>
+                                <Text style={[styles.h2hHistoryScore, { color: themeColors.accent }]}>{h.score}</Text>
+                                <Text style={[styles.h2hHistoryDate, { color: themeColors.mutedText }]}>{h.date}</Text>
+                            </View>
+                        </View>
+                    ))}
+                </View>
+            ),
+        });
+    }
+
+    if (match.homeLineup || match.awayLineup) {
+        rows.push({
+            key: 'lineups',
+            Icon: Zap,
+            label: textFor('matchDetail.lineups', 'Starting lineups'),
+            full: true,
+            content: (
+                <View style={styles.lineupCols}>
+                    <View style={styles.lineupCol}>
+                        <Text style={[styles.lineupTeam, { color: themeColors.accent }]} numberOfLines={1}>{match.homeTeam}</Text>
+                        {(match.homeLineup || []).map((p, i) => (
+                            <Text key={i} style={[styles.lineupPlayer, { color: themeColors.text }]} numberOfLines={1}>
+                                {p.number ? `${p.number}. ` : ''}{p.name}
+                            </Text>
+                        ))}
+                    </View>
+                    <View style={styles.lineupDivider} />
+                    <View style={styles.lineupCol}>
+                        <Text style={[styles.lineupTeam, { color: themeColors.text }]} numberOfLines={1}>{match.awayTeam}</Text>
+                        {(match.awayLineup || []).map((p, i) => (
+                            <Text key={i} style={[styles.lineupPlayer, { color: themeColors.text }]} numberOfLines={1}>
+                                {p.number ? `${p.number}. ` : ''}{p.name}
+                            </Text>
+                        ))}
+                    </View>
+                </View>
+            ),
+        });
+    }
+
+    if (match.stats && match.stats.length > 0) {
+        rows.push({
+            key: 'stats',
+            Icon: ChartBar,
+            label: textFor('matchDetail.matchStats', 'Match stats'),
+            full: true,
+            content: (
+                <View style={styles.statsCard}>
+                    {match.stats.map((s, i) => {
+                        const total = (s.home + s.away) || 1;
+                        const homePct = Math.round((s.home / total) * 100);
+                        return (
+                            <View key={i} style={styles.statBlock}>
+                                <View style={styles.statValues}>
+                                    <Text style={[styles.statNum, { color: themeColors.text }]}>{s.home}{s.percent ? '%' : ''}</Text>
+                                    <Text style={[styles.statLabel, { color: themeColors.mutedText }]}>{s.label}</Text>
+                                    <Text style={[styles.statNum, { color: themeColors.text }]}>{s.away}{s.percent ? '%' : ''}</Text>
+                                </View>
+                                <AnimatedBar value={homePct} height={6} radius={3} color={themeColors.accent} trackColor={themeColors.surfaceElevated} />
+                            </View>
+                        );
+                    })}
+                </View>
+            ),
+        });
+    }
+
+    if (match.homeCorners !== undefined || match.awayCorners !== undefined) {
+        rows.push({
+            key: 'corners',
+            Icon: Goal,
+            label: textFor('matchDetail.cornerStats', 'Corner stats'),
+            content: (
+                <View style={styles.h2hRow}>
+                    <View style={styles.h2hStat}>
+                        <Text style={[styles.h2hVal, { color: themeColors.accent }]}>{match.homeCorners ?? 0}</Text>
+                        <Text style={[styles.h2hLabel, { color: themeColors.mutedText }]}>{match.homeTeam}</Text>
+                    </View>
+                    <View style={styles.h2hStat}>
+                        <Text style={[styles.h2hVal, { color: themeColors.text }]}>{match.awayCorners ?? 0}</Text>
+                        <Text style={[styles.h2hLabel, { color: themeColors.mutedText }]}>{match.awayTeam}</Text>
+                    </View>
+                </View>
+            ),
+        });
+    }
+
+    return rows;
+}
+
+function FormStreak({ form }: { form: string }) {
+    const { themeColors } = useTheme();
+    const styles = getStyles(themeColors);
+    return (
+        <View style={styles.streakRow}>
+            {form.split('').slice(0, 5).map((char, i) => (
+                <FormBadge key={i} char={char} themeColors={themeColors} />
+            ))}
+        </View>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Odds tab
+// ---------------------------------------------------------------------------
+
+function OddsContent({ match }: { match: MatchViewModel }) {
+    const { themeColors } = useTheme();
+    const styles = getStyles(themeColors);
+    const dOdds = match.detailedOdds;
+
+    const values1x2 = ['home', 'draw', 'away'] as const;
+    const cellValue = (val: string | undefined) => val || '—';
+
+    return (
+        <View style={styles.oddsTab}>
+            {dOdds && (
+                <View style={styles.oddsGrid}>
+                    <View style={[styles.oddsTile, { backgroundColor: themeColors.surface }]}>
+                        <Text style={[styles.tileLabel, { color: themeColors.mutedText }]}>{textFor('matchDetail.fullTime12', 'FULL TIME 1X2')}</Text>
+                        <View style={styles.oddsRow}>
+                            {values1x2.map((side, i) => (
+                                <View key={side} style={styles.oddsCell}>
+                                    <Text style={[styles.oddsVal, { color: themeColors.text }]}>{cellValue(dOdds.ft?.['1x2']?.[side])}</Text>
+                                    <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>
+                                        {side === 'home' ? textFor('matchDetail.home', 'HOME') : side === 'draw' ? textFor('matchDetail.draw', 'DRAW') : textFor('matchDetail.away', 'AWAY')}
+                                    </Text>
+                                    {i < 2 ? <View style={styles.oddsDivider} /> : null}
+                                </View>
+                            ))}
+                        </View>
+                    </View>
+                    {dOdds.ft?.ou && (
+                        <View style={[styles.oddsTile, { backgroundColor: themeColors.surface }]}>
+                            <Text style={[styles.tileLabel, { color: themeColors.mutedText }]}>{textFor('matchDetail.overUnder', 'GOALS OVER / UNDER')}</Text>
+                            <View style={styles.oddsRow}>
+                                <View style={styles.oddsCell}>
+                                    <Text style={[styles.oddsVal, { color: themeColors.accent }]}>{cellValue(dOdds.ft.ou.over)}</Text>
+                                    <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>{textFor('matchDetail.over', 'OVER')} {dOdds.ft.ou.line}</Text>
+                                </View>
+                                <View style={[styles.oddsDivider, { backgroundColor: themeColors.border }]} />
+                                <View style={styles.oddsCell}>
+                                    <Text style={[styles.oddsVal, { color: themeColors.text }]}>{cellValue(dOdds.ft.ou.under)}</Text>
+                                    <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>{textFor('matchDetail.under', 'UNDER')} {dOdds.ft.ou.line}</Text>
+                                </View>
+                            </View>
+                        </View>
+                    )}
+                    {dOdds.ft?.ah && (
+                        <View style={[styles.oddsTile, { backgroundColor: themeColors.surface }]}>
+                            <Text style={[styles.tileLabel, { color: themeColors.mutedText }]}>{textFor('matchDetail.asianHandicap', 'FT ASIAN HANDICAP')}</Text>
+                            <View style={styles.oddsRow}>
+                                <View style={styles.oddsCell}>
+                                    <Text style={[styles.oddsVal, { color: themeColors.accent }]}>{cellValue(dOdds.ft.ah.home)}</Text>
+                                    <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>{textFor('matchDetail.home', 'HOME')}</Text>
+                                </View>
+                                <View style={[styles.oddsDivider, { backgroundColor: themeColors.border }]} />
+                                <View style={styles.oddsCell}>
+                                    <Text style={[styles.oddsVal, { color: themeColors.text }]}>{cellValue(dOdds.ft.ah.away)}</Text>
+                                    <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>{textFor('matchDetail.away', 'AWAY')}</Text>
+                                </View>
+                            </View>
+                        </View>
+                    )}
+                    {dOdds.ht?.['1x2'] && (
+                        <View style={[styles.oddsTile, { backgroundColor: themeColors.surface }]}>
+                            <Text style={[styles.tileLabel, { color: themeColors.mutedText }]}>{textFor('matchDetail.halfTime12', 'HALF TIME 1X2')}</Text>
+                            <View style={styles.oddsRow}>
+                                <View style={styles.oddsCell}>
+                                    <Text style={[styles.oddsVal, { color: themeColors.accent }]}>{cellValue(dOdds.ht['1x2'].home)}</Text>
+                                    <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>{textFor('matchDetail.home', 'HOME')}</Text>
+                                </View>
+                                <View style={[styles.oddsDivider, { backgroundColor: themeColors.border }]} />
+                                <View style={styles.oddsCell}>
+                                    <Text style={[styles.oddsVal, { color: themeColors.text }]}>{cellValue(dOdds.ht['1x2'].draw)}</Text>
+                                    <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>{textFor('matchDetail.draw', 'DRAW')}</Text>
+                                </View>
+                                <View style={[styles.oddsDivider, { backgroundColor: themeColors.border }]} />
+                                <View style={styles.oddsCell}>
+                                    <Text style={[styles.oddsVal, { color: themeColors.text }]}>{cellValue(dOdds.ht['1x2'].away)}</Text>
+                                    <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>{textFor('matchDetail.away', 'AWAY')}</Text>
+                                </View>
+                            </View>
+                        </View>
+                    )}
+                </View>
+            )}
+        </View>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Styles
+// ---------------------------------------------------------------------------
+
 function getStyles(themeColors: ThemeColors) {
     return StyleSheet.create({
-    container: { flex: 1 },
-    scrollContent: { paddingBottom: 48 },
+        // Shell
+        container: { flex: 1 },
+        headerBg: {
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            height: 200,
+            borderBottomLeftRadius: 20,
+            borderBottomRightRadius: 20,
+            zIndex: -1,
+        },
+        headerFade: {
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            height: 200,
+            opacity: 0.55,
+            zIndex: -1,
+        },
+        headerAwayBlend: {
+            position: 'absolute',
+            top: 0,
+            right: 0,
+            width: 64,
+            height: 200,
+            borderBottomLeftRadius: 14,
+            opacity: 0.4,
+            zIndex: -1,
+        },
+        headerInner: { paddingHorizontal: 16, paddingTop: 10 },
+        headerTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+        headerLeftBtn: { padding: 6 },
+        headerTitle: { flex: 1, fontSize: 11, fontWeight: '700', letterSpacing: 0.5, opacity: 0.9, textAlign: 'center' },
+        headerRightBtn: { padding: 6, minWidth: 36, alignItems: 'flex-end' },
+        teamsRow: { flexDirection: 'row', alignItems: 'center', marginTop: 14, gap: 8 },
+        teamNameBig: { flex: 1, fontSize: 15, fontWeight: '700', textAlign: 'center', letterSpacing: -0.2 },
+        countdownText: { fontSize: 11, fontWeight: '700', letterSpacing: 0.5 },
+        scoreBig: { fontSize: 30, fontWeight: '800', letterSpacing: -1, textAlign: 'center' },
+        statusText: { fontSize: 11, fontWeight: '600', opacity: 0.9, textAlign: 'center', marginTop: 8 },
+        content: { flex: 1 },
+        scrollContent: { padding: 14, paddingTop: 12, paddingBottom: 48 },
+        unavailableWrap: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12, paddingHorizontal: 32 },
+        unavailableText: { fontSize: 15, textAlign: 'center' },
+        backCta: { minHeight: 44, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center', borderRadius: 12, borderWidth: 1 },
+        backCtaText: { fontSize: 15, fontWeight: '700' },
 
-    // Scoreboard
-    scoreboard: {
-        paddingHorizontal: 20,
-        paddingTop: 24,
-        paddingBottom: 32,
-        alignItems: 'center',
-        gap: 12,
-    },
-    leagueRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 5,
-    },
-    leagueText: {
-        ...typography.leagueNameDetail,
-    },
-    countryText: {
-        fontSize: 10,
-        fontWeight: '600',
-    },
-    statusBadge: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 5,
-        paddingHorizontal: 12,
-        paddingVertical: 5,
-        borderRadius: 20,
-    },
-    liveDot: {
-        width: 6,
-        height: 6,
-        borderRadius: 3,
-        backgroundColor: 'white',
-    },
-    statusText: {
-        ...typography.statusDetail,
-    },
-    teamsRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        width: '100%',
-        marginTop: 4,
-    },
-    teamCol: {
-        flex: 1,
-        alignItems: 'center',
-        gap: 10,
-    },
-    logoBox: {
-        width: 72,
-        height: 72,
-        borderRadius: 22,
-        alignItems: 'center',
-        justifyContent: 'center',
-        shadowColor: themeColors.shadow,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.12,
-        shadowRadius: 10,
-        elevation: 6,
-    },
-    teamLogo: {
-        width: 46,
-        height: 46,
-        resizeMode: 'contain',
-    },
-    teamName: {
-        ...typography.teamNameDetail,
-    },
-    standingText: {
-        ...typography.standing,
-    },
-    scoreCol: {
-        alignItems: 'center',
-        paddingHorizontal: 8,
-        gap: 6,
-    },
-    scoreText: {
-        ...typography.scoreTextDetail,
-    },
-    vsText: {
-        ...typography.vsText,
-    },
-    kickoffText: {
-        ...typography.timeDetail,
-    },
-    hotBadge: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 3,
-        paddingHorizontal: 7,
-        paddingVertical: 3,
-        borderRadius: 6,
-    },
-    hotText: {
-        ...typography.hotBadge,
-    },
+        // Overview content
+        overviewContent: { gap: 14 },
 
-    // Section card
-    section: {
-        margin: 16,
-        marginTop: 8,
-        padding: 18,
-        borderRadius: 22,
-        borderWidth: 1,
-        shadowColor: themeColors.shadow,
-        shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.08,
-        shadowRadius: 16,
-        elevation: 6,
-    },
-    sectionHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 16,
-    },
-    sectionTitleRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-    },
-    sectionTitle: {
-        ...typography.aiSectionTitle,
-    },
+        // Pick card
+        pickCard: { padding: 16, borderRadius: 18, borderWidth: 1, gap: 10 },
+        pickHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+        pickCardTitle: { fontSize: 15, fontWeight: '700' },
+        pickValue: { fontSize: 17, fontWeight: '800', lineHeight: 24 },
+        suggestedChipText: { fontSize: 11, fontWeight: '600' },
+        oddsRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
+        oddsStaticVal: { fontSize: 14, fontWeight: '800', minWidth: 40 },
+        confidenceWrap: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+        fieldLabel: { fontSize: 14, fontWeight: '600' },
+        pctText: { fontSize: 13, fontWeight: '700', minWidth: 40, textAlign: 'right' },
+        riskRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+        riskBadge: { minHeight: 32, paddingHorizontal: 10, borderWidth: 1, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+        riskBadgeText: { fontSize: 13, fontWeight: '700' },
+        marketLabels: { flexDirection: 'row', justifyContent: 'space-between', gap: 8, marginTop: 8 },
+        marketLabel: { fontSize: 12, fontWeight: '700' },
+        marketView: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 },
+        marketVals: { fontSize: 13, fontWeight: '700', minWidth: 44, textAlign: 'right' },
 
-    // AI body
-    aiBody: { gap: 16 },
-    predictionCard: {
-        padding: 16,
-        borderRadius: 16,
-        gap: 8,
-    },
-    probRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-    },
-    probLabel: { ...typography.aiProbLabel },
-    probValue: { ...typography.aiProbValue },
-    mainPick: { ...typography.aiMainPick },
-    suggestedBet: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        borderRadius: 10,
-        borderWidth: 1,
-        marginTop: 4,
-    },
-    suggestedBetText: { ...typography.aiSuggestedBet },
-    subLabel: { ...typography.subLabel, marginBottom: 8 },
-    reasoningContainer: { gap: 10 },
-    reasonRow: {
-        flexDirection: 'row',
-        gap: 10,
-        alignItems: 'flex-start',
-    },
-    reasonText: {
-        ...typography.aiReasoning,
-    },
-    emptyBox: {
-        padding: 28,
-        borderRadius: 16,
-        alignItems: 'center',
-        gap: 10,
-        borderWidth: 1,
-        borderStyle: 'dashed',
-    },
-    emptyText: { ...typography.emptyBoxText },
+        // Empty state
+        emptyState: { alignItems: 'center', gap: 8, paddingVertical: 40 },
+        emptyTitle: { fontSize: 17, fontWeight: '700', textAlign: 'center' },
+        emptyBody: { fontSize: 13, textAlign: 'center', lineHeight: 18 },
 
-    // Outer padding wrapper
-    outerPad: { paddingHorizontal: 16, paddingBottom: 4 },
-    sectionLabel: {
-        ...typography.sectionLabel,
-        marginBottom: 12,
-        opacity: 0.7,
-    },
+        // Extras grid
+        extraGrid: { gap: 10 },
+        extraPair: { flexDirection: 'row', gap: 10, alignItems: 'flex-start' },
+        extraCol: { flex: 1 },
+        extraCard: { padding: 12, borderRadius: 14, flex: 1 },
+        extraCardFull: { alignItems: 'stretch' },
+        extraCardCol: { alignItems: 'center' },
+        extraList: { gap: 8 },
+        extraListItem: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+        potentialLabel: { fontSize: 12, fontWeight: '600', flex: 1 },
+        potentialTrack: { flex: 1, height: 8, borderRadius: 4, overflow: 'hidden' },
+        streakRow: { flexDirection: 'row', gap: 4 },
+        formBadge: { width: 26, height: 26, borderRadius: 6, alignItems: 'center', justifyContent: 'center' },
+        formBadgeText: { fontSize: 10, fontWeight: '700', color: 'white' },
+        xgRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', gap: 6 },
+        xgVal: { fontSize: 22, fontWeight: '800' },
+        xgLabel: { fontSize: 11, fontWeight: '600', letterSpacing: 0.5 },
+        h2hRow: { flexDirection: 'row', justifyContent: 'space-around', gap: 6 },
+        h2hStat: { alignItems: 'center', gap: 4 },
+        h2hVal: { fontSize: 20, fontWeight: '800' },
+        h2hLabel: { fontSize: 8, fontWeight: '600', letterSpacing: 0.5, textTransform: 'uppercase' },
+        h2hHistoryCard: { gap: 0 },
+        h2hHistoryRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10 },
+        h2hHistoryLeft: { flex: 1 },
+        h2hHistoryLeague: { fontSize: 9, fontWeight: '600', letterSpacing: 0.5, marginBottom: 2 },
+        h2hHistoryTeams: { fontSize: 12, fontWeight: '600' },
+        h2hHistoryRight: { alignItems: 'flex-end' },
+        h2hHistoryScore: { fontSize: 14, fontWeight: '700' },
+        h2hHistoryDate: { fontSize: 9, fontWeight: '500', marginTop: 2 },
+        lineupCols: { flexDirection: 'row' },
+        lineupCol: { flex: 1, gap: 6 },
+        lineupDivider: { width: 1, marginHorizontal: 12, backgroundColor: themeColors.border },
+        lineupTeam: { fontSize: 12, fontWeight: '700', marginBottom: 6 },
+        lineupPlayer: { fontSize: 12, fontWeight: '500' },
+        statsCard: { gap: 10 },
+        statBlock: { gap: 4 },
+        statValues: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+        statNum: { fontSize: 13, fontWeight: '700' },
+        statLabel: { fontSize: 10, fontWeight: '500', letterSpacing: 0.5 },
 
-    // Odds
-    oddsGrid: { gap: 10 },
-    oddsTile: { padding: 16, borderRadius: 18 },
-    tileLabel: { ...typography.tileLabel, marginBottom: 14 },
-    oddsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around' },
-    oddsCell: { alignItems: 'center', flex: 1 },
-    oddsDivider: { width: 1, height: 30 },
-    oddsVal: { ...typography.oddsVal },
-    oddsSub: { ...typography.oddsSub },
+        // Why this pick
+        whySection: { gap: 4 },
+        bulletCard: { padding: 12, borderRadius: 12, gap: 6, borderWidth: 1 },
+        bulletText: { fontSize: 13, lineHeight: 20 },
 
-    // H2H
-    h2hCard: { padding: 16, borderRadius: 18, gap: 14 },
-    h2hRow: { flexDirection: 'row', justifyContent: 'space-around' },
-    h2hStat: { alignItems: 'center', gap: 4 },
-    h2hVal: { ...typography.h2hValue },
-    h2hLabel: { ...typography.h2hLabel },
-    h2hBar: {
-        flexDirection: 'row',
-        height: 6,
-        borderRadius: 3,
-        overflow: 'hidden',
-        gap: 2,
-    },
-    h2hBarSegment: { borderRadius: 3 },
+        // Sources
+        sourcesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+        sourceChip: { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 5, maxWidth: 130 },
+        sourceChipText: { fontSize: 9, fontWeight: '600', letterSpacing: 0.3 },
 
-    // Info
-    infoCard: { padding: 16, borderRadius: 18, gap: 12 },
-    infoRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    infoKey: { fontSize: 9, fontWeight: '700', letterSpacing: 1 },
-    infoVal: { fontSize: 13, fontWeight: '500' },
+        // Locked
 
-    // H2H History
-    h2hHistoryCard: { padding: 16, borderRadius: 18, gap: 0 },
-    h2hHistoryRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10 },
-    h2hHistoryLeft: { flex: 1 },
-    h2hHistoryLeague: { fontSize: 9, fontWeight: '600', letterSpacing: 0.5, marginBottom: 2 },
-    h2hHistoryTeams: { fontSize: 12, fontWeight: '600' },
-    h2hHistoryRight: { alignItems: 'flex-end' },
-    h2hHistoryScore: { fontSize: 14, fontWeight: '700' },
-    h2hHistoryDate: { fontSize: 9, fontWeight: '500', marginTop: 2 },
+        // Odds tab
+        oddsTab: { gap: 10 },
+        oddsGrid: { gap: 10 },
+        oddsTile: { padding: 16, borderRadius: 18 },
+        tileLabel: { fontSize: 9, fontWeight: '600', letterSpacing: 0.5, marginBottom: 12 },
+        oddsCell: { alignItems: 'center', flex: 1 },
+        oddsDivider: { width: 1, height: 30, backgroundColor: themeColors.border },
+        oddsVal: { fontSize: 15, fontWeight: '800' },
+        oddsSub: { fontSize: 8, fontWeight: '600', letterSpacing: 0.5, marginTop: 2 },
 
-    // Form
-    formCard: { padding: 16, borderRadius: 18, gap: 12 },
-    formRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    formTeam: { fontSize: 13, fontWeight: '600', flex: 1 },
-    formStreak: { flexDirection: 'row', gap: 4 },
-    formBadge: { width: 24, height: 24, borderRadius: 6, alignItems: 'center', justifyContent: 'center' },
-    formBadgeText: { fontSize: 10, fontWeight: '700', color: 'white' },
-
-    // Custom Header
-    customHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        borderBottomWidth: 1,
-        borderBottomColor: themeColors.border,
-    },
-    headerLeft: {
-        padding: 8,
-        marginLeft: -8,
-    },
-    headerTitle: {
-        ...typography.headerTitle,
-    },
-    headerRight: {
-        width: 40,
-    },
-
-    // HT score
-    htText: { fontSize: 10, fontWeight: '600', marginTop: 2 },
-
-    // GPT preview
-    previewText: { fontSize: 13, lineHeight: 20 },
-
-    // Potentials
-    potentialCard: { padding: 16, borderRadius: 18, gap: 14 },
-    potentialRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-    potentialLabel: { fontSize: 12, fontWeight: '600', width: 92 },
-    potentialBarWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
-    potentialBarTrack: { flex: 1, height: 8, borderRadius: 4, overflow: 'hidden' },
-    potentialBarFill: { height: 8, borderRadius: 4 },
-    potentialPct: { fontSize: 13, fontWeight: '700', minWidth: 40, textAlign: 'right' },
-
-    // xG
-    xgCard: { padding: 18, borderRadius: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around' },
-    xgVal: { fontSize: 24, fontWeight: '800' },
-    xgLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 1 },
-
-    // Match stats
-    statsCard: { padding: 16, borderRadius: 18, gap: 16 },
-    statBlock: { gap: 6 },
-    statValues: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    statNum: { fontSize: 13, fontWeight: '700' },
-    statLabel: { fontSize: 11, fontWeight: '500' },
-    statBarTrack: { height: 6, borderRadius: 3, overflow: 'hidden', flexDirection: 'row' },
-    statBarFill: { height: 6, borderRadius: 3 },
-
-    // Goal timeline
-    timelineCard: { padding: 16, borderRadius: 18, gap: 12 },
-    goalRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-    goalRowAway: { flexDirection: 'row-reverse' },
-    goalInfo: { flex: 1 },
-    goalScorer: { fontSize: 13, fontWeight: '600' },
-    goalAssist: { fontSize: 11, fontWeight: '500', marginTop: 1 },
-
-    // Lineups
-    lineupCard: { padding: 16, borderRadius: 18 },
-    lineupCols: { flexDirection: 'row' },
-    lineupCol: { flex: 1, gap: 8 },
-    lineupDivider: { width: 1, marginHorizontal: 12 },
-    lineupTeam: { fontSize: 12, fontWeight: '700', marginBottom: 4 },
-    lineupPlayer: { fontSize: 12, fontWeight: '500' },
-
-    // Odds comparison
-    ocRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
-    ocSelection: { fontSize: 12, fontWeight: '700', width: 64 },
-    ocScrollWrap: { flex: 1 },
-    ocScroll: { gap: 8, alignItems: 'center', paddingRight: 4 },
-    ocChip: { minWidth: 54, paddingHorizontal: 8, paddingVertical: 6, borderRadius: 10, alignItems: 'center', borderWidth: 1 },
-    ocBookie: { fontSize: 8, fontWeight: '600', marginBottom: 2, maxWidth: 56 },
-    ocValue: { fontSize: 14, fontWeight: '800' },
-
-    // Prediction
-    backCta: { minHeight: 44, paddingHorizontal: 20, justifyContent: 'center', marginTop: 12 },
-    predictionSection: { padding: 16, borderRadius: 18, borderWidth: 1 },
-    predictionBody: { gap: 14 },
-    predictionLocked: { gap: 12 },
-    predictionLockedHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    predictionLockedTitle: { fontSize: 16, fontWeight: '700' },
-    maskLine: { height: 14, borderRadius: 6, width: '100%' },
-    maskLineShort: { width: '65%' },
-    unlockBtn: {
-        minHeight: 44,
-        borderRadius: 12,
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingHorizontal: 16,
-        marginTop: 4,
-    },
-    unlockBtnText: { fontSize: 14, fontWeight: '700', textAlign: 'center' },
-    predictionPickRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    predictionPickLabel: { fontSize: 14, fontWeight: '600' },
-    predictionPickValue: { fontSize: 22, fontWeight: '800', lineHeight: 28 },
-    predictionField: { gap: 6 },
-    predictionFieldLabel: { fontSize: 14, fontWeight: '600' },
-    predictionFieldValue: { fontSize: 16, fontWeight: '600' },
-    confidenceRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-    confTrack: { flex: 1, height: 8, borderRadius: 4, overflow: 'hidden' },
-    confFill: { height: 8, borderRadius: 4 },
-    confPct: { fontSize: 14, fontWeight: '700', minWidth: 44, textAlign: 'right' },
-    predictionInline: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-    riskBadge: {
-        minHeight: 32,
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        borderRadius: 10,
-        borderWidth: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    riskText: { fontSize: 14, fontWeight: '700' },
-    reasoningList: { gap: 8 },
-    reasoningItem: { fontSize: 14, lineHeight: 22 },
-    sourceItem: { fontSize: 14, lineHeight: 22 },
-    predictionEmpty: { alignItems: 'center', gap: 8, paddingVertical: 12 },
-    predictionEmptyTitle: { fontSize: 16, fontWeight: '700', textAlign: 'center' },
-    predictionEmptyBody: { fontSize: 14, lineHeight: 20, textAlign: 'center' },
+        // Locked pick card
+        unlockBtn: { minHeight: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center', width: '100%' },
+        unlockBtnText: { fontSize: 14, fontWeight: '700', textAlign: 'center' },
     });
 }

@@ -1,8 +1,9 @@
-import { View, Text, ScrollView, ActivityIndicator, TouchableOpacity, StyleSheet, RefreshControl, TextInput } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, TextInput } from 'react-native';
 import { Zap, Search } from 'lucide-react-native';
 import { useState, useCallback, useMemo } from 'react';
 import { MatchCard } from '../../components/MatchCard';
 import { DatePickerStrip } from '../../components/DatePickerStrip';
+import { SkeletonList } from '../../components/Skeleton';
 import { useTheme } from '../../context/ThemeContext';
 import type { ThemeColors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
@@ -15,9 +16,8 @@ const toTitleCase = (str: string) =>
     str.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
 
 export default function FreeTipsScreen() {
-    const [selectedLeague, setSelectedLeague] = useState('All');
+    const [selectedLeague, setSelectedLeague] = useState(i18n.t('common.all'));
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
-    const [expandedId, setExpandedId] = useState<string | null>(null);
     const access = useMembershipAccess();
     const {
         data: matchesData,
@@ -45,7 +45,7 @@ export default function FreeTipsScreen() {
     }, [matches]);
 
     const filteredMatches = matches.filter((m) => {
-        const leagueMatch = selectedLeague === 'All' || m.league === selectedLeague;
+        const leagueMatch = selectedLeague === i18n.t('common.all') || m.league === selectedLeague;
         const searchMatch =
             !searchQuery ||
             m.homeTeam.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -84,20 +84,17 @@ export default function FreeTipsScreen() {
                             style={[
                                 styles.leagueChip,
                                 { borderColor: themeColors.border },
-                                selectedLeague === 'All' && {
+                                selectedLeague === i18n.t('common.all') && {
                                     backgroundColor: themeColors.accent,
                                     borderColor: themeColors.accent,
                                     shadowColor: themeColors.accent,
                                     ...styles.leagueChipActiveShadow,
                                 },
                             ]}
-                            onPress={() => {
-                                setSelectedLeague('All');
-                                setExpandedId(null);
-                            }}
+                            onPress={() => setSelectedLeague(i18n.t('common.all'))}
                         >
-                            <Text style={[styles.leagueChipText, selectedLeague === 'All' ? { color: themeColors.accentText } : { color: themeColors.mutedText }]}>
-                                All
+                            <Text style={[styles.leagueChipText, selectedLeague === i18n.t('common.all') ? { color: themeColors.accentText } : { color: themeColors.mutedText }]}>
+                                {i18n.t('common.all')}
                             </Text>
                         </TouchableOpacity>
                         {leagues.map((league) => (
@@ -114,10 +111,7 @@ export default function FreeTipsScreen() {
                                         ...styles.leagueChipActiveShadow,
                                     },
                                 ]}
-                                onPress={() => {
-                                    setSelectedLeague(league.name);
-                                    setExpandedId(null);
-                                }}
+                                onPress={() => setSelectedLeague(league.name)}
                             >
                                 <Text style={[styles.leagueChipText, selectedLeague === league.name ? { color: themeColors.accentText } : { color: themeColors.mutedText }]}>
                                     {toTitleCase(league.name)}
@@ -132,7 +126,7 @@ export default function FreeTipsScreen() {
                         <Search size={18} color={themeColors.mutedText} />
                         <TextInput
                             style={[styles.searchInput, { color: themeColors.text }]}
-                            placeholder="Search teams or leagues..."
+                            placeholder={i18n.t('home.searchPlaceholder')}
                             placeholderTextColor={themeColors.mutedText}
                             value={searchQuery}
                             onChangeText={setSearchQuery}
@@ -144,10 +138,7 @@ export default function FreeTipsScreen() {
                     <DatePickerStrip
                         dates={dates}
                         selectedDate={selectedDate}
-                        onSelectDate={(date) => {
-                            setSelectedDate(date);
-                            setExpandedId(null);
-                        }}
+                        onSelectDate={(date) => setSelectedDate(date)}
                     />
                 </View>
             </View>
@@ -166,21 +157,15 @@ export default function FreeTipsScreen() {
                 }
             >
                 {loading ? (
-                    <View style={styles.loadingContainer}>
-                        <ActivityIndicator size="large" color={themeColors.accent} />
-                        <Text style={[styles.loadingLabel, { color: themeColors.mutedText }]}>
-                            Loading today's fixtures…
-                        </Text>
-                    </View>
+                    <SkeletonList />
                 ) : filteredMatches.length > 0 ? (
                     <View style={styles.fixtureGrid}>
-                        {filteredMatches.map((match) => (
+                        {filteredMatches.map((match, idx) => (
                             <MatchCard
                                 key={match.id}
                                 match={match}
-                                expanded={expandedId === match.id}
-                                onToggle={() => setExpandedId((prev) => (prev === match.id ? null : match.id))}
                                 access={{ paid: access.paid, vip: access.vip }}
+                                index={idx}
                             />
                         ))}
                     </View>
@@ -197,7 +182,7 @@ export default function FreeTipsScreen() {
                         <View style={styles.emptyTextGroup}>
                             <Text style={[styles.emptyTitle, { color: themeColors.text }]}>{i18n.t('home.noMatches')}</Text>
                             <Text style={[styles.emptySubtitle, { color: themeColors.mutedText }]}>
-                                Our AI is still processing the matches or your search didn't match any.{'\n'}Pull down to check for updates.
+                                {i18n.t('home.noResultsSub')}
                             </Text>
                         </View>
                     </View>
@@ -272,13 +257,9 @@ function getStyles(themeColors: ThemeColors) {
         paddingBottom: 48,
     },
     loadingContainer: {
-        paddingVertical: 72,
+        paddingVertical: 8,
         alignItems: 'center',
-        gap: 14,
-    },
-    loadingLabel: {
-        fontSize: 13,
-        letterSpacing: 0.2,
+        gap: 12,
     },
     fixtureGrid: {
         gap: 12,

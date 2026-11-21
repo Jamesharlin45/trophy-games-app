@@ -6,6 +6,7 @@ import * as Application from 'expo-application';
 import { User } from 'lucide-react-native';
 import { useTheme } from '../context/ThemeContext';
 import { api } from '../api/client';
+import i18n from '../locales';
 
 type ThemeColors = ReturnType<typeof useTheme>['themeColors'];
 
@@ -51,12 +52,12 @@ export default function OnboardingScreen() {
   const handleContinue = async () => {
     const trimmed = username.trim();
     if (trimmed.length < 3) {
-      setError('Username must be at least 3 characters');
+      setError(i18n.t('onboarding.errorMinLength'));
       return;
     }
 
     if (availability?.available === false) {
-      setError('Username is already taken');
+      setError(i18n.t('onboarding.errorTaken'));
       return;
     }
 
@@ -71,10 +72,10 @@ export default function OnboardingScreen() {
         await AsyncStorage.setItem('@trophy_games_username', trimmed);
         router.replace('/(tabs)');
       } else {
-        setError(result.reason || 'Failed to register username');
+        setError(result.reason || i18n.t('onboarding.errorTaken'));
       }
     } catch {
-      setError('Network error. Please try again.');
+      setError(i18n.t('onboarding.errorNetwork'));
     } finally {
       setLoading(false);
     }
@@ -90,13 +91,13 @@ export default function OnboardingScreen() {
           <User size={48} color={themeColors.accent} />
         </View>
 
-        <Text style={styles.title}>Welcome to Trophy Games</Text>
-        <Text style={styles.subtitle}>Choose a unique username to secure your account and manage your VIP access tokens.</Text>
+        <Text style={styles.title}>{i18n.t('onboarding.title')}</Text>
+        <Text style={styles.subtitle}>{i18n.t('onboarding.subtitle')}</Text>
 
         <View style={styles.inputContainer}>
           <TextInput
             style={styles.input}
-            placeholder="Choose a username..."
+            placeholder={i18n.t('onboarding.usernamePlaceholder')}
             placeholderTextColor={themeColors.mutedText}
             value={username}
             onChangeText={(t) => { setUsername(t); setError(''); }}
@@ -106,7 +107,7 @@ export default function OnboardingScreen() {
           />
           {username.length >= 3 && availability !== undefined && (
             <Text style={[styles.availability, { color: availability.available ? themeColors.accent : themeColors.danger }]}>
-              {availability.available ? '✓ Available' : '✗ Taken'}
+              {availability.available ? i18n.t('onboarding.available') : i18n.t('onboarding.taken')}
             </Text>
           )}
         </View>
@@ -124,7 +125,7 @@ export default function OnboardingScreen() {
           {loading ? (
             <ActivityIndicator color={themeColors.background} />
           ) : (
-            <Text style={styles.buttonText}>Continue</Text>
+            <Text style={styles.buttonText}>{i18n.t('onboarding.continue')}</Text>
           )}
         </TouchableOpacity>
       </View>
