@@ -3,7 +3,7 @@ import { fetchFixturePrediction, type ApiFixturePrediction } from '../api-footba
 import { syncFixtures } from '../sync-fixtures';
 import { createAlert } from './alerts';
 import { getById } from './matches';
-import type { AiPrediction, MatchRow, MatchTier } from './types';
+import type { AiPrediction, DbMatch, MatchRow, MatchTier } from './types';
 
 // --- DeepSeek config (ports packages/backend/convex/analysis.ts) ---
 
@@ -257,8 +257,21 @@ export async function getAll(db: SupabaseClient, limit = 50): Promise<AnalysisRe
     return ((data ?? []) as AnalysisResultRow[]).map(mapAnalysisResult);
 }
 
+/** True when a stored match has already kicked off: its kickoff timestamp
+ * is in the past, or the stored status is not one of the not-started
+ * statuses. */
+function matchKickedOff(row: DbMatch, nowMs: number): boolean {
+    if (row.timestamp) {
+        const kickoffMs = new Date(row.timestamp).getTime();
+        if (Number.isFinite(kickoffMs) && kickoffMs <= nowMs) return true;
+    }
+    return isStatusStarted(row.status);
+}
+
 /** Port of Convex api.analysis.approveAnalysis — tag matches with the
- * recommended type + AI prediction from each category's recommendations. */
+ * recommended type + AI prediction from each category's recommendations.
+ * Matches that have already kicked off or already have a result are
+ * skipped and reported in `skipped`. */
 export async function approveAnalysis(
     db: SupabaseClient,
     input: {
@@ -269,7 +282,7 @@ export async function approveAnalysis(
         approvePaid?: boolean;
         approveVip?: boolean;
     },
-): Promise<{ success: true; applied: number }> {
+): Promise<{ success: true; applied: number; skipped: { matchId: string; reason: string }[] }> {
     const { data } = await db
         .from('analysis_results')
         .select('*')
@@ -279,8 +292,10 @@ export async function approveAnalysis(
     if (!result) throw new Error('Analysis result not found');
 
     const now = new Date().toISOString();
+    const nowMs = Date.now();
     const selectedSet = input.selectedMatchIds ? new Set(input.selectedMatchIds) : null;
     let applied = 0;
+    const skipped: { matchId: string; reason: string }[] = [];
 
     const applyType = async (recommendations: Recommendation[], type: 'free' | 'paid' | 'vip'): Promise<void> => {
         for (const rec of recommendations) {
@@ -291,10 +306,18 @@ export async function approveAnalysis(
                 continue;
             }
             // The Approve step is the only writer of ai_prediction and tier on
-            // matches: never touch a match that is not untagged or that
-            // already has a result.
+            // matches: never touch a match that is not untagged.
             if (existing.matchType === 'free' || existing.matchType === 'vip' || existing.matchType === 'paid') continue;
-            if (existing.result) continue;
+            // Safety: skip matches that have already kicked off or already
+            // have a result, and report why they were skipped.
+            if (matchKickedOff(existing, nowMs)) {
+                skipped.push({ matchId: rec.matchId, reason: 'match has already kicked off' });
+                continue;
+            }
+            if (existing.result) {
+                skipped.push({ matchId: rec.matchId, reason: 'match already has a result' });
+                continue;
+            }
             // Merge into the existing aiPrediction so partial updates never
             // erase existing fields (risk, sources, pick, ...).
             const previous = existing.aiPrediction ?? {};
@@ -334,7 +357,7 @@ export async function approveAnalysis(
         .update({ status: 'approved', approved_at: now, approved_by: input.approvedBy, updated_at: now })
         .eq('id', result._id);
 
-    return { success: true, applied };
+    return { success: true, applied, skipped };
 }
 
 // --- DeepSeek port (api.analysis.runAnalysis — automated daily picks) ---

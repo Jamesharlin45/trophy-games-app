@@ -3,7 +3,8 @@
 //
 // - No football APIs are called in this flow.
 // - Tier split constants are at the top of this file.
-// - Input: only matches with tier 'unassigned' and no result.
+// - Input: only matches with tier 'unassigned', no result and a Scheduled
+//   status; matches that have already started are never picked.
 // - The run endpoint processes at most CHUNK_SIZE matches per request and
 //   saves each proposal as it completes; the admin page calls it repeatedly
 //   and shows progress ("Analysing X/Y").
@@ -11,7 +12,10 @@
 //   analysis_results.proposals — never in matches.ai_prediction.
 // - Only the Approve step (api/analysis/approve) writes ai_prediction, tier
 //   and reasoning to matches, and only on untagged, unresulted matches.
-// - A final cheap DeepSeek call (no web search) ranks the stored proposals.
+// - Tiers are assigned deterministically by rankPicksInCode: confidence desc,
+//   ties lower risk then higher odds; Free = top FREE_COUNT, VIP = next
+//   VIP_COUNT, Paid = next PAID_COUNT; picks below MIN_TIP_CONFIDENCE get no
+//   tier. No separate ranking call is made.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { TRENDING_LEAGUES, TRENDING_LEAGUE_IDS } from '@trophy-games/shared';
@@ -22,19 +26,19 @@ import type { MatchRow } from './types';
 export const FREE_COUNT = 3;
 export const VIP_COUNT = 3;
 export const PAID_COUNT = 4;
-export const FREE_MIN_CONFIDENCE = 75;
-export const VIP_MIN_CONFIDENCE = 65;
-export const PAID_MIN_CONFIDENCE = 60;
+export const MIN_TIP_CONFIDENCE = 55;
 
-export const MAX_ANALYSED_PER_RUN = 30;
+// Max matches analysed per run — the page's default "Matches to analyse".
+export const MAX_MATCHES = 10;
+// Hard cap for the user-supplied "Matches to analyse" page value (1..30).
+export const MAX_MATCHES_LIMIT = 30;
 
 const CHUNK_SIZE = 3; // max matches analysed per run-endpoint request — one parallel wave under the 60s limit
 const PARALLEL_WORKERS = 3; // 3 workers => each request is a wave of CHUNK_SIZE
 const DEEPSEEK_FLASH_MODEL = 'deepseek-flash';
 const DEEPSEEK_API_URL = 'https://api.deepseek.com/v1/chat/completions';
-const ANALYST_MAX_TOKENS = 8192;
-const VERIFIER_MAX_TOKENS = 8192;
-const RANKER_MAX_TOKENS = 4096;
+const ANALYST_MAX_TOKENS = 3000;
+const VERIFIER_MAX_TOKENS = 1500;
 const CALL_TIMEOUT_MS = 45000;
 const MAX_SOURCES_PER_PICK = 3;
 
@@ -65,6 +69,12 @@ export interface RunChunkResult {
     total: number;
     analysed: number;
     errors: string[];
+    /** Candidates excluded because they had already started. */
+    excludedStarted: number;
+    /** Candidates skipped because they already had stored proposals (no rerun). */
+    skipped: number;
+    /** DeepSeek API calls made during this request. */
+    deepseekCalls: number;
     complete?: { ranked: TierSplit; analysed: number };
 }
 
@@ -123,7 +133,7 @@ const SYSTEM_PROMPT_VERIFIER = `You are a senior betting verification analyst. D
 
 Verify the confidence, risk and suggestedBet. Adjust the confidence down when evidence is weak, and say so in the reasoning.
 
-Return ONLY valid JSON:
+Return ONLY valid JSON with the same shape as the analyst output:
 {
   "pick": "...",
   "confidence": 78,
@@ -132,16 +142,6 @@ Return ONLY valid JSON:
   "reasoning": ["...", "..."],
   "sources": ["https://example.com/1", "https://example.com/2"]
 }`;
-
-const SYSTEM_PROMPT_RANKER = `You are a betting analyst ranking analysed picks. Rank the input picks into groups: free (max ${FREE_COUNT}), vip (max ${VIP_COUNT}), paid (max ${PAID_COUNT}). Within each group order by confidence, highest first. Only include picks you consider assignable, preferring higher-confidence ones.
-
-Return ONLY valid JSON:
-{
-  "free": [{ "matchId": "id1" }],
-  "vip": [{ "matchId": "id2" }],
-  "paid": [{ "matchId": "id3" }]
-}
-using only the matchId values from the input.`;
 
 function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -342,19 +342,7 @@ function pickToJson(p: PerMatchResult): Record<string, unknown> {
 }
 
 function buildVerifierUserPrompt(row: MatchRow, analystPick: PerMatchResult): string {
-    return `Verify this pick for the match.\nMatch: ${row.home_team} vs ${row.away_team} (id: ${row.id}, league: ${row.league}, timestamp: ${row.kickoff})\nAnalyst pick: ${JSON.stringify(pickToJson(analystPick))}\n\nReturn the pick as JSON with the same shape as the analyst output.`;
-}
-
-function buildRankerUserPrompt(picks: PerMatchResult[]): string {
-    const summary = picks.map((p) => ({
-        matchId: p.matchId,
-        pick: p.pick,
-        confidence: p.confidence,
-        risk: p.risk,
-        suggestedBet: p.suggestedBet,
-        sources: p.sources,
-    }));
-    return `Rank these ${picks.length} analysed betting picks into the groups free (max ${FREE_COUNT}), vip (max ${VIP_COUNT}), paid (max ${PAID_COUNT}). Use ONLY the matchId values from the input.\n\nINPUT:\n${JSON.stringify(summary, null, 2)}`;
+    return `Verify the analyst's pick for the match.\nMatch: ${row.home_team} vs ${row.away_team} (id: ${row.id}, league: ${row.league}, timestamp: ${row.kickoff})\nAnalyst output (JSON, including its sources): ${JSON.stringify(pickToJson(analystPick))}\n\nReturn the pick as JSON with the same shape as the analyst output.`;
 }
 
 // --- Parsing model output ---
@@ -459,11 +447,17 @@ async function saveProposals(db: SupabaseClient, resultId: string, proposals: St
     if (error) throw new Error(`Failed to store proposals: ${error.message}`);
 }
 
-async function analyseMatch(row: MatchRow, apiKey: string): Promise<StoredProposal> {
+async function analyseMatch(
+    row: MatchRow,
+    apiKey: string,
+): Promise<{ proposal: StoredProposal; calls: number }> {
+    let calls = 0;
+    // Analyst: web search ON — one call per match.
     const analystOut = await callDeepSeek(SYSTEM_PROMPT_ANALYST, buildAnalystUserPrompt(row), apiKey, {
         search: true,
         maxTokens: ANALYST_MAX_TOKENS,
     });
+    calls += 1;
     const analystPick = parseAnalystPick(analystOut.content, row) ?? {
         matchId: row.id,
         pick: `${row.home_team} vs ${row.away_team}`,
@@ -478,14 +472,16 @@ async function analyseMatch(row: MatchRow, apiKey: string): Promise<StoredPropos
         timestamp: row.kickoff,
         oddsScore: oddsScoreOf(row),
     };
+    // Verifier: web search OFF, analyst JSON + sources as input.
     const verifierOut = await callDeepSeek(
         SYSTEM_PROMPT_VERIFIER,
         buildVerifierUserPrompt(row, analystPick),
         apiKey,
         { search: false, maxTokens: VERIFIER_MAX_TOKENS },
     );
+    calls += 1;
     const finalPick = parseVerifierPick(verifierOut.content, analystPick);
-    return proposalFromPick(finalPick);
+    return { proposal: proposalFromPick(finalPick), calls };
 }
 
 async function processChunk(
@@ -493,17 +489,20 @@ async function processChunk(
     matches: MatchRow[],
     apiKey: string,
     errors: string[],
-): Promise<StoredProposal[]> {
+): Promise<{ proposals: StoredProposal[]; calls: number }> {
     let next = 0;
     let fatal: DeepSeekApiError | null = null;
     const proposals: StoredProposal[] = [];
+    let calls = 0;
     const worker = async (): Promise<void> => {
         while (fatal === null) {
             const idx = next;
             next += 1;
             if (idx >= matches.length) return;
             try {
-                proposals.push(await analyseMatch(matches[idx], apiKey));
+                const result = await analyseMatch(matches[idx], apiKey);
+                calls += result.calls;
+                proposals.push(result.proposal);
             } catch (err) {
                 if (err instanceof DeepSeekApiError && (err.status === 401 || err.status === 402)) {
                     fatal = err;
@@ -517,7 +516,7 @@ async function processChunk(
     for (let i = 0; i < PARALLEL_WORKERS; i += 1) workers.push(worker());
     await Promise.all(workers);
     if (fatal) throw fatal;
-    return proposals;
+    return { proposals, calls };
 }
 
 // --- Ranges and candidate discovery ---
@@ -562,25 +561,102 @@ async function getRangeMatches(db: SupabaseClient, start: string, end: string): 
     return (data ?? []) as MatchRow[];
 }
 
-/** Run Analysis input: untagged matches in the range with no result yet.
- * Trending leagues first; capped at MAX_ANALYSED_PER_RUN. */
-async function getCandidateMatches(db: SupabaseClient, start: string, end: string): Promise<MatchRow[]> {
-    const rows = await getRangeMatches(db, start, end);
-    const candidates = rows.filter((row) => row.tier === 'unassigned' && (row.result == null || row.result === 'pending'));
-    candidates.sort((a, b) => {
-        const trendingDelta = Number(isTrendingRow(b)) - Number(isTrendingRow(a));
-        if (trendingDelta !== 0) return trendingDelta;
-        return new Date(a.kickoff).getTime() - new Date(b.kickoff).getTime();
+/** Statuses meaning "Scheduled": matches whose status is anything else have
+ * kicked off and are never picked. */
+function isScheduledStatus(status: string): boolean {
+    return status.trim().toUpperCase() === 'SCHEDULED';
+}
+
+/** Kickoff of a row as a timestamp. */
+function kickoffMs(row: MatchRow): number {
+    return new Date(row.kickoff).getTime();
+}
+
+/** Best-known leagues (top European, Champions/Europa, UAE/Saudi Pro),
+ * matched case-insensitively as substrings — the "tier 2" priority after
+ * trending rows. */
+const BEST_KNOWN_LEAGUE_NAMES = [
+    'English Premier League',
+    'LaLiga',
+    'Serie A',
+    'Bundesliga',
+    'Ligue 1',
+    'Champions League',
+    'Europa League',
+    'Europa Conference League',
+    'UAE Pro League',
+    'Saudi Pro League',
+    'English Championship',
+    'Japanese J1 League',
+    'Australian A-League',
+    'USA MLS',
+    'English FA Cup',
+    'Africa Cup of Nations',
+];
+
+/** True when the match's league is one of the best-known leagues. */
+function isBestKnownRow(row: MatchRow): boolean {
+    const name = normalizeText(row.league);
+    if (name === '') return false;
+    return BEST_KNOWN_LEAGUE_NAMES.some((leagueName) => {
+        const normalized = normalizeText(leagueName);
+        return normalized !== '' && (normalized.includes(name) || name.includes(normalized));
     });
-    return candidates.slice(0, MAX_ANALYSED_PER_RUN);
+}
+
+/** Matches with kickoff at least this far in the future are preferred. */
+const FUTURE_KICKOFF_MS = 20 * 60 * 1000;
+
+interface CandidateMatches {
+    matches: MatchRow[];
+    /** Candidates excluded because they had already started. */
+    excludedStarted: number;
+}
+
+/** Run Analysis input: untagged, result-less, Scheduled matches in the
+ * range; matches that have already started are never candidates. Order:
+ * (a) kickoff at least 20 minutes in the future, then (b) trending rows
+ * (TRENDING_LEAGUES or Trending flag), then the best-known leagues, then
+ * (c) soonest kickoff. */
+async function getCandidateMatches(db: SupabaseClient, start: string, end: string): Promise<CandidateMatches> {
+    const rows = await getRangeMatches(db, start, end);
+    const now = Date.now();
+    const excludedStarted = rows.filter(
+        (row) => row.tier === 'unassigned' && (row.result == null || row.result === 'pending') && kickoffMs(row) <= now,
+    ).length;
+    const candidates = rows.filter((row) =>
+        row.tier === 'unassigned' &&
+        (row.result == null || row.result === 'pending') &&
+        isScheduledStatus(row.status) &&
+        kickoffMs(row) > now,
+    );
+    const futureFloor = now + FUTURE_KICKOFF_MS;
+    candidates.sort((a, b) => {
+        const aKick = kickoffMs(a);
+        const bKick = kickoffMs(b);
+        const aFuture = aKick >= futureFloor;
+        const bFuture = bKick >= futureFloor;
+        if (aFuture !== bFuture) return aFuture ? -1 : 1;
+        const aTrending = Number(isTrendingRow(a));
+        const bTrending = Number(isTrendingRow(b));
+        if (aTrending !== bTrending) return bTrending - aTrending;
+        const aKnown = Number(isBestKnownRow(a));
+        const bKnown = Number(isBestKnownRow(b));
+        if (aKnown !== bKnown) return bKnown - aKnown;
+        return aKick - bKick;
+    });
+    return { matches: candidates, excludedStarted };
 }
 
 // --- Final ranking ---
 
 const RISK_RANK: Record<'low' | 'medium' | 'high', number> = { low: 0, medium: 1, high: 2 };
 
-/** In-code ranking (deterministic fallback): confidence desc, ties lower
- * risk first then higher odds; budgets per tier with minimum confidences. */
+/** In-code ranking (deterministic): sort by confidence desc, ties lower
+ * risk first then higher odds; assign tiers greedily — Free up to
+ * FREE_COUNT, then VIP up to VIP_COUNT, then Paid up to PAID_COUNT. Picks
+ * below MIN_TIP_CONFIDENCE get no tier and stay unassigned; when fewer than
+ * 10 qualify the tiers are still filled in Free → VIP → Paid order. */
 function rankPicksInCode(picks: PerMatchResult[]): TierSplit {
     const sorted = [...picks].sort(
         (a, b) =>
@@ -590,60 +666,18 @@ function rankPicksInCode(picks: PerMatchResult[]): TierSplit {
     );
     const out: TierSplit = { free: [], vip: [], paid: [] };
     for (const pick of sorted) {
-        if (out.free.length < FREE_COUNT && pick.confidence >= FREE_MIN_CONFIDENCE) {
+        if (pick.confidence < MIN_TIP_CONFIDENCE) continue;
+        if (out.free.length < FREE_COUNT) {
             out.free.push(pick.matchId);
-        } else if (out.vip.length < VIP_COUNT && pick.confidence >= VIP_MIN_CONFIDENCE) {
+        } else if (out.vip.length < VIP_COUNT) {
             out.vip.push(pick.matchId);
-        } else if (out.paid.length < PAID_COUNT && pick.confidence >= PAID_MIN_CONFIDENCE) {
+        } else if (out.paid.length < PAID_COUNT) {
             out.paid.push(pick.matchId);
+        } else {
+            break;
         }
     }
     return out;
-}
-
-/** The final cheap DeepSeek call (no web search) returns the split; enforce
- * budgets + minimum confidences here. Returns null when invalid → caller
- * falls back to the in-code ranking. */
-function finalizeSplit(picks: PerMatchResult[], ranker: TierSplit | null): TierSplit | null {
-    if (!ranker) return null;
-    const byId = new Map(picks.map((p) => [p.matchId, p]));
-    const out: TierSplit = { free: [], vip: [], paid: [] };
-    const groups: Array<[Tier, number, number]> = [
-        ['free', FREE_COUNT, FREE_MIN_CONFIDENCE],
-        ['vip', VIP_COUNT, VIP_MIN_CONFIDENCE],
-        ['paid', PAID_COUNT, PAID_MIN_CONFIDENCE],
-    ];
-    for (const [tier, cap, minConfidence] of groups) {
-        for (const id of ranker[tier]) {
-            const pick = byId.get(id);
-            if (!pick) continue;
-            if (pick.confidence < minConfidence) continue;
-            if (out[tier].length >= cap) continue;
-            out[tier].push(pick.matchId);
-        }
-    }
-    return out;
-}
-
-async function rankPicksWithDeepSeek(picks: PerMatchResult[], apiKey: string): Promise<TierSplit | null> {
-    if (picks.length === 0) return { free: [], vip: [], paid: [] };
-    const out = await callDeepSeek(SYSTEM_PROMPT_RANKER, buildRankerUserPrompt(picks), apiKey, {
-        search: false,
-        maxTokens: RANKER_MAX_TOKENS,
-    });
-    const obj = extractJsonObject(out.content);
-    if (!obj) return null;
-    const toIds = (value: unknown): string[] => {
-        if (!Array.isArray(value)) return [];
-        const ids: string[] = [];
-        for (const item of value) {
-            if (isRecord(item) && typeof item.matchId === 'string' && item.matchId && !ids.includes(item.matchId)) {
-                ids.push(item.matchId);
-            }
-        }
-        return ids;
-    };
-    return { free: toIds(obj.free), vip: toIds(obj.vip), paid: toIds(obj.paid) };
 }
 
 function toRecommendation(p: PerMatchResult, tier: Tier): Recommendation {
@@ -716,7 +750,6 @@ async function maybeCompleteRanking(
     db: SupabaseClient,
     date: string,
     analysisType: 'daily' | 'weekly',
-    apiKey: string,
 ): Promise<{ ranked: TierSplit; analysed: number }> {
     const row = await ensureAnalysisResultRow(db, date, analysisType);
     const { data } = await db
@@ -726,13 +759,7 @@ async function maybeCompleteRanking(
         .single();
     const picks = ((data?.proposals as StoredProposal[] | null) ?? []).map(pickFromProposal);
 
-    let split: TierSplit;
-    if (picks.length > 0) {
-        const rankerSplit = await rankPicksWithDeepSeek(picks, apiKey);
-        split = finalizeSplit(picks, rankerSplit) ?? rankPicksInCode(picks);
-    } else {
-        split = { free: [], vip: [], paid: [] };
-    }
+    const split: TierSplit = picks.length > 0 ? rankPicksInCode(picks) : { free: [], vip: [], paid: [] };
 
     const now = new Date().toISOString();
     const { error } = await db
@@ -753,7 +780,7 @@ async function maybeCompleteRanking(
 
 /** One "run": process at most CHUNK_SIZE matches; the page repeats this
  * until state === 'complete'. Safe to retry: matches with a stored proposal
- * are excluded from future chunks. Proposals are stored in
+ * are excluded from future chunks (unless rerun). Proposals are stored in
  * analysis_results.proposals — matches are only written by the Approve
  * step. */
 export async function processRunChunk(
@@ -761,6 +788,7 @@ export async function processRunChunk(
     date: string,
     analysisType: 'daily' | 'weekly',
     rerun: boolean,
+    maxMatches = MAX_MATCHES,
 ): Promise<RunChunkResult> {
     const apiKey = process.env.DEEPSEEK_API_KEY;
     if (!apiKey) throw new DeepSeekApiError(500, 'DEEPSEEK_API_KEY is not configured');
@@ -769,19 +797,23 @@ export async function processRunChunk(
     const arRow = await ensureAnalysisResultRow(db, date, analysisType);
     const storedIds = new Set((arRow.proposals ?? []).map((p) => p.matchId));
 
-    const candidates = (await getCandidateMatches(db, start, end)).slice(0, MAX_ANALYSED_PER_RUN);
+    const candidates = await getCandidateMatches(db, start, end);
+    const limited = candidates.matches.slice(0, maxMatches);
     const errors: string[] = [];
 
     // A rerun redoes the matches; a normal run skips ones already analysed.
-    const toDo = candidates.filter((m) => rerun || !storedIds.has(m.id));
+    const toDo = limited.filter((m) => rerun || !storedIds.has(m.id));
+    const skipped = rerun ? 0 : limited.filter((m) => storedIds.has(m.id)).length;
 
     let processedCount = 0;
+    let deepseekCalls = 0;
     if (toDo.length > 0) {
         const chunk = toDo.slice(0, CHUNK_SIZE);
-        const proposals = await processChunk(db, chunk, apiKey, errors);
+        const chunkResult = await processChunk(db, chunk, apiKey, errors);
+        deepseekCalls = chunkResult.calls;
         // Store the proposals while the run is in progress; matches are
         // untouched — the Approve step publishes them.
-        await saveProposals(db, arRow._id, proposals);
+        await saveProposals(db, arRow._id, chunkResult.proposals);
         processedCount = chunk.length;
     }
 
@@ -792,11 +824,19 @@ export async function processRunChunk(
         .single();
     const analysed = ((data?.proposals as StoredProposal[] | null) ?? []).length;
 
+    const base = {
+        total: limited.length,
+        analysed,
+        errors,
+        excludedStarted: candidates.excludedStarted,
+        skipped,
+        deepseekCalls,
+    };
     if (toDo.length === 0 || processedCount === 0) {
-        const complete = await maybeCompleteRanking(db, date, analysisType, apiKey);
-        return { state: 'complete', total: candidates.length, analysed, errors, complete };
+        const complete = await maybeCompleteRanking(db, date, analysisType);
+        return { state: 'complete', ...base, complete };
     }
-    return { state: 'running', total: candidates.length, analysed, errors };
+    return { state: 'running', ...base };
 }
 
 export { DeepSeekApiError };

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createDb } from '@/lib/db/client';
-import { DeepSeekApiError, processRunChunk } from '@/lib/db/analysis-run';
+import { DeepSeekApiError, MAX_MATCHES, MAX_MATCHES_LIMIT, processRunChunk } from '@/lib/db/analysis-run';
 
 // POST /api/analysis/run - Reworked Run Analysis: analyse stored Supabase
 // matches (Daily = selected date, Weekly = the week of the selected date)
@@ -9,6 +9,14 @@ import { DeepSeekApiError, processRunChunk } from '@/lib/db/analysis-run';
 //
 // maxDuration is the maximum the Hobby Vercel plan allows (60s).
 export const maxDuration = 60;
+
+/** Resolve the caller's "matches to analyse" value to a valid cap:
+ * MAX_MATCHES when absent, otherwise clamped to 1..MAX_MATCHES_LIMIT. */
+function resolveMaxMatches(value: unknown): number {
+    const n = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(n) || n <= 0) return MAX_MATCHES;
+    return Math.min(MAX_MATCHES_LIMIT, Math.max(1, Math.round(n)));
+}
 
 export async function POST(req: Request) {
     const db = createDb();
@@ -21,12 +29,19 @@ export async function POST(req: Request) {
             date?: string;
             analysisType?: 'daily' | 'weekly';
             rerun?: boolean;
+            maxMatches?: number;
         };
         if (!body.date) {
             return NextResponse.json({ error: 'Missing date' }, { status: 400 });
         }
 
-        const outcome = await processRunChunk(db, body.date, body.analysisType ?? 'daily', body.rerun ?? false);
+        const outcome = await processRunChunk(
+            db,
+            body.date,
+            body.analysisType ?? 'daily',
+            body.rerun ?? false,
+            resolveMaxMatches(body.maxMatches),
+        );
         return NextResponse.json(outcome);
     } catch (error) {
         if (error instanceof DeepSeekApiError) {
