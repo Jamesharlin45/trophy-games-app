@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { triggerDueEmailsIfDue } from '@/lib/email-opportunistic';
 import { createDb } from '@/lib/db/client';
 import { getActiveSubscription } from '@/lib/db/purchases';
 
@@ -6,6 +7,7 @@ export const dynamic = 'force-dynamic';
 
 // Port of the Convex `purchases.getActiveSubscription` query the mobile app calls.
 export async function GET(request: Request) {
+    triggerDueEmailsIfDue();
     const { searchParams } = new URL(request.url);
     const deviceId = searchParams.get('deviceId');
     if (!deviceId) {

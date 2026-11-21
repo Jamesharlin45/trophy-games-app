@@ -1,6 +1,6 @@
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, ActivityIndicator, Alert, TextInput, Platform } from 'react-native';
 import { useState, useCallback, useEffect } from 'react';
-import { Crown, CheckCircle2, Zap, Trophy, ShieldCheck, CreditCard, Sparkles, Key, Clock, ShoppingCart } from 'lucide-react-native';
+import { Crown, CheckCircle2, Zap, Trophy, ShieldCheck, CreditCard, Sparkles, Key, Clock, ShoppingCart, ChevronRight, X } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { useTheme } from '../../context/ThemeContext';
 import type { ThemeColors } from '../../theme/colors';
@@ -11,6 +11,7 @@ import { useIap, ProductSubscription } from '../../hooks/useIap';
 import * as Application from 'expo-application';
 import { api } from '../../api/client';
 import { useScreenQuery } from '../../hooks/useLiveQuery';
+import { EmailTokenModal } from '../../components/EmailTokenModal';
 
 type MemberStatus = 'none' | 'pending' | 'approved' | 'active' | 'loading';
 
@@ -24,6 +25,13 @@ export default function MembershipStoreScreen() {
     const [verifyingToken, setVerifyingToken] = useState(false);
     const [requesting, setRequesting] = useState<string | null>(null);
     const [purchasing, setPurchasing] = useState<string | null>(null);
+
+    // After a successful purchase: show the "email my token" modal; if the
+    // user skips it, show a banner that reopens the modal.
+    const [emailModal, setEmailModal] = useState<{ deviceId: string; purchaseToken: string } | null>(null);
+    const [emailPurchase, setEmailPurchase] = useState<{ deviceId: string; purchaseToken: string } | null>(null);
+    const [emailBannerShown, setEmailBannerShown] = useState(false);
+
     const { username } = useUser();
 
     // ── IAP hook (Google Play Billing) ──
@@ -45,6 +53,12 @@ export default function MembershipStoreScreen() {
                 });
                 if (result.success) {
                     Alert.alert('Purchase Successful!', `Your ${_tier.toUpperCase()} access is now active.`);
+                    if (deviceId) {
+                        const info = { deviceId, purchaseToken };
+                        setEmailPurchase(info);
+                        setEmailModal(info);
+                        setEmailBannerShown(false);
+                    }
                 } else {
                     Alert.alert('Activation Failed', result.reason || 'Could not activate your purchase.');
                 }
@@ -298,6 +312,21 @@ export default function MembershipStoreScreen() {
                 showsVerticalScrollIndicator={false}
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={themeColors.accent} />}
             >
+                {/* Email banner: shown after the user skips the post-purchase modal */}
+                {emailBannerShown && emailPurchase ? (
+                    <View style={styles.emailBanner}>
+                        <TouchableOpacity style={styles.emailBannerMain} onPress={() => setEmailModal(emailPurchase)}>
+                            <Text style={[styles.emailBannerText, { color: themeColors.text }]}>
+                                Add your email to receive your token
+                            </Text>
+                            <ChevronRight size={16} color={themeColors.accent} />
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.emailBannerClose} onPress={() => setEmailBannerShown(false)}>
+                            <X size={14} color={themeColors.mutedText} />
+                        </TouchableOpacity>
+                    </View>
+                ) : null}
+
                 {/* Hero section */}
                 <View style={[styles.hero, { backgroundColor: themeColors.surface }]}>
                     <View style={styles.heroContent}>
@@ -462,6 +491,18 @@ export default function MembershipStoreScreen() {
                     </View>
                 </View>
             </ScrollView>
+
+            {/* Post-purchase email modal (backup copy of your token) */}
+            <EmailTokenModal
+                visible={emailModal !== null}
+                deviceId={emailModal?.deviceId ?? ''}
+                purchaseToken={emailModal?.purchaseToken ?? ''}
+                onClose={() => setEmailModal(null)}
+                onSkipped={() => {
+                    setEmailModal(null);
+                    setEmailBannerShown(true);
+                }}
+            />
         </View>
     );
 }
@@ -628,5 +669,27 @@ function getStyles(themeColors: ThemeColors) {
     infoTitle: { ...typography.alertTitle },
     infoDesc: { ...typography.caption, lineHeight: 16 },
     divider: { height: 1, backgroundColor: themeColors.border },
+    // ── Email banner (post-purchase) ──
+    emailBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        backgroundColor: themeColors.surfaceElevated,
+        borderColor: themeColors.accent,
+        borderWidth: 1,
+        borderRadius: 12,
+        marginHorizontal: 20,
+        marginTop: 12,
+        padding: 12,
+        paddingRight: 8,
+    },
+    emailBannerMain: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        flex: 1,
+    },
+    emailBannerText: { ...typography.medium, letterSpacing: 0.1 },
+    emailBannerClose: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
     });
 }

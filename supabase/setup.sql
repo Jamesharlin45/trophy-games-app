@@ -249,6 +249,10 @@ CREATE INDEX IF NOT EXISTS purchases_by_status ON purchases (status);
 -- Access rules (existing: RLS enabled, no policies).
 ALTER TABLE purchases ENABLE ROW LEVEL SECURITY;
 
+-- Backup email address (where the access token is mailed). ADD COLUMN IF NOT
+-- EXISTS keeps this file safe to re-run on databases created earlier.
+ALTER TABLE purchases ADD COLUMN IF NOT EXISTS email text NULL;
+
 -- ---------------------------------------------------------------------------
 -- analysis_results
 -- ---------------------------------------------------------------------------
@@ -284,3 +288,34 @@ CREATE INDEX IF NOT EXISTS analysis_results_by_analysis_type ON analysis_results
 
 -- Access rules (existing: RLS enabled, no policies).
 ALTER TABLE analysis_results ENABLE ROW LEVEL SECURITY;
+
+-- ---------------------------------------------------------------------------
+-- email_outbox
+-- ---------------------------------------------------------------------------
+-- Token-email outbox. Rows are created by POST /api/app/purchases/set-email
+-- (the mobile app right after a successful Google Play purchase) and sent by
+-- GET /api/cron/send-emails. The token column holds the app access token
+-- (access_tokens.token); purchase_id links back to the purchases row.
+
+CREATE TABLE IF NOT EXISTS email_outbox (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    to_email text NOT NULL,
+    subject text NOT NULL,
+    body_text text NOT NULL,
+    body_html text NULL,
+    token text NOT NULL,
+    purchase_id uuid NULL,
+    send_after timestamptz NOT NULL,
+    sent_at timestamptz NULL,
+    cancelled_at timestamptz NULL,
+    attempts integer NOT NULL DEFAULT 0,
+    last_error text NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS email_outbox_by_send_after ON email_outbox (sent_at, send_after);
+
+-- Access rules (same deny-by-default as the other tables): RLS enabled with
+-- no policies, and no privileges granted to PUBLIC / anon / authenticated.
+ALTER TABLE email_outbox ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON email_outbox FROM PUBLIC, anon, authenticated;
