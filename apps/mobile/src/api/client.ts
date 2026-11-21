@@ -113,6 +113,10 @@ export interface ActiveSubscription {
     transactionId?: string;
 }
 
+export type SetPurchaseEmailResult =
+    | { success: false; reason: string }
+    | { success: true; action: 'inserted' | 'updated' | 'already_sent' };
+
 export interface RegisterUserResult {
     success: boolean;
     reason?: string;
@@ -288,6 +292,11 @@ export const api = {
         getActiveSubscription: (deviceId: string) =>
             request<ActiveSubscription | null>('/purchases/get-active-subscription', {
                 query: { deviceId },
+            }),
+        setEmail: (input: { deviceId: string; purchaseToken: string; email: string }) =>
+            request<SetPurchaseEmailResult>('/purchases/set-email', {
+                method: 'POST',
+                body: input,
             }),
     },
 

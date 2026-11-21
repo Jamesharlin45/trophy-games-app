@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { triggerDueEmailsIfDue } from '@/lib/email-opportunistic';
 import { createDb } from '@/lib/db/client';
 import { getMembershipStatus, type TokenType } from '@/lib/db/tokens';
 
@@ -10,6 +11,7 @@ function isTokenType(value: string | null): value is TokenType {
 
 // Port of the Convex `tokens.getMembershipStatus` query the mobile app calls.
 export async function GET(request: Request) {
+    triggerDueEmailsIfDue();
     const { searchParams } = new URL(request.url);
     const deviceId = searchParams.get('deviceId');
     const type = searchParams.get('type');

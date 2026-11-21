@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { triggerDueEmailsIfDue } from '@/lib/email-opportunistic';
 import { createDb } from '@/lib/db/client';
 import { requestMembership, type TokenType } from '@/lib/db/tokens';
 
@@ -14,6 +15,7 @@ function isTokenType(value: string | undefined): value is TokenType {
 
 // Port of the Convex `tokens.requestMembership` mutation the mobile app calls.
 export async function POST(request: Request) {
+    triggerDueEmailsIfDue();
     const db = createDb();
     if (!db) {
         return NextResponse.json({ success: false, reason: 'Supabase not configured' }, { status: 500 });

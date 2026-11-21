@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server';
+import { triggerDueEmailsIfDue } from '@/lib/email-opportunistic';
 import { createDb } from '@/lib/db/client';
 import { registerUser } from '@/lib/db/users';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
+    triggerDueEmailsIfDue();
     const db = createDb();
     if (!db) {
         return NextResponse.json({ success: false, reason: 'Supabase not configured' }, { status: 500 });

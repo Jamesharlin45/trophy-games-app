@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server';
+import { triggerDueEmailsIfDue } from '@/lib/email-opportunistic';
 import { createDb } from '@/lib/db/client';
 import { checkUsername } from '@/lib/db/users';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: Request) {
+    triggerDueEmailsIfDue();
     const { searchParams } = new URL(request.url);
     const username = searchParams.get('username');
     if (username === null) {
