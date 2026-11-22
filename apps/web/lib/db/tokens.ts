@@ -1,5 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { isValidEmail } from './email-outbox';
+import { isValidEmail, normalizeEmail } from './email-outbox';
+import {
+    isLegacyDeviceId,
+    isValidDeviceId,
+    legacyDeviceAccessAllowed,
+    LEGACY_ACCESS_DENIED_REASON,
+} from '@/lib/device-id';
 
 export type TokenType = 'vip' | 'paid';
 export type RequestStatus = 'pending' | 'approved' | 'rejected';
@@ -115,7 +121,9 @@ export async function createToken(
     db: SupabaseClient,
     input: { token: string; deviceId: string; username?: string; type: TokenType; matchId?: string; expiresAt?: string },
 ): Promise<{ token: string }> {
-    await db.from('access_tokens').insert({
+    const { error } = await db.from('access_tokens').insert({
+        convex_id: crypto.randomUUID(),
+        convex_created_at: new Date().toISOString(),
         token: input.token,
         device_id: input.deviceId,
         username: input.username ?? null,
@@ -127,7 +135,125 @@ export async function createToken(
         is_claimed: false,
         failed_attempts: 0,
     });
+    if (error) throw new Error(error.message);
     return { token: input.token };
+}
+
+/** Delete every unsent email row for a token (sent rows are kept as history).
+ * Returns the number of rows actually deleted. */
+export async function deletePendingOutboxForToken(db: SupabaseClient, token: string): Promise<number> {
+    const { data, error } = await db
+        .from('email_outbox')
+        .delete()
+        .eq('token', token)
+        .is('sent_at', null)
+        .select('id');
+    if (error) throw new Error(error.message);
+    return (data ?? []).length;
+}
+
+/** Delete every unsent email row attached to a membership request. */
+export async function deletePendingOutboxForRequest(db: SupabaseClient, requestId: string): Promise<number> {
+    const { data, error } = await db
+        .from('email_outbox')
+        .delete()
+        .eq('request_id', requestId)
+        .is('sent_at', null)
+        .select('id');
+    if (error) throw new Error(error.message);
+    return (data ?? []).length;
+}
+
+/** A purchase-backed token must not be re-granted by the app's restore flow
+ * after an admin deletes its access token. The purchase row stays as the
+ * payment record, with status 'revoked'. */
+async function revokePurchasesForToken(
+    db: SupabaseClient,
+    deviceId: string,
+    type: TokenType,
+): Promise<number> {
+    const { data, error } = await db
+        .from('purchases')
+        .update({ status: 'revoked', updated_at: new Date().toISOString() })
+        .eq('device_id', deviceId)
+        .eq('tier', type)
+        .neq('status', 'revoked')
+        .select('id');
+    if (error) throw new Error(error.message);
+    return (data ?? []).length;
+}
+
+/** Hard-delete an access token, its pending emails, and revoke the purchase
+ * it came from. Verifies every affected row count. */
+export async function deleteTokenHard(
+    db: SupabaseClient,
+    token: string,
+): Promise<{ deletedTokens: number; deletedOutbox: number; revokedPurchases: number }> {
+    const { data: rows, error: lookupError } = await db
+        .from('access_tokens')
+        .select('id, device_id, type')
+        .eq('token', token)
+        .limit(1);
+    if (lookupError) throw new Error(lookupError.message);
+    const row = (rows ?? [])[0] as { id: string; device_id: string; type: TokenType } | undefined;
+    if (!row) return { deletedTokens: 0, deletedOutbox: 0, revokedPurchases: 0 };
+
+    const { data: deleted, error: deleteError } = await db
+        .from('access_tokens')
+        .delete()
+        .eq('token', token)
+        .select('id');
+    if (deleteError) throw new Error(deleteError.message);
+    const deletedTokens = (deleted ?? []).length;
+    const deletedOutbox = await deletePendingOutboxForToken(db, token);
+    const revokedPurchases = await revokePurchasesForToken(db, row.device_id, row.type);
+    return { deletedTokens, deletedOutbox, revokedPurchases };
+}
+
+/** Hard-delete a membership request plus the token it issued and that
+ * token's pending emails. Verifies every affected row count. */
+export async function deleteRequestHard(
+    db: SupabaseClient,
+    requestId: string,
+): Promise<{
+    deletedRequests: number;
+    deletedTokens: number;
+    deletedOutbox: number;
+    revokedPurchases: number;
+}> {
+    const { data: rows, error: lookupError } = await db
+        .from('membership_requests')
+        .select('id, issued_token')
+        .eq('id', requestId)
+        .limit(1);
+    if (lookupError) throw new Error(lookupError.message);
+    const request = (rows ?? [])[0] as { id: string; issued_token: string | null } | undefined;
+    if (!request) {
+        return { deletedRequests: 0, deletedTokens: 0, deletedOutbox: 0, revokedPurchases: 0 };
+    }
+
+    const { data: deletedRequestRows, error: deleteRequestError } = await db
+        .from('membership_requests')
+        .delete()
+        .eq('id', requestId)
+        .select('id');
+    if (deleteRequestError) throw new Error(deleteRequestError.message);
+
+    let deletedTokens = 0;
+    let deletedOutbox = await deletePendingOutboxForRequest(db, requestId);
+    let revokedPurchases = 0;
+    if (request.issued_token) {
+        const result = await deleteTokenHard(db, request.issued_token);
+        deletedTokens = result.deletedTokens;
+        deletedOutbox += result.deletedOutbox;
+        revokedPurchases = result.revokedPurchases;
+    }
+    return {
+        deletedRequests: (deletedRequestRows ?? []).length,
+        deletedTokens,
+        deletedOutbox,
+        revokedPurchases,
+    };
 }
 
 /** api.tokens.revokeToken — deactivate by token and stamp revoked_at.
@@ -274,41 +400,74 @@ export async function getAllRequests(db: SupabaseClient): Promise<DbMembershipRe
 
 /** api.tokens.approveMembershipRequest — mark approved, stamp the token and
  * issue the access token row. */
+export interface ApproveMembershipResult {
+    success: boolean;
+    token?: string;
+    deviceId?: string;
+    username?: string;
+    email?: string;
+    type?: TokenType;
+    expiresAt?: string;
+}
+
 export async function approveMembershipRequest(
     db: SupabaseClient,
-    input: { requestId: string; token: string; matchId?: string; expiresAt?: string },
-): Promise<{ success: boolean }> {
-    const { data } = await db
+    input: {
+        requestId: string;
+        token: string;
+        matchId?: string;
+        expiresAt?: string;
+        /** Admin-supplied fallback only when the request has no valid email. */
+        email?: string;
+    },
+): Promise<ApproveMembershipResult> {
+    const { data, error: lookupError } = await db
         .from('membership_requests')
         .select('*')
         .eq('id', input.requestId)
         .limit(1);
+    if (lookupError) throw new Error(lookupError.message);
     const request = data && data.length > 0 ? data[0] as MembershipRequestRow : null;
     if (!request) return { success: false };
 
-    await db
+    const email = input.email ? normalizeEmail(input.email) : request.email ?? undefined;
+    const now = new Date().toISOString();
+    const { error: updateError } = await db
         .from('membership_requests')
         .update({
             status: 'approved',
-            resolved_at: new Date().toISOString(),
+            resolved_at: now,
             issued_token: input.token,
+            ...(email ? { email } : {}),
         })
         .eq('id', input.requestId);
+    if (updateError) throw new Error(updateError.message);
 
-    await db.from('access_tokens').insert({
+    const { error: insertError } = await db.from('access_tokens').insert({
+        convex_id: crypto.randomUUID(),
+        convex_created_at: now,
         token: input.token,
         device_id: request.device_id,
         username: request.username,
         type: request.type,
         match_id: input.matchId ?? null,
-        created_at: new Date().toISOString(),
+        created_at: now,
         expires_at: input.expiresAt ?? null,
         is_active: true,
         is_claimed: false,
         failed_attempts: 0,
     });
+    if (insertError) throw new Error(insertError.message);
 
-    return { success: true };
+    return {
+        success: true,
+        token: input.token,
+        deviceId: request.device_id,
+        username: request.username ?? undefined,
+        email,
+        type: request.type,
+        expiresAt: input.expiresAt ?? undefined,
+    };
 }
 
 /** api.tokens.rejectMembershipRequest — mark rejected and stamp resolution. */
@@ -364,6 +523,7 @@ interface UsersTableRow {
 interface AccessTokenLookupRow {
     id: string;
     token: string;
+    device_id: string;
     type: TokenType;
     username: string | null;
     match_id: string | null;
@@ -376,7 +536,9 @@ interface AccessTokenLookupRow {
 
 interface MembershipRequestLookupRow {
     id: string;
+    device_id: string;
     status: RequestStatus;
+    issued_token: string | null;
     revoked_at: string | null;
 }
 
@@ -397,14 +559,37 @@ async function findUser(
     return row;
 }
 
+/** A revoked purchase for the same device and tier must never grant access,
+ * even if its token row was somehow left active. */
+async function hasRevokedPurchase(db: SupabaseClient, deviceId: string, type: TokenType): Promise<boolean> {
+    const { data, error } = await db
+        .from('purchases')
+        .select('id')
+        .eq('device_id', deviceId)
+        .eq('tier', type)
+        .eq('status', 'revoked')
+        .limit(1);
+    if (error) throw new Error(error.message);
+    return (data ?? []).length > 0;
+}
+
 /** Shared implementation — the Convex verifyTokenImpl, ported 1:1
  * (both verifyToken and claimToken run it). */
 async function verifyTokenImpl(
     db: SupabaseClient,
     args: { token: string; deviceId: string; username?: string },
 ): Promise<VerifyTokenResult> {
+    if (isLegacyDeviceId(args.deviceId) && !legacyDeviceAccessAllowed()) {
+        return { valid: false, reason: LEGACY_ACCESS_DENIED_REASON };
+    }
+
     // Find user (same rule as Convex: by username, else by device).
     const user = await findUser(db, args);
+
+    // A username lookup must not bypass the legacy gate via an old user row.
+    if (user && isLegacyDeviceId(user.device_id) && !legacyDeviceAccessAllowed()) {
+        return { valid: false, reason: LEGACY_ACCESS_DENIED_REASON };
+    }
 
     if (user?.is_blocked) {
         return { valid: false, reason: 'Account is blocked. Contact support.' };
@@ -432,6 +617,15 @@ async function verifyTokenImpl(
 
     if (!tokenDoc.is_active) return { valid: false, reason: 'Token is inactive' };
     if (tokenDoc.revoked_at) return { valid: false, reason: 'Token revoked' };
+    if (tokenDoc.expires_at && new Date(tokenDoc.expires_at) < new Date()) {
+        return { valid: false, reason: 'Token expired' };
+    }
+    if (isLegacyDeviceId(tokenDoc.device_id) && !legacyDeviceAccessAllowed()) {
+        return { valid: false, reason: LEGACY_ACCESS_DENIED_REASON };
+    }
+    if (await hasRevokedPurchase(db, tokenDoc.device_id, tokenDoc.type)) {
+        return { valid: false, reason: 'Purchase access was revoked' };
+    }
 
     // Strict username binding check (if provided during token creation).
     if (tokenDoc.username && tokenDoc.username !== args.username) {
@@ -445,10 +639,6 @@ async function verifyTokenImpl(
                 .eq('id', user.id);
         }
         return { valid: false, reason: 'Token bound to different username' };
-    }
-
-    if (tokenDoc.expires_at && new Date(tokenDoc.expires_at) < new Date()) {
-        return { valid: false, reason: 'Token expired' };
     }
 
     // Success! Reset failed attempts and mark activity.
@@ -495,7 +685,10 @@ export async function requestMembership(
     db: SupabaseClient,
     input: { deviceId: string; username?: string; type: TokenType; email: string },
 ): Promise<MembershipRequestResult> {
-    const email = input.email.trim();
+    const email = normalizeEmail(input.email);
+    if (!isValidDeviceId(input.deviceId)) {
+        return { success: false, reason: 'Invalid device id' };
+    }
     if (!isValidEmail(email)) {
         return { success: false, reason: 'Invalid email address' };
     }
@@ -545,12 +738,29 @@ export async function requestMembership(
     return { success: true, requestId: (inserted[0] as { id: string }).id };
 }
 
-/** api.tokens.getMembershipStatus — active token, else the latest request
- * for the device+type, else 'none'. */
+/** True only for an unclaimed, active, unexpired, non-revoked token issued by
+ * an approved request. A deleted/inactive/expired/claimed token is no longer
+ * "approved" — the app must show "none" until the user claims a real token. */
+function isPendingApprovalToken(token: AccessTokenLookupRow, now: Date): boolean {
+    return (
+        token.is_active === true &&
+        !token.revoked_at &&
+        (!token.expires_at || new Date(token.expires_at) > now) &&
+        token.is_claimed === false
+    );
+}
+
+/** api.tokens.getMembershipStatus — 'active' only for a live claimed token,
+ * 'approved' only while the approved request's unclaimed token is still live,
+ * otherwise 'none' (or a still-pending/rejected request state). */
 export async function getMembershipStatus(
     db: SupabaseClient,
     input: { deviceId: string; username?: string; type: TokenType },
 ): Promise<MembershipStatusResult> {
+    const legacyDenied = isLegacyDeviceId(input.deviceId) && !legacyDeviceAccessAllowed();
+    if (legacyDenied) return { status: 'none' };
+
+    const now = new Date();
     let tokenRows: AccessTokenLookupRow[];
     if (input.username) {
         const { data } = await db
@@ -571,15 +781,20 @@ export async function getMembershipStatus(
     }
 
     const validToken = tokenRows.find(
-        (t) => !t.revoked_at && (!t.expires_at || new Date(t.expires_at) > new Date()) && t.is_claimed !== false,
+        (t) =>
+            t.is_active === true &&
+            t.is_claimed === true &&
+            !t.revoked_at &&
+            (!t.expires_at || new Date(t.expires_at) > now) &&
+            !(isLegacyDeviceId(t.device_id) && !legacyDeviceAccessAllowed()),
     );
-    if (validToken) {
+    if (validToken && !(await hasRevokedPurchase(db, validToken.device_id, validToken.type))) {
         return { status: 'active', token: validToken.token, matchId: validToken.match_id ?? undefined };
     }
 
     const { data: requestRows } = await db
         .from('membership_requests')
-        .select('id, status, revoked_at')
+        .select('id, device_id, status, issued_token, revoked_at')
         .eq('device_id', input.deviceId)
         .eq('type', input.type)
         .order('created_at', { ascending: false })
@@ -591,5 +806,32 @@ export async function getMembershipStatus(
     // A revoked latest request means the user has no access — don't fall
     // through to an older approved request.
     if (request.revoked_at) return { status: 'none' };
-    return { status: request.status, requestId: request.id };
+    if (request.status === 'pending' || request.status === 'rejected') {
+        return { status: request.status, requestId: request.id };
+    }
+
+    // 'approved' is a derived state, never a stored promise of access.
+    if (!request.issued_token) return { status: 'none' };
+    const { data: issuedRows, error } = await db
+        .from('access_tokens')
+        .select('*')
+        .eq('token', request.issued_token)
+        .limit(1);
+    if (error) throw new Error(error.message);
+    const issuedToken = (issuedRows ?? [])[0] as AccessTokenLookupRow | undefined;
+    if (!issuedToken) return { status: 'none' };
+    if (
+        issuedToken.device_id !== request.device_id &&
+        issuedToken.device_id !== input.deviceId
+    ) {
+        return { status: 'none' };
+    }
+    if (!isPendingApprovalToken(issuedToken, now)) return { status: 'none' };
+    if (isLegacyDeviceId(issuedToken.device_id) && !legacyDeviceAccessAllowed()) {
+        return { status: 'none' };
+    }
+    if (await hasRevokedPurchase(db, issuedToken.device_id, issuedToken.type)) {
+        return { status: 'none' };
+    }
+    return { status: 'approved', requestId: request.id };
 }

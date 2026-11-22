@@ -3,6 +3,7 @@ import { scheduleDueEmails } from '@/lib/email-opportunistic';
 import { createDb } from '@/lib/db/client';
 import { setPurchaseEmail } from '@/lib/db/email-outbox';
 import { isCronRequestAuthorized } from '@/lib/cron-auth';
+import { isValidDeviceId } from '@/lib/device-id';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,9 +36,9 @@ export async function POST(request: Request) {
     const deviceId = readString(body?.deviceId);
     const purchaseToken = readString(body?.purchaseToken);
     const email = readString(body?.email);
-    if (!deviceId || !purchaseToken || !email) {
+    if (!deviceId || !purchaseToken || !email || !isValidDeviceId(deviceId)) {
         return NextResponse.json(
-            { error: 'deviceId, purchaseToken and email are required' },
+            { error: 'valid deviceId, purchaseToken and email are required' },
             { status: 400 },
         );
     }

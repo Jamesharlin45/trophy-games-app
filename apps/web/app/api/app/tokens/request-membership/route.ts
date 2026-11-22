@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { triggerDueEmailsIfDue } from '@/lib/email-opportunistic';
 import { createDb } from '@/lib/db/client';
 import { requestMembership, type TokenType } from '@/lib/db/tokens';
+import { isValidDeviceId } from '@/lib/device-id';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,9 +34,9 @@ export async function POST(request: Request) {
     const username = readString(body?.username);
     const type = readString(body?.type);
     const email = readString(body?.email);
-    if (!deviceId || !isTokenType(type)) {
+    if (!deviceId || !isTokenType(type) || !isValidDeviceId(deviceId)) {
         return NextResponse.json(
-            { error: 'deviceId is required and type must be one of: vip, paid' },
+            { error: 'valid deviceId and type vip/paid are required' },
             { status: 400 },
         );
     }

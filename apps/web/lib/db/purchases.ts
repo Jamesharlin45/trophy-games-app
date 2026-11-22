@@ -1,4 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import {
+    isLegacyDeviceId,
+    isUuid,
+    isValidDeviceId,
+    legacyDeviceAccessAllowed,
+} from '@/lib/device-id';
 
 /** Port of the Convex `purchases` rows and helpers (packages/backend/convex/purchases.ts). */
 export type PurchaseTier = 'vip' | 'paid';
@@ -37,6 +43,76 @@ interface AccessTokenRow {
     type: PurchaseTier;
     device_id: string;
     is_active: boolean;
+    is_claimed?: boolean;
+    expires_at?: string | null;
+    revoked_at?: string | null;
+}
+
+/** Create a purchase-backed access token (always claimed: the buyer is the
+ * device that paid). All NOT NULL Convex import columns are populated. */
+async function issuePurchaseToken(
+    db: SupabaseClient,
+    input: { deviceId: string; tier: PurchaseTier; expiresAt: string | null },
+): Promise<string> {
+    const token = genToken(input.tier);
+    const now = new Date().toISOString();
+    const { error } = await db.from('access_tokens').insert({
+        convex_id: crypto.randomUUID(),
+        convex_created_at: now,
+        token,
+        device_id: input.deviceId,
+        type: input.tier,
+        created_at: now,
+        expires_at: input.expiresAt,
+        is_active: true,
+        is_claimed: true,
+        claimed_at: now,
+    });
+    if (error) throw new Error(error.message);
+    return token;
+}
+
+/**
+ * App update migration: the Play purchase token already exists but is bound
+ * to a shared legacy device id. Re-bind the purchase and its live token(s) to
+ * the new per-install UUID (or issue a fresh token if none is live) so paying
+ * subscribers keep access after updating.
+ */
+async function rebindLegacyPurchase(
+    db: SupabaseClient,
+    purchase: PurchaseRow,
+    deviceId: string,
+): Promise<string> {
+    const now = new Date().toISOString();
+    const { error: purchaseError } = await db
+        .from('purchases')
+        .update({ device_id: deviceId, updated_at: now })
+        .eq('id', purchase.id);
+    if (purchaseError) throw new Error(purchaseError.message);
+
+    const { data: tokenRows, error: tokenError } = await db
+        .from('access_tokens')
+        .select('id, token, expires_at, is_active, revoked_at')
+        .eq('device_id', purchase.device_id)
+        .eq('type', purchase.tier)
+        .order('created_at', { ascending: false });
+    if (tokenError) throw new Error(tokenError.message);
+    const live = ((tokenRows ?? []) as AccessTokenRow[]).filter(
+        (row) =>
+            row.is_active &&
+            !row.revoked_at &&
+            (!row.expires_at || new Date(row.expires_at) > new Date()),
+    );
+    if (live.length === 0) {
+        return issuePurchaseToken(db, { deviceId, tier: purchase.tier, expiresAt: purchase.expires_at });
+    }
+
+    const { error: rebindError } = await db
+        .from('access_tokens')
+        .update({ device_id: deviceId })
+        .in('id', live.map((row) => row.id));
+    if (rebindError) throw new Error(rebindError.message);
+    return live[0].token;
 }
 
 /** api.purchases.recordPurchase — records the purchase and auto-creates an
@@ -45,18 +121,23 @@ export async function recordPurchase(
     db: SupabaseClient,
     input: { deviceId: string; productId: string; purchaseToken: string; transactionId?: string; receiptData?: string },
 ): Promise<RecordPurchaseResult> {
+    if (!isValidDeviceId(input.deviceId)) {
+        return { success: false, reason: 'Invalid device id' };
+    }
+
     // Map productId → tier (same rule as Convex purchases.ts).
     const tier = getTierForProduct(input.productId);
     if (!tier) {
         return { success: false, reason: `Unknown product: ${input.productId}` };
     }
 
-    // Check for duplicate by purchase token.
-    const { data: existingRows } = await db
+    // Check for duplicate by purchase token (the authoritative Play id).
+    const { data: existingRows, error: existingError } = await db
         .from('purchases')
         .select('*')
         .eq('purchase_token', input.purchaseToken)
         .limit(1);
+    if (existingError) throw new Error(existingError.message);
     const existing = existingRows && existingRows.length > 0 ? (existingRows[0] as PurchaseRow) : null;
 
     if (existing) {
@@ -66,30 +147,32 @@ export async function recordPurchase(
         if (existing.status === 'revoked') {
             return { success: false, reason: 'revoked' };
         }
+        if (isUuid(input.deviceId) && isLegacyDeviceId(existing.device_id)) {
+            const token = await rebindLegacyPurchase(db, existing, input.deviceId);
+            return { success: true, alreadyRecorded: true, token };
+        }
         // Already recorded — just re-grant the access token if needed.
-        const { data: tokenRows } = await db
+        const { data: tokenRows, error: tokenError } = await db
             .from('access_tokens')
-            .select('token')
+            .select('id, token, expires_at, is_active, revoked_at')
             .eq('device_id', input.deviceId)
             .eq('type', tier)
             .eq('is_active', true)
-            .limit(1);
-        if (tokenRows && tokenRows.length > 0) {
-            return { success: true, alreadyRecorded: true, token: (tokenRows[0] as { token: string }).token };
+            .order('created_at', { ascending: false });
+        if (tokenError) throw new Error(tokenError.message);
+        const live = ((tokenRows ?? []) as AccessTokenRow[]).find(
+            (row) => !row.revoked_at && (!row.expires_at || new Date(row.expires_at) > new Date()),
+        );
+        if (live) {
+            return { success: true, alreadyRecorded: true, token: live.token };
         }
 
-        // Purchase exists but no token — create one.
-        const token = genToken(tier);
-        const { error } = await db.from('access_tokens').insert({
-            convex_id: crypto.randomUUID(),
-            token,
-            device_id: input.deviceId,
-            type: tier,
-            created_at: new Date().toISOString(),
-            is_active: true,
-            is_claimed: true,
+        // Purchase exists but no live token — issue a replacement.
+        const token = await issuePurchaseToken(db, {
+            deviceId: input.deviceId,
+            tier,
+            expiresAt: existing.expires_at,
         });
-        if (error) throw new Error(error.message);
         return { success: true, alreadyRecorded: true, token };
     }
 
@@ -97,9 +180,10 @@ export async function recordPurchase(
     const expiresAt = getExpiryForProduct(input.productId);
     const now = new Date().toISOString();
 
-    // Insert purchase record.
+    // Insert purchase record (keep the payment row even after revocation).
     const { error: insertError } = await db.from('purchases').insert({
         convex_id: crypto.randomUUID(),
+        convex_created_at: now,
         device_id: input.deviceId,
         product_id: input.productId,
         tier,
@@ -113,20 +197,7 @@ export async function recordPurchase(
     });
     if (insertError) throw new Error(insertError.message);
 
-    // Create access token.
-    const token = genToken(tier);
-    const { error: tokenError } = await db.from('access_tokens').insert({
-        convex_id: crypto.randomUUID(),
-        token,
-        device_id: input.deviceId,
-        type: tier,
-        created_at: now,
-        expires_at: expiresAt,
-        is_active: true,
-        is_claimed: true,
-    });
-    if (tokenError) throw new Error(tokenError.message);
-
+    const token = await issuePurchaseToken(db, { deviceId: input.deviceId, tier, expiresAt });
     return { success: true, alreadyRecorded: false, token, tier, expiresAt };
 }
 
@@ -135,13 +206,15 @@ export async function recordPurchase(
  * Revoked purchases never count: revokeToken sets their status to 'revoked'
  * and only 'verified' rows are accepted here. */
 export async function getActiveSubscription(db: SupabaseClient, deviceId: string): Promise<ActiveSubscription | null> {
-    const { data } = await db
+    if (isLegacyDeviceId(deviceId) && !legacyDeviceAccessAllowed()) return null;
+    const { data, error } = await db
         .from('purchases')
         .select('*')
         .eq('device_id', deviceId)
         .eq('status', 'verified')
         .neq('status', 'revoked')
         .order('created_at', { ascending: false });
+    if (error) throw new Error(error.message);
     const purchase = data?.find((p) => !p.expires_at || new Date(p.expires_at) > new Date());
     if (!purchase) return null;
     return {

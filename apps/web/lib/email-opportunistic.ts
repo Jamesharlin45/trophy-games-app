@@ -30,5 +30,22 @@ export function scheduleDueEmails(): void {
     });
 }
 
+/** Send one approval/resend immediately after the response is flushed. The
+ * token value is used only as a database filter — it is never logged. */
+export function scheduleTokenEmail(token: string): void {
+    after(async () => {
+        try {
+            const db = createDb();
+            if (!db) return;
+            await sendDueEmails(db, { token, limit: 5 });
+        } catch (error) {
+            console.error(
+                '[Email] Background send failed:',
+                error instanceof Error ? error.message : 'unknown error',
+            );
+        }
+    });
+}
+
 /** Backwards-compatible name used by the existing /api/app/* routes. */
 export const triggerDueEmailsIfDue = scheduleDueEmails;

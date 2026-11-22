@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { isLegacyDeviceId, isUuid, isValidDeviceId } from '@/lib/device-id';
 
 export interface DbUser {
     _id: string;
@@ -71,20 +72,51 @@ export async function registerUser(
     username: string,
     deviceId: string,
 ): Promise<{ success: boolean; reason?: string }> {
-    const { data: byUsername } = await db.from('users').select('id').eq('username', username).limit(1);
-    if (byUsername && byUsername.length > 0) {
+    if (!isValidDeviceId(deviceId)) {
+        return { success: false, reason: 'Invalid device id' };
+    }
+
+    const { data: byUsernameRows, error: usernameError } = await db
+        .from('users')
+        .select('id, device_id')
+        .eq('username', username)
+        .limit(1);
+    if (usernameError) throw new Error(usernameError.message);
+    const byUsername = (byUsernameRows ?? [])[0] as Pick<UserRow, 'id' | 'device_id'> | undefined;
+    if (byUsername) {
+        // After an app update the same person has a new per-install UUID.
+        // Re-bind their old row instead of losing the username to a "taken"
+        // error. Only legacy -> UUID migration is allowed here.
+        if (isUuid(deviceId) && isLegacyDeviceId(byUsername.device_id)) {
+            const { error } = await db
+                .from('users')
+                .update({ device_id: deviceId, last_active_at: new Date().toISOString() })
+                .eq('id', byUsername.id);
+            if (error) throw new Error(error.message);
+            return { success: true };
+        }
         return { success: false, reason: 'Username already taken' };
     }
 
-    const { data: byDevice } = await db.from('users').select('id').eq('device_id', deviceId).limit(1);
-    if (byDevice && byDevice.length > 0) {
+    const { data: byDeviceRows, error: deviceError } = await db
+        .from('users')
+        .select('id')
+        .eq('device_id', deviceId)
+        .limit(1);
+    if (deviceError) throw new Error(deviceError.message);
+    const byDevice = (byDeviceRows ?? [])[0] as Pick<UserRow, 'id'> | undefined;
+    if (byDevice) {
         const now = new Date().toISOString();
-        await db.from('users').update({ username, last_active_at: now }).eq('id', (byDevice[0] as UserRow).id);
+        const { error } = await db
+            .from('users')
+            .update({ username, last_active_at: now })
+            .eq('id', byDevice.id);
+        if (error) throw new Error(error.message);
         return { success: true };
     }
 
     const now = new Date().toISOString();
-    await db.from('users').insert({
+    const { error } = await db.from('users').insert({
         convex_id: crypto.randomUUID(),
         convex_created_at: now,
         created_at: now,
@@ -94,6 +126,7 @@ export async function registerUser(
         failed_attempts: 0,
         is_blocked: false,
     });
+    if (error) throw new Error(error.message);
     return { success: true };
 }
 
