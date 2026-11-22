@@ -12,7 +12,9 @@
 
 const BASE_URL = 'https://v3.football.api-sports.io';
 
-/** Fixture trimmed to the fields the admin "pick from fixtures" UI needs. */
+/** Fixture trimmed to the fields the admin "pick from fixtures" UI needs,
+ * plus the scores settlement uses: the 90-minute score (score.fulltime) and
+ * the final score (goals), both present once the fixture has started. */
 export interface ApiFootballFixture {
     id: number;
     /** Kickoff time, ISO-8601 (e.g. "2026-11-19T18:00:00+00:00"). */
@@ -21,6 +23,13 @@ export interface ApiFootballFixture {
     homeTeam: { name: string; logo: string };
     awayTeam: { name: string; logo: string };
     status: string;
+    /** 90-minute score (score.fulltime), null until the fixture has started. */
+    homeScore: number | null;
+    awayScore: number | null;
+    /** Final score including extra time (goals), falling back to the
+     * 90-minute score — same display semantics as settle.ts. */
+    finalHomeScore: number | null;
+    finalAwayScore: number | null;
 }
 
 /** Fixture reduced to what result settlement needs: status, the 90-minute
@@ -52,6 +61,8 @@ interface RawFixture {
         id: number;
         date: string;
         status: { short?: string; long?: string };
+        score?: { fulltime?: { home?: number | null; away?: number | null } };
+        goals?: { home?: number | null; away?: number | null };
     };
     league: { id: number; name: string; country?: string; logo?: string };
     teams: {
@@ -113,6 +124,10 @@ function extractErrors(errors: unknown): string[] {
 }
 
 function toFixture(f: RawFixture): ApiFootballFixture {
+    const home = f.fixture?.score?.fulltime?.home;
+    const away = f.fixture?.score?.fulltime?.away;
+    const finalHome = f.fixture?.goals?.home;
+    const finalAway = f.fixture?.goals?.away;
     return {
         id: f.fixture?.id ?? 0,
         date: f.fixture?.date ?? '',
@@ -120,6 +135,10 @@ function toFixture(f: RawFixture): ApiFootballFixture {
         homeTeam: { name: f.teams?.home?.name ?? '', logo: f.teams?.home?.logo ?? '' },
         awayTeam: { name: f.teams?.away?.name ?? '', logo: f.teams?.away?.logo ?? '' },
         status: f.fixture?.status?.short ?? f.fixture?.status?.long ?? '',
+        homeScore: typeof home === 'number' ? home : null,
+        awayScore: typeof away === 'number' ? away : null,
+        finalHomeScore: typeof finalHome === 'number' ? finalHome : (typeof home === 'number' ? home : null),
+        finalAwayScore: typeof finalAway === 'number' ? finalAway : (typeof away === 'number' ? away : null),
     };
 }
 

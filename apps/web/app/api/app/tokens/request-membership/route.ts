@@ -32,15 +32,19 @@ export async function POST(request: Request) {
     const deviceId = readString(body?.deviceId);
     const username = readString(body?.username);
     const type = readString(body?.type);
+    const email = readString(body?.email);
     if (!deviceId || !isTokenType(type)) {
         return NextResponse.json(
             { error: 'deviceId is required and type must be one of: vip, paid' },
             { status: 400 },
         );
     }
+    if (!email) {
+        return NextResponse.json({ error: 'email is required' }, { status: 400 });
+    }
 
     try {
-        return NextResponse.json(await requestMembership(db, { deviceId, username, type }));
+        return NextResponse.json(await requestMembership(db, { deviceId, username, type, email }));
     } catch (error) {
         console.error('[API App Tokens RequestMembership] Error:', error);
         return NextResponse.json({ error: 'Failed to send request' }, { status: 500 });

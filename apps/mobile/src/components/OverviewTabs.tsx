@@ -6,7 +6,6 @@
 
 import { StyleSheet, Text, View } from 'react-native';
 import type { LayoutChangeEvent } from 'react-native';
-import type { ComponentType } from 'react';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import type { LucideIcon } from 'lucide-react-native';
 import { useEffect, useState } from 'react';

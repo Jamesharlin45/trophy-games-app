@@ -5,7 +5,7 @@
 
 import { TouchableOpacity } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, useReducedMotion, withSpring } from 'react-native-reanimated';
+import { useAnimatedStyle, useSharedValue, useReducedMotion, withSpring } from 'react-native-reanimated';
 
 export interface PressScaleProps {
     style?: StyleProp<ViewStyle>;

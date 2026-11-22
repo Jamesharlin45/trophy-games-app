@@ -8,10 +8,12 @@ import { useTheme } from '../../context/ThemeContext';
 import type { ThemeColors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import { api } from '../../api/client';
-import type { ApiMatch } from '../../api/client';
+import type { ApiMatch, HistoryResponse, HistoryResult } from '../../api/client';
 import { useScreenQuery } from '../../hooks/useLiveQuery';
 import { useMembershipAccess } from '../../hooks/useMembershipAccess';
 import i18n from '../../locales';
+
+type HistoryMatch = HistoryResponse['matches'][number];
 
 const toTitleCase = (str: string) =>
     str.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
@@ -26,6 +28,68 @@ function getDateRange() {
     return dates;
 }
 
+/** Pick text shown under each card (pick, then suggested bet, then the
+ * AI prediction sentence). */
+function pickText(match: HistoryMatch, access: { paid: boolean; vip: boolean }): string {
+    const locked = isLockedMatch(match, access);
+    if (locked) return i18n.t('matchCard.lockedPreview');
+    return match.aiPrediction?.pick ?? match.aiPrediction?.suggestedBet ?? match.aiPrediction?.prediction ?? '—';
+}
+
+function isLockedMatch(match: HistoryMatch, access: { paid: boolean; vip: boolean }): boolean {
+    return (match.matchType === 'paid' && !access.paid) || (match.matchType === 'vip' && !access.vip);
+}
+
+function resultOf(match: HistoryMatch): HistoryResult {
+    return match.result ?? 'pending';
+}
+
+/** Convert the history-route result vocabulary ('won'/'lost'/'void'/'pending')
+ * to the stored one ('win'/'lose'/'void'/'pending') for the shared MatchCard,
+ * which reads the match shape but not the result. */
+function toStoredResult(result: HistoryResult): NonNullable<ApiMatch['result']> {
+    if (result === 'won') return 'win';
+    if (result === 'lost') return 'lose';
+    return result;
+}
+
+function toApiMatch(match: HistoryMatch): ApiMatch {
+    return { ...match, result: toStoredResult(resultOf(match)) };
+}
+
+function ResultBadge({ result, themeColors }: { result: HistoryResult; themeColors: ThemeColors }) {
+    const label = result === 'won'
+        ? i18n.t('wins.resultWin')
+        : result === 'lost'
+            ? i18n.t('wins.resultLoss')
+            : result === 'void'
+                ? i18n.t('wins.resultVoid')
+                : i18n.t('wins.resultPending');
+    const bg = result === 'won'
+        ? themeColors.success
+        : result === 'lost'
+            ? themeColors.danger
+            : result === 'void'
+                ? themeColors.glass
+                : themeColors.warning;
+    const fg = result === 'void' ? themeColors.mutedText : themeColors.accentText;
+    return (
+        <View style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            paddingHorizontal: 10,
+            paddingVertical: 4,
+            borderRadius: 9,
+            borderWidth: 1,
+            backgroundColor: bg,
+            borderColor: result === 'void' ? themeColors.border : bg,
+        }}>
+            <Text style={{ fontSize: 10, fontWeight: '700', letterSpacing: 0.5, color: fg }}>{label}</Text>
+        </View>
+    );
+}
+
 export default function WinsScreen() {
     const { themeColors } = useTheme();
     const styles = getStyles(themeColors);
@@ -38,9 +102,10 @@ export default function WinsScreen() {
         data: historyData,
         loading,
         refetch,
-    } = useScreenQuery(() => api.matches.history(200), [], { pollMs: 60000 });
+    } = useScreenQuery(() => api.matches.history(200, selectedDate), [selectedDate], { pollMs: 60000 });
 
-    const matches = historyData ?? [];
+    const history = historyData ?? { matches: [], strikeRate: 0, strikeRate30d: 0 };
+    const matches = history.matches;
 
     const dates = useMemo(() => getDateRange(), []);
 
@@ -69,10 +134,10 @@ export default function WinsScreen() {
         setRefreshing(false);
     }, [refetch]);
 
-    // "Win" = home side won (final score), matching the web History strike rate.
-    const isWin = (m: ApiMatch) => m.homeScore !== undefined && m.awayScore !== undefined && m.homeScore > m.awayScore;
-    const winCount = dayMatches.filter(isWin).length;
-    const winRate = dayMatches.length > 0 ? Math.round((winCount / dayMatches.length) * 100) : 0;
+    const winsCount = dayMatches.filter(m => resultOf(m) === 'won').length;
+    const totalCount = dayMatches.length;
+    const strikeRate = history.strikeRate ?? 0;
+    const strikeRate30d = history.strikeRate30d ?? 0;
 
     return (
         <View style={[styles.container, { backgroundColor: themeColors.background }]}>
@@ -117,17 +182,22 @@ export default function WinsScreen() {
                 <View style={styles.statBox}>
                     <Trophy size={18} color={themeColors.accent} />
                     <View>
-                        <Text style={[styles.statValue, { color: themeColors.text }]}>{winRate}%</Text>
+                        <Text style={[styles.statValue, { color: themeColors.text }]}>{strikeRate}%</Text>
                         <Text style={[styles.statLabel, { color: themeColors.mutedText }]}>{i18n.t('wins.strikeRate')}</Text>
                     </View>
                 </View>
-                <View style={[styles.statDivider, { backgroundColor: themeColors.border }]} />
+                <View style={styles.statDivider} />
                 <View style={styles.statBox}>
                     <TrendingUp size={18} color={themeColors.blue10} />
                     <View>
-                        <Text style={[styles.statValue, { color: themeColors.text }]}>{winCount}/{dayMatches.length}</Text>
-                        <Text style={[styles.statLabel, { color: themeColors.mutedText }]}>{i18n.t('wins.winsTotal')}</Text>
+                        <Text style={[styles.statValue, { color: themeColors.text }]}>{strikeRate30d}%</Text>
+                        <Text style={[styles.statLabel, { color: themeColors.mutedText }]}>{i18n.t('wins.strikeRate30d')}</Text>
                     </View>
+                </View>
+                <View style={styles.statDivider} />
+                <View style={styles.statBox}>
+                    <Text style={[styles.statValue, { color: themeColors.text }]}>{winsCount}/{totalCount}</Text>
+                    <Text style={[styles.statLabel, { color: themeColors.mutedText }]}>{i18n.t('wins.winsTotal')}</Text>
                 </View>
             </View>
 
@@ -154,12 +224,24 @@ export default function WinsScreen() {
                 ) : filteredMatches.length > 0 ? (
                     <View style={styles.fixtureGrid}>
                         {filteredMatches.map((match, idx) => (
-                            <MatchCard
-                                key={match._id || match.id}
-                                match={match}
-                                access={{ paid: access.paid, vip: access.vip }}
-                                index={idx}
-                            />
+                            <View key={match._id || match.id} style={styles.resultItem}>
+                                <MatchCard
+                                    match={toApiMatch(match)}
+                                    access={{ paid: access.paid, vip: access.vip }}
+                                    index={idx}
+                                />
+                                <View style={styles.metaRow}>
+                                    <View style={styles.metaContent}>
+                                        <Text style={[styles.metaLabel, { color: themeColors.mutedText }]} numberOfLines={1}>
+                                            {i18n.t('wins.pick')}
+                                        </Text>
+                                        <Text style={[styles.metaText, { color: themeColors.text }]} numberOfLines={2}>
+                                            {pickText(match, access)}
+                                        </Text>
+                                    </View>
+                                    <ResultBadge result={resultOf(match)} themeColors={themeColors} />
+                                </View>
+                            </View>
                         ))}
                     </View>
                 ) : (
@@ -180,55 +262,69 @@ export default function WinsScreen() {
 
 function getStyles(themeColors: ThemeColors) {
     return StyleSheet.create({
-    container: { flex: 1 },
-    calendarStrip: {
-        borderBottomWidth: 1,
-        paddingBottom: 2,
-    },
-    filterSection: { paddingHorizontal: 14, paddingTop: 8 },
-    leaguesScroll: { paddingVertical: 4, gap: 8 },
-    leagueChip: {
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: themeColors.border,
-    },
-    leagueChipText: { ...typography.chipText },
-    statsRow: {
-        flexDirection: 'row',
-        paddingVertical: 14,
-        paddingHorizontal: 20,
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        borderBottomWidth: 1,
-    },
-    statBox: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-    statValue: { ...typography.statValue },
-    statLabel: { ...typography.statLabel },
-    statDivider: { width: 1, height: 22 },
-    content: { flex: 1 },
-    scrollContent: { padding: 14, paddingBottom: 40 },
-    sectionHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-        marginBottom: 14,
-        marginTop: 6,
-    },
-    sectionTitle: { ...typography.sectionTitle },
-    loadingContainer: { paddingVertical: 60, alignItems: 'center' },
-    skeletonList: { padding: 8 },
-    fixtureGrid: { gap: 8 },
-    emptyContainer: { paddingVertical: 70, alignItems: 'center', gap: 14 },
-    emptyIconWrapper: {
-        width: 72,
-        height: 72,
-        borderRadius: 36,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    emptyText: { ...typography.emptyText },
-    emptySubtext: { ...typography.emptySubtext, textAlign: 'center', paddingHorizontal: 36 },
+        container: { flex: 1 },
+        calendarStrip: {
+            borderBottomWidth: 1,
+            paddingBottom: 2,
+        },
+        filterSection: { paddingHorizontal: 14, paddingTop: 8 },
+        leaguesScroll: { paddingVertical: 4, gap: 8 },
+        leagueChip: {
+            paddingHorizontal: 12,
+            paddingVertical: 6,
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: themeColors.border,
+        },
+        leagueChipText: { ...typography.chipText },
+        statsRow: {
+            flexDirection: 'row',
+            paddingVertical: 14,
+            paddingHorizontal: 20,
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            borderBottomWidth: 1,
+        },
+        statBox: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+        statValue: { ...typography.statValue },
+        statLabel: { ...typography.statLabel },
+        statDivider: { width: 1, height: 22 },
+        content: { flex: 1 },
+        scrollContent: { padding: 14, paddingBottom: 40 },
+        sectionHeader: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 8,
+            marginBottom: 14,
+            marginTop: 6,
+        },
+        sectionTitle: { ...typography.sectionTitle },
+        loadingContainer: { paddingVertical: 60, alignItems: 'center' },
+        skeletonList: { padding: 8 },
+        fixtureGrid: { gap: 8 },
+        resultItem: { marginBottom: 2 },
+        metaRow: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 8,
+            paddingHorizontal: 12,
+            paddingVertical: 6,
+            borderTopWidth: 1,
+            borderTopColor: themeColors.border,
+        },
+        metaContent: { flex: 1, gap: 3, minWidth: 0 },
+        metaLabel: { fontSize: 10, fontWeight: '600', letterSpacing: 0.3 },
+        metaText: { fontSize: 12, fontWeight: '500', lineHeight: 16 },
+        emptyContainer: { paddingVertical: 70, alignItems: 'center', gap: 14 },
+        emptyIconWrapper: {
+            width: 72,
+            height: 72,
+            borderRadius: 36,
+            alignItems: 'center',
+            justifyContent: 'center',
+        },
+        emptyText: { ...typography.emptyText },
+        emptySubtext: { ...typography.emptySubtext, textAlign: 'center', paddingHorizontal: 36 },
     });
 }

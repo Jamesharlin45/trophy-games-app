@@ -8,16 +8,34 @@
  * owned subscription via `POST /purchases/record-purchase` (deduped by
  * `purchaseToken` server-side).
  *
- * It is deliberately silent: no alerts, no retries, no loops. Any failure
- * (Expo Go, no Play Store, offline, no purchases) simply ends the attempt.
+ * It is deliberately quiet: no retries, no loops, and every failure (Expo Go,
+ * no Play Store, offline, no purchases) simply ends the attempt. A purchase
+ * that *was* restored is reported once through `onRestored` so the UI can
+ * confirm it.
  */
 
 import { useEffect, useRef } from 'react';
 import { Platform } from 'react-native';
 import * as Application from 'expo-application';
 import type { Purchase } from 'react-native-iap';
-import { ALL_PRODUCT_IDS } from '@trophy-games/shared/subscriptions';
+import { ALL_PRODUCT_IDS, getTierForProduct } from '@trophy-games/shared/subscriptions';
 import { api } from '../api/client';
+
+/** A purchase that was re-recorded for this device during the restore. */
+export interface RestoredPurchase {
+    tier: 'vip' | 'paid';
+    productId: string;
+    expiresAt?: string;
+    /** Needed to offer the backup-token email for this purchase. */
+    purchaseToken: string;
+    /** True only when this restore created the access token. */
+    createdToken: boolean;
+}
+
+interface UseRestorePurchasesOptions {
+    /** Called once for every purchase the restore managed to re-record. */
+    onRestored?: (purchase: RestoredPurchase) => void;
+}
 
 interface BillingModule {
     initConnection: () => Promise<boolean>;
@@ -40,8 +58,10 @@ function getBillingModule(): BillingModule | null {
     return billingModule;
 }
 
-export function useRestorePurchases(): void {
+export function useRestorePurchases(options: UseRestorePurchasesOptions = {}): void {
     const attemptedRef = useRef(false);
+    const onRestoredRef = useRef(options.onRestored);
+    onRestoredRef.current = options.onRestored;
 
     useEffect(() => {
         if (attemptedRef.current) return;
@@ -67,22 +87,40 @@ export function useRestorePurchases(): void {
                 if (active) return;
 
                 const owned = await mod.getAvailablePurchases();
+                let restored: RestoredPurchase | null = null;
                 for (const item of owned) {
                     if (item.purchaseState !== 'purchased') continue;
                     if (!item.purchaseToken) continue;
                     if (!ALL_PRODUCT_IDS.includes(item.productId)) continue;
 
                     try {
-                        await api.purchases.recordPurchase({
+                        const result = await api.purchases.recordPurchase({
                             deviceId,
                             productId: item.productId,
                             purchaseToken: item.purchaseToken,
                             transactionId: item.transactionId ?? undefined,
                         });
+                        if (result.success) {
+                            const tier = result.alreadyRecorded
+                                ? getTierForProduct(item.productId)
+                                : result.tier;
+                            if (tier) {
+                                restored = {
+                                    tier,
+                                    productId: item.productId,
+                                    expiresAt: result.alreadyRecorded ? undefined : result.expiresAt,
+                                    purchaseToken: item.purchaseToken,
+                                    createdToken: !result.alreadyRecorded,
+                                };
+                            }
+                        }
                     } catch {
                         // Silent by design — restoring entitlements must never
                         // surface a network or store error to the user.
                     }
+                }
+                if (restored) {
+                    onRestoredRef.current?.(restored);
                 }
             } catch {
                 // Billing unavailable, user cancelled the store prompt, etc.

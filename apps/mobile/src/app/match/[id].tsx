@@ -41,7 +41,6 @@ import { fetchMatchStats } from '../../api/footystats';
 import type { MatchDetailData } from '../../api/footystats';
 import { useTheme } from '../../context/ThemeContext';
 import type { ThemeColors } from '../../theme/colors';
-import { typography } from '../../theme/typography';
 import { headerBgColor, headerTextColor, readableCopy } from '../../lib/colors';
 import { useTeamColors } from '../../hooks/useTeamColors';
 import { useMembershipAccess } from '../../hooks/useMembershipAccess';
@@ -199,6 +198,17 @@ export default function MatchDetailScreen() {
     const kickoff = match ? new Date(match.timestamp) : new Date(0);
     const kickMs = match ? kickoff.getTime() : 0;
 
+    // Declared before the early returns so hooks always run in the same order.
+    const rawSources = match?.aiPrediction?.sources;
+    const sources = useMemo(
+        () => (Array.isArray(rawSources) ? rawSources.filter(Boolean) : []),
+        [rawSources],
+    );
+    const sourceList = useMemo(
+        () => sources.map((s) => ({ key: s, domain: domainOf(s), url: s })),
+        [sources],
+    );
+
     const tabs = useMemo(
         () => [
             { id: 'overview', label: textFor('matchDetail.tabOverview', 'Overview'), Icon: Eye },
@@ -244,7 +254,6 @@ export default function MatchDetailScreen() {
     const confidence = typeof ai?.confidence === 'number' ? Math.max(0, Math.min(100, ai.confidence)) : undefined;
     const risk = ai?.risk;
     const reasoningLines = Array.isArray(ai?.reasoning) ? ai.reasoning.filter(Boolean) : [];
-    const sources = Array.isArray(ai?.sources) ? ai.sources.filter(Boolean) : [];
 
     const nowMs = Date.now();
     const showCountdown = kickMs > 0 && kickMs > nowMs && kickMs - nowMs < 24 * 60 * 60 * 1000;
@@ -283,11 +292,6 @@ export default function MatchDetailScreen() {
             // Sharing is a convenience — never block the screen.
         }
     };
-
-    const sourceList = useMemo(
-        () => sources.map((s) => ({ key: s, domain: domainOf(s), url: s })),
-        [sources],
-    );
 
     return (
         <SafeAreaView style={styles.container} edges={['left', 'right', 'top']}>
@@ -599,8 +603,8 @@ interface ExtraRow {
 }
 
 function ExtraFields({ match }: { match: MatchViewModel }) {
-    const rows = buildExtraRows(match);
     const { themeColors } = useTheme();
+    const rows = buildExtraRows(match, themeColors);
     const styles = getStyles(themeColors);
     if (rows.length === 0) return null;
 
@@ -642,9 +646,8 @@ function FormBadge({ char, themeColors }: { char: string; themeColors: ThemeColo
     );
 }
 
-function buildExtraRows(match: MatchViewModel): ExtraRow[] {
+function buildExtraRows(match: MatchViewModel, themeColors: ThemeColors): ExtraRow[] {
     const rows: ExtraRow[] = [];
-    const { themeColors } = useTheme();
     const styles = getStyles(themeColors);
 
     if (match.potentials && match.potentials.length > 0) {

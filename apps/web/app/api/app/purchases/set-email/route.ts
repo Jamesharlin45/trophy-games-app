@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { triggerDueEmailsIfDue } from '@/lib/email-opportunistic';
+import { scheduleDueEmails } from '@/lib/email-opportunistic';
 import { createDb } from '@/lib/db/client';
 import { setPurchaseEmail } from '@/lib/db/email-outbox';
 import { isCronRequestAuthorized } from '@/lib/cron-auth';
@@ -19,7 +19,6 @@ function readString(value: unknown): string | undefined {
 // immediate only when the caller presents the CRON_SECRET (same helper as
 // the cron routes); every other caller gets the normal delay.
 export async function POST(request: Request) {
-    triggerDueEmailsIfDue();
     const db = createDb();
     if (!db) {
         return NextResponse.json({ success: false, reason: 'Supabase not configured' }, { status: 500 });
@@ -46,7 +45,11 @@ export async function POST(request: Request) {
     const dueNow = body.dueNow === true && isCronRequestAuthorized(request);
 
     try {
-        return NextResponse.json(await setPurchaseEmail(db, { deviceId, purchaseToken, email, dueNow }));
+        const result = await setPurchaseEmail(db, { deviceId, purchaseToken, email, dueNow });
+        // Try the send after the response is flushed. Vercel keeps after()
+        // work alive; a plain detached promise used to be frozen mid-send.
+        if (result.success) scheduleDueEmails();
+        return NextResponse.json(result);
     } catch (error) {
         console.error('[API App Purchases SetEmail] Error:', error);
         return NextResponse.json({ success: false, reason: 'Failed to set email' }, { status: 500 });

@@ -48,7 +48,9 @@ CREATE TABLE IF NOT EXISTS matches (
     kickoff timestamptz NOT NULL,
     score text NOT NULL,
     status text NOT NULL,
-    result text NULL CHECK (result IN ('pending', 'win', 'lose', 'draw')),
+    -- 'void' covers picks that settle on a technicality (draw no-bet,
+    -- over/under push) and cancelled/postponed/abandoned fixtures.
+    result text NULL CHECK (result IN ('pending', 'win', 'lose', 'draw', 'void')),
     tier text NULL CHECK (tier IN ('free', 'paid', 'vip', 'unassigned')),
     odds jsonb NULL,
     trending boolean NULL,
@@ -132,6 +134,9 @@ CREATE INDEX IF NOT EXISTS access_tokens_by_token ON access_tokens (token);
 CREATE INDEX IF NOT EXISTS access_tokens_by_device_id ON access_tokens (device_id);
 CREATE INDEX IF NOT EXISTS access_tokens_by_username ON access_tokens (username);
 
+-- Added by the access-revoke/expiry migration; keep setup.sql re-runnable.
+ALTER TABLE access_tokens ADD COLUMN IF NOT EXISTS revoked_at text NULL;
+
 -- Access rules (existing: RLS enabled, no policies).
 ALTER TABLE access_tokens ENABLE ROW LEVEL SECURITY;
 
@@ -155,6 +160,11 @@ CREATE TABLE IF NOT EXISTS membership_requests (
 CREATE INDEX IF NOT EXISTS membership_requests_by_device_id ON membership_requests (device_id);
 CREATE INDEX IF NOT EXISTS membership_requests_by_username ON membership_requests (username);
 CREATE INDEX IF NOT EXISTS membership_requests_by_status ON membership_requests (status);
+
+-- Token-by-email on manual requests. The address is captured on the device
+-- before the request is sent, then used when the admin approves it.
+ALTER TABLE membership_requests ADD COLUMN IF NOT EXISTS email text NULL;
+ALTER TABLE membership_requests ADD COLUMN IF NOT EXISTS revoked_at text NULL;
 
 -- Access rules (existing: RLS enabled, no policies).
 ALTER TABLE membership_requests ENABLE ROW LEVEL SECURITY;
@@ -253,6 +263,13 @@ ALTER TABLE purchases ENABLE ROW LEVEL SECURITY;
 -- EXISTS keeps this file safe to re-run on databases created earlier.
 ALTER TABLE purchases ADD COLUMN IF NOT EXISTS email text NULL;
 
+-- Admin "Remove access" marks purchases revoked. Older databases had a check
+-- constraint without this value, which made revocation fail (and left stale
+-- email rows sendable). Recreate it idempotently.
+ALTER TABLE purchases DROP CONSTRAINT IF EXISTS purchases_status_check;
+ALTER TABLE purchases ADD CONSTRAINT purchases_status_check
+    CHECK (status IN ('pending', 'verified', 'expired', 'refunded', 'revoked'));
+
 -- ---------------------------------------------------------------------------
 -- analysis_results
 -- ---------------------------------------------------------------------------
@@ -314,6 +331,12 @@ CREATE TABLE IF NOT EXISTS email_outbox (
 );
 
 CREATE INDEX IF NOT EXISTS email_outbox_by_send_after ON email_outbox (sent_at, send_after);
+
+-- Manual-request emails have no purchase row; request_id links to the
+-- membership_requests row that produced the token. The token index is used by
+-- the idempotency/resend lookups.
+ALTER TABLE email_outbox ADD COLUMN IF NOT EXISTS request_id uuid NULL;
+CREATE INDEX IF NOT EXISTS email_outbox_by_token ON email_outbox (token);
 
 -- Access rules (same deny-by-default as the other tables): RLS enabled with
 -- no policies, and no privileges granted to PUBLIC / anon / authenticated.

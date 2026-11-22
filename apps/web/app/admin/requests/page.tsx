@@ -9,6 +9,8 @@ interface MembershipRequest {
     _id: string;
     deviceId: string;
     username?: string;
+    /** Address supplied by the user when requesting the token manually. */
+    email?: string;
     type: 'vip' | 'paid';
     status: 'pending' | 'approved' | 'rejected';
     requestedAt: string;
@@ -131,7 +133,13 @@ export default function AdminRequestsPage() {
             const data = await res.json();
 
             if (action === 'approve' && data.token) {
-                toast.success('Request approved and token generated!');
+                toast.success(
+                    data.emailQueued
+                        ? 'Request approved — token email queued'
+                        : data.emailError
+                            ? `Request approved; email not queued: ${data.emailError}`
+                            : 'Request approved and token generated!',
+                );
                 navigator.clipboard.writeText(data.token).catch(() => { });
                 setCopiedToken(data.token);
                 setTimeout(() => setCopiedToken(null), 4000);
@@ -199,6 +207,7 @@ export default function AdminRequestsPage() {
                             <thead className="bg-zinc-50 dark:bg-zinc-800/60 text-xs text-zinc-500 dark:text-zinc-400 font-medium">
                                 <tr>
                                     <th className="px-4 py-3">User/Device</th>
+                                    <th className="px-4 py-3">Email</th>
                                     <th className="px-4 py-3 text-center">Type</th>
                                     <th className="px-4 py-3 text-center">Status</th>
                                     <th className="px-4 py-3">Requested</th>
@@ -216,6 +225,9 @@ export default function AdminRequestsPage() {
                                         <td className="px-4 py-3 max-w-40 truncate">
                                             <div className="font-medium text-zinc-900 dark:text-zinc-100">{req.username || 'Anonymous'}</div>
                                             <div className="font-mono text-xs text-zinc-500 dark:text-zinc-500 mt-0.5">{req.deviceId}</div>
+                                        </td>
+                                        <td className="px-4 py-3 text-xs text-zinc-500 break-all max-w-48">
+                                            {req.email || <span className="text-zinc-300 dark:text-zinc-600">—</span>}
                                         </td>
                                         <td className="px-4 py-3 text-center">
                                             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${req.type === 'vip' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'}`}>

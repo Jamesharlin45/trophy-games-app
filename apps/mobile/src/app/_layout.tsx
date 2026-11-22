@@ -13,9 +13,9 @@ import i18n from '../locales';
 import { ThemeProvider as AppThemeProvider, useTheme } from '../context/ThemeContext';
 import type { ThemeColors } from '../theme/colors';
 import { UserProvider, useUser } from '../context/UserContext';
+import { DialogProvider } from '../context/DialogContext';
 import { LanguageProvider } from '../context/LanguageContext';
 import { usePushNotifications } from '../hooks/usePushNotifications';
-import { useRestorePurchases } from '../hooks/useRestorePurchases';
 import { useApiQuery } from '../hooks/useLiveQuery';
 import { api } from '../api/client';
 import SplashAnim from '../components/SplashAnim';
@@ -64,9 +64,6 @@ function AppContent() {
     const { expoPushToken } = usePushNotifications();
     const insets = useSafeAreaInsets();
     const styles = getStyles(themeColors);
-
-    // Restore Google Play subscriptions once, as soon as the app starts.
-    useRestorePurchases();
 
     const [deviceId, setDeviceId] = useState<string | null>(null);
 
@@ -118,6 +115,7 @@ function AppContent() {
     }, [isDark, themeColors.background, themeColors.border]);
 
     return (
+        <DialogProvider>
         <ThemeProvider value={isDark ? DarkTheme : DefaultTheme}>
             <StatusBar style={isDark ? 'light' : 'dark'} />
             <View style={[styles.container, { backgroundColor: themeColors.background, paddingTop: insets.top }]}>
@@ -172,6 +170,7 @@ function AppContent() {
                 </Stack>
             </View>
         </ThemeProvider>
+        </DialogProvider>
     );
 }
 

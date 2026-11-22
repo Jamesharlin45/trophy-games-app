@@ -10,6 +10,7 @@ import { typography } from '../../theme/typography';
 import i18n from '../../locales';
 import { api } from '../../api/client';
 import { useScreenQuery } from '../../hooks/useLiveQuery';
+import { useNoConnectionDialog } from '../../hooks/useNoConnectionDialog';
 import { useMembershipAccess } from '../../hooks/useMembershipAccess';
 
 const toTitleCase = (str: string) =>
@@ -21,6 +22,7 @@ export default function FreeTipsScreen() {
     const access = useMembershipAccess();
     const {
         data: matchesData,
+        error,
         loading,
         refetch,
     } = useScreenQuery(
@@ -28,6 +30,17 @@ export default function FreeTipsScreen() {
         [selectedDate],
         { pollMs: 60000 },
     );
+
+    const retryConnection = useCallback(async (): Promise<boolean> => {
+        try {
+            await api.matches.byTypeAndDate('free', selectedDate, 100);
+            await refetch();
+            return true;
+        } catch {
+            return false;
+        }
+    }, [selectedDate, refetch]);
+    const connection = useNoConnectionDialog(error, retryConnection);
 
     const matches = matchesData ?? [];
 
@@ -55,10 +68,11 @@ export default function FreeTipsScreen() {
     });
 
     const onRefresh = useCallback(async () => {
+        connection.arm();
         setRefreshing(true);
         await refetch();
         setRefreshing(false);
-    }, [refetch]);
+    }, [connection, refetch]);
 
     const dates = useMemo(() => {
         const d: string[] = [];

@@ -5,7 +5,6 @@
  */
 
 import { Image, StyleSheet, Text, View } from 'react-native';
-import type { StyleProp, ViewStyle } from 'react-native';
 import { useEffect, useState } from 'react';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { readableCopy } from '../lib/colors';
@@ -51,7 +50,6 @@ export function TeamCrest({ uri, name, size, teamColor, fallbackColors }: TeamCr
     const flagUri = !uri || failed ? getCountryFlagUrl(safeName) : undefined;
 
     const radius = size / 2;
-    const borderWidth = Math.max(1, size / 12);
 
     if (flagUri) {
         return (

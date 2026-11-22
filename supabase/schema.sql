@@ -53,7 +53,7 @@ CREATE TABLE matches (
     home_lineup jsonb NULL,
     away_lineup jsonb NULL,
     odds_comparison jsonb NULL,
-    result text NULL CHECK (result IN ('pending', 'win', 'lose', 'draw')),
+    result text NULL CHECK (result IN ('pending', 'win', 'lose', 'draw', 'void')),
     match_date text NULL,
     is_history boolean NULL,
     convex_created_at text NOT NULL, -- doc field createdAt

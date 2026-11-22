@@ -51,6 +51,9 @@ export function getSmtpConfig(): SmtpConfig | { error: string } {
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
         return { error: `Invalid SMTP_PORT value: ${JSON.stringify(portRaw)}` };
     }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(from)) {
+        return { error: 'Invalid MAIL_FROM value: expected a full email address' };
+    }
     return { host, port, user, pass, from };
 }
 
@@ -65,9 +68,10 @@ export async function sendMail(input: MailerSendInput): Promise<MailerSendResult
         const transporter = nodemailer.createTransport({
             host: config.host,
             port: config.port,
-            // Port 465 speaks implicit TLS; other ports use STARTTLS if the
-            // server advertises it (nodemailer attempts it automatically).
+            // Implicit TLS only on 465. On 587 (and any other submission port)
+            // require STARTTLS — never silently fall back to cleartext.
             secure: config.port === 465,
+            requireTLS: config.port !== 465,
             auth: { user: config.user, pass: config.pass },
         });
         await transporter.sendMail({
@@ -80,6 +84,13 @@ export async function sendMail(input: MailerSendInput): Promise<MailerSendResult
         return { ok: true };
     } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
-        return { ok: false, error: `SMTP send failed: ${detail}` };
+        // Gmail rejects normal account passwords with a 535/EAUTH error. The
+        // hint contains no secret and saves a long debugging detour.
+        const gmailHint =
+            config.host.toLowerCase().includes('gmail') &&
+            /(^|\s)(535|EAUTH)\b|invalid login|application-specific password/i.test(detail)
+                ? ' For Gmail, use a 16-character Google App Password as SMTP_PASS (not your account password).'
+                : '';
+        return { ok: false, error: `SMTP send failed: ${detail}${gmailHint}` };
     }
 }

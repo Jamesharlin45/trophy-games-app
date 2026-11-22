@@ -4,7 +4,7 @@
  * running, "FT" when finished.
  */
 
-import { Text, View } from 'react-native';
+import { Text } from 'react-native';
 import { useEffect } from 'react';
 import Animated, { useAnimatedStyle, useSharedValue, withDelay, withSpring } from 'react-native-reanimated';
 

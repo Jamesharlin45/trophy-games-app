@@ -21,7 +21,7 @@ interface ManualMatchModalProps {
 }
 
 type MatchType = 'free' | 'paid' | 'vip' | 'unassigned';
-type MatchResult = 'pending' | 'win' | 'lose' | 'draw';
+type MatchResult = 'pending' | 'win' | 'lose' | 'draw' | 'void';
 
 interface FormState {
     homeTeam: string;

@@ -61,6 +61,8 @@ export default function MatchesPage() {
     const [unpublishedFixtures, setUnpublishedFixtures] = useState<MatchData[]>([]);
     const [syncingFixtures, setSyncingFixtures] = useState(false);
     const [syncMessage, setSyncMessage] = useState<string | null>(null);
+    const [syncingResults, setSyncingResults] = useState(false);
+    const [resultsMessage, setResultsMessage] = useState<string | null>(null);
 
     // Read league prefill from URL (client-side, avoid useSearchParams Suspense issue)
     const getPrefillLeague = () => {
@@ -213,6 +215,25 @@ export default function MatchesPage() {
             setErrorMsg(err instanceof Error ? err.message : 'Failed to sync fixtures');
         } finally {
             setSyncingFixtures(false);
+        }
+    };
+
+    const handleSyncResults = async () => {
+        setSyncingResults(true);
+        setResultsMessage(null);
+        setErrorMsg(null);
+        try {
+            const res = await fetch('/api/admin/sync-results');
+            const data = await res.json();
+            if (!res.ok || data.error) {
+                throw new Error(data.error || `HTTP ${res.status}`);
+            }
+            setResultsMessage(`Results synced — ${data.updated ?? 0} updated, ${data.finished ?? 0} finished, ${data.voided ?? 0} voided`);
+            await fetchMatches();
+        } catch (err) {
+            setErrorMsg(err instanceof Error ? err.message : 'Failed to sync results');
+        } finally {
+            setSyncingResults(false);
         }
     };
 
@@ -509,7 +530,18 @@ export default function MatchesPage() {
                     <h1 className="text-3xl font-bold text-zinc-900 dark:text-zinc-50 tracking-tight">Matches</h1>
                     <p className="text-zinc-500 dark:text-zinc-400">Manage every match — edit teams, scores, status, result and AI predictions. Changes sync to mobile.</p>
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-2 items-center">
+                    {resultsMessage && !syncingResults && (
+                        <span className="text-xs text-emerald-600 dark:text-emerald-400">{resultsMessage}</span>
+                    )}
+                    <button
+                        onClick={() => void handleSyncResults()}
+                        disabled={syncingResults}
+                        className="flex items-center justify-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition-colors text-sm shadow-sm disabled:opacity-50"
+                    >
+                        <RefreshCw size={16} className={syncingResults ? 'animate-spin' : undefined} />
+                        {syncingResults ? 'Syncing...' : 'Refresh results'}
+                    </button>
                     <button
                         onClick={() => setIsManualModalOpen(true)}
                         className="flex items-center justify-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-colors text-sm shadow-sm"
