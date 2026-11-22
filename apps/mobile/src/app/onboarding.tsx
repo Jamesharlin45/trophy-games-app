@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Application from 'expo-application';
 import { User } from 'lucide-react-native';
 import { useTheme } from '../context/ThemeContext';
+import { useUser } from '../context/UserContext';
+import { useDialog } from '../context/DialogContext';
 import { api } from '../api/client';
 import i18n from '../locales';
 
@@ -12,6 +13,8 @@ type ThemeColors = ReturnType<typeof useTheme>['themeColors'];
 
 export default function OnboardingScreen() {
   const { themeColors } = useTheme();
+  const { setUsername: setContextUsername } = useUser();
+  const { requestSubscription } = useDialog();
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
 
   const [username, setUsername] = useState('');
@@ -69,8 +72,11 @@ export default function OnboardingScreen() {
       const result = await api.users.register(trimmed, deviceId);
 
       if (result.success) {
-        await AsyncStorage.setItem('@trophy_games_username', trimmed);
+        // Keep the context in sync (the old code only wrote AsyncStorage, so
+        // the app never knew the username had been chosen).
+        setContextUsername(trimmed);
         router.replace('/(tabs)');
+        requestSubscription(trimmed);
       } else {
         setError(result.reason || i18n.t('onboarding.errorTaken'));
       }

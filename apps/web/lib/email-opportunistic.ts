@@ -1,37 +1,34 @@
+import { after } from 'next/server';
 import { createDb } from '@/lib/db/client';
 import { sendDueEmails } from '@/lib/db/email-outbox';
 
 /**
- * Opportunistic trigger for due outbox rows.
+ * Schedule a send of all currently due outbox rows.
  *
- * Every /api/app/* endpoint calls triggerDueEmailsIfDue() so a due email can
- * go out even if the cron does not run (e.g. its schedule drifts). The check
- * is a single Date.now() comparison — negligible — and the send runs detached,
- * so the main request is never slowed or failed by it. At most one run per
- * minute.
+ * The old implementation started a detached, un-awaited promise. On Vercel the
+ * runtime freezes that promise as soon as the response is returned, so the SMTP
+ * send never happened. `after()` registers the work with the platform's wait
+ * mechanism: it runs after the response is flushed while the invocation is
+ * still kept alive. The outbox and /api/cron/send-emails remain the retry net.
+ *
+ * Nothing here handles tokens or credentials, and no token value is logged.
  */
-
-const MIN_INTERVAL_MS = 60_000;
-
-let lastTriggerAt = 0;
-let inFlight = false;
-
-export function triggerDueEmailsIfDue(): void {
-    const now = Date.now();
-    if (now - lastTriggerAt < MIN_INTERVAL_MS) return;
-    if (inFlight) return;
-    lastTriggerAt = now;
-    inFlight = true;
-    void (async () => {
+export function scheduleDueEmails(): void {
+    after(async () => {
         try {
             const db = createDb();
             if (!db) return;
             await sendDueEmails(db);
         } catch (error) {
-            // Opportunistic only — never let this fail or slow the request.
-            console.warn('[Opportunistic emails] sendDueEmails failed:', error);
-        } finally {
-            inFlight = false;
+            // Only a generic message: SMTP errors themselves are stored on the
+            // outbox row's last_error by sendDueEmails() for admin diagnostics.
+            console.error(
+                '[Email] Background send failed:',
+                error instanceof Error ? error.message : 'unknown error',
+            );
         }
-    })();
+    });
 }
+
+/** Backwards-compatible name used by the existing /api/app/* routes. */
+export const triggerDueEmailsIfDue = scheduleDueEmails;

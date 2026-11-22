@@ -8,6 +8,7 @@ import { AnimatedPulse } from '../../components/AnimatedPulse';
 import { useTheme } from '../../context/ThemeContext';
 import type { ThemeColors } from '../../theme/colors';
 import { useUser } from '../../context/UserContext';
+import { useDialog } from '../../context/DialogContext';
 import { typography } from '../../theme/typography';
 import { api } from '../../api/client';
 import { useScreenQuery } from '../../hooks/useLiveQuery';
@@ -33,6 +34,7 @@ export default function PaidTipsScreen() {
     const [refreshing, setRefreshing] = useState(false);
     const [deviceId, setDeviceId] = useState('');
     const { username } = useUser();
+    const { showEmailRequest } = useDialog();
 
     useEffect(() => {
         const id = Application.applicationId + '_' + (Application.nativeApplicationVersion || 'v1');
@@ -94,17 +96,39 @@ export default function PaidTipsScreen() {
         setRefreshing(false);
     }, [refetchMembership, refetchMatches]);
 
-    const requestMembership = async () => {
-        if (!deviceId) return;
+    /** Submit the request with the address collected by the email dialog. */
+    const submitMembershipRequest = async (email: string) => {
+        if (!deviceId) return { ok: false, error: i18n.t('paid.error') };
         setRequesting(true);
         try {
-            await api.tokens.createMembershipRequest(deviceId, 'paid', username || undefined);
+            const result = await api.tokens.createMembershipRequest(
+                deviceId,
+                'paid',
+                username || undefined,
+                email,
+            );
+            if (!result.success) {
+                return { ok: false, error: result.reason || i18n.t('paid.requestFailed') };
+            }
             Alert.alert(i18n.t('paid.requestSentTitle'), i18n.t('paid.requestSentBody'));
             await refetchMembership();
+            return { ok: true };
         } catch {
-            Alert.alert(i18n.t('paid.error'), i18n.t('paid.requestFailed'));
+            return { ok: false, error: i18n.t('paid.requestFailed') };
+        } finally {
+            setRequesting(false);
         }
-        setRequesting(false);
+    };
+
+    const askForEmail = () => {
+        if (!deviceId) return;
+        showEmailRequest({
+            title: i18n.t('emailRequest.manualTitle'),
+            subtitle: i18n.t('emailRequest.manualBody'),
+            note: i18n.t('emailRequest.manualNote'),
+            submitLabel: i18n.t('paid.requestBtn'),
+            onSubmit: submitMembershipRequest,
+        });
     };
 
     const verifyToken = async () => {
@@ -167,7 +191,7 @@ export default function PaidTipsScreen() {
                     ))}
 
                     {memberStatus === 'none' && !enteringToken && (
-                        <AnimatedPulse style={[styles.primaryBtn, { backgroundColor: themeColors.orange9 }]} onPress={requestMembership} disabled={requesting} accessibilityRole="button">
+                        <AnimatedPulse style={[styles.primaryBtn, { backgroundColor: themeColors.orange9 }]} onPress={askForEmail} disabled={requesting} accessibilityRole="button">
                             {requesting ? <Text style={styles.primaryBtnText}>{i18n.t('common.checking')}</Text> : (
                                 <>
                                     <Send size={15} color="white" />

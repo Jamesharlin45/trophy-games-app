@@ -54,6 +54,18 @@ export type MatchTier = 'free' | 'paid' | 'vip' | 'unassigned';
 /** A match document as returned by the API (same shape as the old Convex doc). */
 export type ApiMatch = MatchData & { _id?: string };
 
+/** Result vocabulary of GET /api/app/matches/history: won/lost/void/pending. */
+export type HistoryResult = 'won' | 'lost' | 'void' | 'pending';
+
+export interface HistoryResponse {
+    /** Finished matches with a published tip for the selected date. */
+    matches: Array<Omit<ApiMatch, 'result'> & { result?: HistoryResult }>;
+    /** Strike rate (percentage) for the selected date, from the server. */
+    strikeRate: number;
+    /** Strike rate (percentage) for the last 30 days, from the server. */
+    strikeRate30d: number;
+}
+
 export interface ApiUser {
     _id: string;
     username: string;
@@ -232,8 +244,8 @@ export const api = {
             request<ApiMatch[]>('/matches/by-date', { query: { date } }),
         all: (limit?: number) =>
             request<ApiMatch[]>('/matches/all', { query: { limit } }),
-        history: (limit?: number) =>
-            request<ApiMatch[]>('/matches/history', { query: { limit } }),
+        history: (limit?: number, date?: string) =>
+            request<HistoryResponse>('/matches/history', { query: { limit, date } }),
         byId: (matchId: string) =>
             request<ApiMatch | null>('/matches/by-id', { query: { matchId } }),
     },
@@ -255,15 +267,21 @@ export const api = {
             deviceId: string,
             type: 'vip' | 'paid',
             username?: string,
+            email?: string,
         ) =>
             request<MembershipRequestResult>('/tokens/create-membership-request', {
                 method: 'POST',
-                body: { deviceId, type, username },
+                body: { deviceId, type, username, email },
             }),
-        requestMembership: (deviceId: string, type: 'vip' | 'paid', username?: string) =>
+        requestMembership: (
+            deviceId: string,
+            type: 'vip' | 'paid',
+            username?: string,
+            email?: string,
+        ) =>
             request<MembershipRequestResult>('/tokens/request-membership', {
                 method: 'POST',
-                body: { deviceId, type, username },
+                body: { deviceId, type, username, email },
             }),
         claimToken: (token: string, deviceId: string, username?: string) =>
             request<ClaimTokenResult>('/tokens/claim-token', {

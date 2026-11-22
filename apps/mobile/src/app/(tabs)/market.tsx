@@ -1,13 +1,18 @@
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, TextInput, Alert, Platform } from 'react-native';
-import { Crown, CheckCircle2, Zap, Trophy, ShieldCheck, CreditCard, Sparkles, Key, Clock, ShoppingCart } from 'lucide-react-native';
+import { Crown, CheckCircle2, Zap, Trophy, ShieldCheck, CreditCard, Sparkles, Key, Clock, ShoppingCart, Send } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { useLocalSearchParams } from 'expo-router';
 import { useTheme } from '../../context/ThemeContext';
 import type { ThemeColors } from '../../theme/colors';
 import { useUser } from '../../context/UserContext';
+import { useDialog } from '../../context/DialogContext';
 import { typography } from '../../theme/typography';
-import { SUBSCRIPTION_PRODUCTS } from '@trophy-games/shared/subscriptions';
+import { SUBSCRIPTION_PRODUCTS, getTierForProduct } from '@trophy-games/shared/subscriptions';
 import { useIap, ProductSubscription } from '../../hooks/useIap';
+import { useNoConnectionDialog } from '../../hooks/useNoConnectionDialog';
+import { purchaseFlow } from '../../utils/purchaseFlow';
+import { planTitleFor } from '../../utils/planTitle';
 import * as Application from 'expo-application';
 import { api } from '../../api/client';
 import { useScreenQuery } from '../../hooks/useLiveQuery';
@@ -27,6 +32,14 @@ export default function MembershipStoreScreen() {
     const [verifyingToken, setVerifyingToken] = useState(false);
     const [requesting, setRequesting] = useState<string | null>(null);
     const [purchasing, setPurchasing] = useState<string | null>(null);
+
+    const { plan } = useLocalSearchParams<{ plan?: string }>();
+    const { active, showPurchaseSuccess, showPurchaseFailed, showEmailRequest, joinTelegram } = useDialog();
+    const scrollRef = useRef<ScrollView>(null);
+    const planOffsetsRef = useRef<Record<string, number>>({});
+    const contentTopRef = useRef(0);
+    const [highlightPlan, setHighlightPlan] = useState<string | null>(null);
+    const purchaseRetryRef = useRef<() => void>(() => {});
 
     // After a successful purchase: show the "email my token" modal; if the
     // user skips it, show a banner that reopens the modal.
@@ -54,7 +67,19 @@ export default function MembershipStoreScreen() {
                     purchaseToken,
                 });
                 if (result.success) {
-                    Alert.alert(i18n.t('market.purchaseSuccessTitle'), i18n.t('market.purchaseSuccessBody', { tier: _tier.toUpperCase() }));
+                    const tier = result.alreadyRecorded
+                        ? (getTierForProduct(productId) ?? _tier)
+                        : result.tier;
+                    let expiresAt = result.alreadyRecorded ? undefined : result.expiresAt;
+                    if (result.alreadyRecorded) {
+                        try {
+                            const active = await api.purchases.getActiveSubscription(deviceId);
+                            if (active?.productId === productId) expiresAt = active.expiresAt;
+                        } catch {
+                            // Optional — the dialog still works without a date.
+                        }
+                    }
+                    showPurchaseSuccess({ tier, planTitle: planTitleFor(productId), expiresAt });
                     if (deviceId) {
                         const info = { deviceId, purchaseToken };
                         setEmailPurchase(info);
@@ -62,14 +87,16 @@ export default function MembershipStoreScreen() {
                         setEmailBannerShown(false);
                     }
                 } else {
-                    Alert.alert(i18n.t('market.purchaseActivateTitle'), result.reason || i18n.t('market.purchaseActivateBody'));
+                    showPurchaseFailed({ message: result.reason || i18n.t('market.purchaseActivateBody') });
                 }
             } catch (e) {
-                console.error('[Market] recordPurchase error:', e);
+                showPurchaseFailed({
+                    message: e instanceof Error ? e.message : i18n.t('market.subscribeErrorBody'),
+                });
             }
         },
         onPurchaseError: (msg: string) => {
-            Alert.alert(i18n.t('market.purchaseFailedTitle'), msg);
+            showPurchaseFailed({ message: msg, onRetry: () => purchaseRetryRef.current() });
         },
     });
 
@@ -82,6 +109,7 @@ export default function MembershipStoreScreen() {
     // Membership status for each tier.
     const {
         data: vipStatusData,
+        error: vipError,
         loaded: vipLoaded,
         refetch: refetchVip,
     } = useScreenQuery(
@@ -91,6 +119,7 @@ export default function MembershipStoreScreen() {
     );
     const {
         data: paidStatusData,
+        error: paidError,
         loaded: paidLoaded,
         refetch: refetchPaid,
     } = useScreenQuery(
@@ -127,30 +156,60 @@ export default function MembershipStoreScreen() {
         ? 'active'
         : paidTokenStatus;
 
+    const retryConnection = useCallback(async (): Promise<boolean> => {
+        try {
+            await Promise.all([
+                api.tokens.getMembershipStatus(deviceId, 'vip', username || undefined),
+                api.tokens.getMembershipStatus(deviceId, 'paid', username || undefined),
+            ]);
+            await Promise.all([refetchVip(), refetchPaid(), iapRefresh()]);
+            return true;
+        } catch {
+            return false;
+        }
+    }, [deviceId, username, refetchVip, refetchPaid, iapRefresh]);
+
+    const connection = useNoConnectionDialog(vipError ?? paidError, retryConnection);
+
     const onRefresh = useCallback(async () => {
+        connection.arm();
         setRefreshing(true);
         await Promise.all([refetchVip(), refetchPaid(), iapRefresh()]);
         setRefreshing(false);
-    }, [refetchVip, refetchPaid, iapRefresh]);
+    }, [connection, refetchVip, refetchPaid, iapRefresh]);
 
-    const handleRequest = async (type: 'vip' | 'paid') => {
-        if (!deviceId) return;
+    /** Submit the manual request with the address collected by the email dialog. */
+    const submitManualRequest = async (type: 'vip' | 'paid', email: string) => {
+        if (!deviceId) return { ok: false, error: i18n.t('market.requestFailed') };
         setRequesting(type);
         try {
             const result = await api.tokens.requestMembership(
                 deviceId,
                 type,
                 username || undefined,
+                email,
             );
-            if (result.success) {
-                Alert.alert(i18n.t('market.requestSuccessTitle'), i18n.t('market.requestSuccessBody', { type: type.toUpperCase() }));
-            } else {
-                Alert.alert(i18n.t('market.requestNotice'), result.reason || i18n.t('market.requestFailed'));
+            if (!result.success) {
+                return { ok: false, error: result.reason || i18n.t('market.requestFailed') };
             }
+            Alert.alert(i18n.t('market.requestSuccessTitle'), i18n.t('market.requestSuccessBody', { type: type.toUpperCase() }));
+            return { ok: true };
         } catch {
-            Alert.alert(i18n.t('market.requestErrorTitle'), i18n.t('market.requestErrorBody'));
+            return { ok: false, error: i18n.t('market.requestErrorBody') };
+        } finally {
+            setRequesting(null);
         }
-        setRequesting(null);
+    };
+
+    const askForEmail = (type: 'vip' | 'paid') => {
+        if (!deviceId) return;
+        showEmailRequest({
+            title: i18n.t('emailRequest.manualTitle'),
+            subtitle: i18n.t('emailRequest.manualBody'),
+            note: i18n.t('emailRequest.manualNote'),
+            submitLabel: i18n.t('market.requestTokenBtn'),
+            onSubmit: (email: string) => submitManualRequest(type, email),
+        });
     };
 
     const handleVerifyToken = async () => {
@@ -179,20 +238,27 @@ export default function MembershipStoreScreen() {
     /** Handle Google Play subscription purchase */
     const handleSubscribe = async (productId: string, _tier: 'vip' | 'paid') => {
         if (!deviceId) return;
+        purchaseRetryRef.current = () => void handleSubscribe(productId, _tier);
+        purchaseFlow.setBusy(true);
         setPurchasing(productId);
         try {
             const result = await iapPurchase(productId);
             if (!result.success && result.reason) {
-                if (!result.reason.includes('cancelled')) {
-                    Alert.alert(i18n.t('market.purchaseFailedTitle'), result.reason);
+                if (!result.reason.toLowerCase().includes('cancel')) {
+                    showPurchaseFailed({
+                        message: result.reason,
+                        onRetry: () => purchaseRetryRef.current(),
+                    });
                 }
             }
             // On success, the onPurchaseSuccess callback above records the purchase.
         } catch (e) {
             const message = e instanceof Error ? e.message : i18n.t('market.subscribeErrorBody');
-            Alert.alert(i18n.t('market.purchaseFailedTitle'), message);
+            showPurchaseFailed({ message, onRetry: () => purchaseRetryRef.current() });
+        } finally {
+            purchaseFlow.setBusy(false);
+            setPurchasing(null);
         }
-        setPurchasing(null);
     };
 
     /** Find a Google Play product by exact product ID */
@@ -212,6 +278,20 @@ export default function MembershipStoreScreen() {
 
     // Active IAP product IDs for border highlighting
     const activeProductId = iapActiveSub?.productId ?? null;
+
+    // When the subscription dialog sends us here with a plan, scroll to and
+    // highlight that card.
+    const scrollToPlan = useCallback((productId: string) => {
+        const offset = contentTopRef.current + (planOffsetsRef.current[productId] ?? 0) - 24;
+        scrollRef.current?.scrollTo({ y: Math.max(0, offset), animated: true });
+    }, []);
+
+    useEffect(() => {
+        if (!plan) return;
+        setHighlightPlan(plan);
+        const timer = setTimeout(() => scrollToPlan(plan), 350);
+        return () => clearTimeout(timer);
+    }, [plan, scrollToPlan]);
 
     const StatusBadge = ({ status, iapActive }: { status: MemberStatus; iapActive: boolean }) => {
         if (status === 'none' || status === 'loading') return null;
@@ -270,7 +350,7 @@ export default function MembershipStoreScreen() {
                     </AnimatedPulse>
                     <TouchableOpacity
                         style={styles.textBtn}
-                        onPress={() => handleRequest(tier)}
+                        onPress={() => askForEmail(tier)}
                         disabled={requesting === tier}
                         accessibilityRole="button"
                     >
@@ -303,6 +383,7 @@ export default function MembershipStoreScreen() {
     return (
         <View style={[styles.container, { backgroundColor: themeColors.background }]}>
             <ScrollView
+                ref={scrollRef}
                 showsVerticalScrollIndicator={false}
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={themeColors.accent} />}
             >
@@ -332,7 +413,12 @@ export default function MembershipStoreScreen() {
                     </View>
                 </View>
 
-                <View style={styles.content}>
+                <View
+                    style={styles.content}
+                    onLayout={(event) => {
+                        contentTopRef.current = event.nativeEvent.layout.y;
+                    }}
+                >
                     {/* Token Input Section (if approved) */}
                     {(vipTokenStatus === 'approved' || paidTokenStatus === 'approved' || showTokenInput) && (
                         <View style={[styles.card, { backgroundColor: themeColors.surface, borderColor: themeColors.accent, borderWidth: 2 }]}>
@@ -372,10 +458,16 @@ export default function MembershipStoreScreen() {
                     <Text style={[styles.sectionTitle, { color: themeColors.text }]}>{i18n.t('market.sectionTitle')}</Text>
 
                     {/* ── VIP WEEKLY CARD ── */}
-                    <View style={[
-                        styles.card,
-                        { borderColor: activeProductId === SUBSCRIPTION_PRODUCTS.VIP_WEEKLY.productId ? themeColors.accent + '60' : themeColors.border },
-                    ]}>
+                    <View
+                        style={[
+                            styles.card,
+                            { borderColor: activeProductId === SUBSCRIPTION_PRODUCTS.VIP_WEEKLY.productId ? themeColors.accent + '60' : themeColors.border },
+                            highlightPlan === SUBSCRIPTION_PRODUCTS.VIP_WEEKLY.productId && styles.highlightedCard,
+                        ]}
+                        onLayout={(event) => {
+                            planOffsetsRef.current[SUBSCRIPTION_PRODUCTS.VIP_WEEKLY.productId] = event.nativeEvent.layout.y;
+                        }}
+                    >
                         <View style={styles.cardTop}>
                             <View style={styles.cardHeader}>
                                 <Crown size={24} color={themeColors.accent} />
@@ -407,10 +499,16 @@ export default function MembershipStoreScreen() {
                     </View>
 
                     {/* ── VIP MONTHLY CARD ── */}
-                    <View style={[
-                        styles.card,
-                        { borderColor: activeProductId === SUBSCRIPTION_PRODUCTS.VIP_MONTHLY.productId ? themeColors.accent + '60' : themeColors.border },
-                    ]}>
+                    <View
+                        style={[
+                            styles.card,
+                            { borderColor: activeProductId === SUBSCRIPTION_PRODUCTS.VIP_MONTHLY.productId ? themeColors.accent + '60' : themeColors.border },
+                            highlightPlan === SUBSCRIPTION_PRODUCTS.VIP_MONTHLY.productId && styles.highlightedCard,
+                        ]}
+                        onLayout={(event) => {
+                            planOffsetsRef.current[SUBSCRIPTION_PRODUCTS.VIP_MONTHLY.productId] = event.nativeEvent.layout.y;
+                        }}
+                    >
                         <View style={styles.cardTop}>
                             <View style={styles.cardHeader}>
                                 <Crown size={24} color={themeColors.accent} />
@@ -447,10 +545,16 @@ export default function MembershipStoreScreen() {
                     </View>
 
                     {/* ── PAID MONTHLY CARD ── */}
-                    <View style={[
-                        styles.card,
-                        { borderColor: activeProductId === SUBSCRIPTION_PRODUCTS.PAID_MONTHLY.productId ? themeColors.accent + '60' : themeColors.border },
-                    ]}>
+                    <View
+                        style={[
+                            styles.card,
+                            { borderColor: activeProductId === SUBSCRIPTION_PRODUCTS.PAID_MONTHLY.productId ? themeColors.accent + '60' : themeColors.border },
+                            highlightPlan === SUBSCRIPTION_PRODUCTS.PAID_MONTHLY.productId && styles.highlightedCard,
+                        ]}
+                        onLayout={(event) => {
+                            planOffsetsRef.current[SUBSCRIPTION_PRODUCTS.PAID_MONTHLY.productId] = event.nativeEvent.layout.y;
+                        }}
+                    >
                         <View style={styles.cardTop}>
                             <View style={styles.cardHeader}>
                                 <Trophy size={24} color={themeColors.accent} />
@@ -487,12 +591,26 @@ export default function MembershipStoreScreen() {
                         <View style={styles.divider} />
                         <InfoSection icon={CreditCard} title={i18n.t('market.infoTitle2')} desc={i18n.t('market.infoDesc2')} />
                     </View>
+
+                    {/* Telegram invite */}
+                    <TouchableOpacity
+                        style={styles.telegramRow}
+                        onPress={() => void joinTelegram()}
+                        accessibilityRole="link"
+                        accessibilityLabel={i18n.t('market.telegramRow')}
+                        activeOpacity={0.7}
+                    >
+                        <Send size={15} color={themeColors.accent} />
+                        <Text style={[styles.telegramText, { color: themeColors.mutedText }]}>
+                            {i18n.t('market.telegramRow')}
+                        </Text>
+                    </TouchableOpacity>
                 </View>
             </ScrollView>
 
             {/* Post-purchase email modal (backup copy of your token) */}
             <EmailTokenModal
-                visible={emailModal !== null}
+                visible={emailModal !== null && active === null}
                 deviceId={emailModal?.deviceId ?? ''}
                 purchaseToken={emailModal?.purchaseToken ?? ''}
                 onClose={() => setEmailModal(null)}
@@ -500,6 +618,7 @@ export default function MembershipStoreScreen() {
                     setEmailModal(null);
                     setEmailBannerShown(true);
                 }}
+                onSubmitted={() => setEmailBannerShown(false)}
             />
         </View>
     );
@@ -560,6 +679,24 @@ function getStyles(themeColors: ThemeColors) {
         shadowRadius: 10,
         shadowOffset: { width: 0, height: 2 },
         elevation: 3,
+    },
+    highlightedCard: {
+        borderColor: themeColors.accent,
+        borderWidth: 2,
+        shadowColor: themeColors.accent,
+        shadowOpacity: 0.35,
+        elevation: 6,
+    },
+    telegramRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        paddingVertical: 8,
+    },
+    telegramText: {
+        fontSize: 12,
+        fontWeight: '600',
     },
     cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
     cardTitle: { ...typography.cardTitle },

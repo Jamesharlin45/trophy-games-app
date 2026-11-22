@@ -1,9 +1,14 @@
 'use client';
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { Key, Plus, RotateCcw, RefreshCw, Clock, CheckCircle2, XCircle, Crown, DollarSign, Ban, Hourglass } from 'lucide-react';
+import { Key, Plus, RotateCcw, RefreshCw, CheckCircle2, XCircle, Crown, DollarSign, Ban, Hourglass, Mail, Send, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn, daysLeftLabel } from '@/lib/utils';
+
+interface TokenEmailStatus {
+    status: 'pending' | 'sent' | 'failed' | 'none';
+    lastError?: string;
+}
 
 interface Token {
     _id: string;
@@ -18,7 +23,20 @@ interface Token {
     /** Set when the access was removed via "Remove access" (or by the cron
      * when it marked the grant expired). */
     revokedAt?: string;
+    /** Prefilled from the originating purchase or manual request. */
+    email?: string;
+    emailStatus: TokenEmailStatus;
 }
+
+interface EmailStatusData {
+    pending: number;
+    sent: number;
+    failed: number;
+    lastErrors: string[];
+    config: Record<'SMTP_HOST' | 'SMTP_PORT' | 'SMTP_USER' | 'SMTP_PASS' | 'MAIL_FROM', boolean>;
+}
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function AdminTokensPage() {
     const [tokens, setTokens] = useState<Token[]>([]);
@@ -28,6 +46,21 @@ export default function AdminTokensPage() {
     const [showForm, setShowForm] = useState(false);
     const [copiedToken, setCopiedToken] = useState<string | null>(null);
     const [busyToken, setBusyToken] = useState<string | null>(null);
+    const [emailStatus, setEmailStatus] = useState<EmailStatusData | null>(null);
+    const [testEmail, setTestEmail] = useState('');
+    const [sendingTest, setSendingTest] = useState(false);
+    const [emailTarget, setEmailTarget] = useState<Token | null>(null);
+    const [emailDraft, setEmailDraft] = useState('');
+    const [sendingEmail, setSendingEmail] = useState(false);
+
+    const loadEmailStatus = useCallback(async () => {
+        try {
+            const res = await fetch('/api/admin/email-status');
+            if (res.ok) setEmailStatus((await res.json()) as EmailStatusData);
+        } catch {
+            // The card simply shows its previous state; tokens still load.
+        }
+    }, []);
 
     const loadTokens = useCallback(async () => {
         try {
@@ -49,10 +82,10 @@ export default function AdminTokensPage() {
 
     useEffect(() => {
         async function initialize() {
-            await loadTokens();
+            await Promise.all([loadTokens(), loadEmailStatus()]);
         }
         void initialize();
-    }, [loadTokens]);
+    }, [loadTokens, loadEmailStatus]);
 
     const createToken = async () => {
         if (!form.deviceId) return;
@@ -149,6 +182,58 @@ export default function AdminTokensPage() {
         }
     };
 
+    const openEmailDialog = (token: Token) => {
+        setEmailTarget(token);
+        setEmailDraft(token.email ?? '');
+    };
+
+    const submitTokenEmail = async () => {
+        if (!emailTarget) return;
+        if (!EMAIL_PATTERN.test(emailDraft.trim())) {
+            toast.error('Enter a valid email address');
+            return;
+        }
+        setSendingEmail(true);
+        try {
+            const res = await fetch('/api/admin/tokens/email', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token: emailTarget.token, email: emailDraft.trim() }),
+            });
+            const data = (await res.json().catch(() => null)) as { error?: string } | null;
+            if (!res.ok || data?.error) throw new Error(data?.error || 'Failed to send email');
+            toast.success('Token email queued — sending now');
+            setEmailTarget(null);
+            await Promise.all([loadTokens(), loadEmailStatus()]);
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : 'Failed to send email');
+        } finally {
+            setSendingEmail(false);
+        }
+    };
+
+    const sendTestEmail = async () => {
+        if (!EMAIL_PATTERN.test(testEmail.trim())) {
+            toast.error('Enter a valid email address');
+            return;
+        }
+        setSendingTest(true);
+        try {
+            const res = await fetch('/api/admin/email-test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ to: testEmail.trim() }),
+            });
+            const data = (await res.json().catch(() => null)) as { error?: string } | null;
+            if (!res.ok || data?.error) throw new Error(data?.error || 'Test email failed');
+            toast.success('Test email sent');
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : 'Test email failed');
+        } finally {
+            setSendingTest(false);
+        }
+    };
+
     const copyToClipboard = (text: string) => {
         navigator.clipboard.writeText(text).catch(() => { });
         setCopiedToken(text);
@@ -166,11 +251,76 @@ export default function AdminTokensPage() {
                     <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">Generate and manage VIP & Paid access tokens for users.</p>
                 </div>
                 <div className="flex gap-2">
-                    <button onClick={() => { setLoading(true); void loadTokens(); }} className="flex items-center gap-2 px-3 py-2 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 font-medium rounded-xl transition-colors text-sm">
+                    <button onClick={() => { setLoading(true); void Promise.all([loadTokens(), loadEmailStatus()]); }} className="flex items-center gap-2 px-3 py-2 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 font-medium rounded-xl transition-colors text-sm">
                         <RefreshCw size={14} />
                     </button>
                     <button onClick={() => setShowForm(!showForm)} className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition-colors text-sm">
                         <Plus size={16} />Generate Token
+                    </button>
+                </div>
+            </div>
+
+            {/* Email delivery diagnostics. Counts and error text only — never credentials. */}
+            <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-5 space-y-4">
+                <div className="flex items-center gap-2">
+                    <Mail size={16} className="text-blue-500" />
+                    <h2 className="font-semibold text-zinc-900 dark:text-zinc-50">Email status</h2>
+                </div>
+                {emailStatus ? (
+                    <>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                            <div className="rounded-lg bg-zinc-50 dark:bg-zinc-800/60 p-3">
+                                <div className="text-xs text-zinc-500">Pending</div>
+                                <div className="text-xl font-bold text-zinc-900 dark:text-zinc-50">{emailStatus.pending}</div>
+                            </div>
+                            <div className="rounded-lg bg-zinc-50 dark:bg-zinc-800/60 p-3">
+                                <div className="text-xs text-zinc-500">Sent</div>
+                                <div className="text-xl font-bold text-brand-green">{emailStatus.sent}</div>
+                            </div>
+                            <div className="rounded-lg bg-zinc-50 dark:bg-zinc-800/60 p-3">
+                                <div className="text-xs text-zinc-500">Failed</div>
+                                <div className="text-xl font-bold text-red-500">{emailStatus.failed}</div>
+                            </div>
+                            <div className="rounded-lg bg-zinc-50 dark:bg-zinc-800/60 p-3">
+                                <div className="text-xs text-zinc-500">SMTP configured</div>
+                                <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-zinc-500">
+                                    {Object.entries(emailStatus.config).map(([name, set]) => (
+                                        <span key={name} className={set ? 'text-brand-green' : 'text-red-500'}>
+                                            {name} {set ? '✓' : '✗'}
+                                        </span>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                        {emailStatus.lastErrors.length > 0 && (
+                            <div className="space-y-1">
+                                <div className="text-xs font-medium text-zinc-500">Last 5 errors</div>
+                                {emailStatus.lastErrors.map((error, i) => (
+                                    <div key={i} className="flex items-start gap-2 text-xs text-red-500 break-words">
+                                        <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                                        <span>{error}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </>
+                ) : (
+                    <div className="text-sm text-zinc-400">Loading email status...</div>
+                )}
+                <div className="flex flex-col sm:flex-row gap-2">
+                    <input
+                        type="email"
+                        value={testEmail}
+                        onChange={(e) => setTestEmail(e.target.value)}
+                        placeholder="you@example.com"
+                        className="flex-1 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-sm text-zinc-900 dark:text-zinc-50 outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <button
+                        onClick={() => void sendTestEmail()}
+                        disabled={sendingTest || !EMAIL_PATTERN.test(testEmail.trim())}
+                        className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold rounded-xl text-sm transition-colors"
+                    >
+                        <Send size={14} />{sendingTest ? 'Sending...' : 'Send test email'}
                     </button>
                 </div>
             </div>
@@ -254,6 +404,7 @@ export default function AdminTokensPage() {
                                     <th className="px-4 py-3">Match ID</th>
                                     <th className="px-4 py-3">Created</th>
                                     <th className="px-4 py-3">Expires</th>
+                                    <th className="px-4 py-3 text-center">Email</th>
                                     <th className="px-4 py-3 text-center">Status</th>
                                     <th className="px-4 py-3 text-center">Actions</th>
                                 </tr>
@@ -289,6 +440,15 @@ export default function AdminTokensPage() {
                                             }
                                         </td>
                                         <td className="px-4 py-3 text-center">
+                                            {token.emailStatus.status === 'sent'
+                                                ? <span className="inline-flex items-center gap-1 text-xs text-brand-green" title={token.email}><CheckCircle2 size={12} />Sent</span>
+                                                : token.emailStatus.status === 'pending'
+                                                    ? <span className="inline-flex items-center gap-1 text-xs text-orange-500" title={token.emailStatus.lastError || token.email}><Hourglass size={12} />Pending</span>
+                                                    : token.emailStatus.status === 'failed'
+                                                        ? <span className="inline-flex items-center gap-1 text-xs text-red-500" title={token.emailStatus.lastError || 'Email failed'}><XCircle size={12} />Failed{token.emailStatus.lastError ? ` — ${token.emailStatus.lastError}` : ''}</span>
+                                                        : <span className="text-xs text-zinc-400">None</span>}
+                                        </td>
+                                        <td className="px-4 py-3 text-center">
                                             {token.revokedAt
                                                 ? <span className="inline-flex items-center gap-1 text-xs text-red-500"><Ban size={12} />Revoked</span>
                                                 : token.isActive && !isExpired(token.expiresAt)
@@ -303,6 +463,14 @@ export default function AdminTokensPage() {
                                                 </button>
                                             ) : (
                                                 <>
+                                                    <button
+                                                        onClick={() => openEmailDialog(token)}
+                                                        disabled={busyToken === token.token}
+                                                        className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors disabled:opacity-50"
+                                                        title={token.email ? `Email ${token.email}` : 'Send token by email'}
+                                                    >
+                                                        <Mail size={12} />{token.emailStatus.status === 'sent' ? 'Resend' : 'Send token by email'}
+                                                    </button>
                                                     <button onClick={() => removeAccess(token)} disabled={busyToken === token.token} className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50" title="Remove access">
                                                         <Ban size={12} />Remove access
                                                     </button>
@@ -322,6 +490,43 @@ export default function AdminTokensPage() {
                     </div>
                 )}
             </div>
+
+            {emailTarget && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
+                    <div className="w-full max-w-md rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 p-6 space-y-4">
+                        <h2 className="font-semibold text-zinc-900 dark:text-zinc-50">
+                            {emailTarget.emailStatus.status === 'sent' ? 'Resend token email' : 'Send token by email'}
+                        </h2>
+                        <p className="text-xs text-zinc-500 break-all">Token: {emailTarget.username || emailTarget.deviceId} ({emailTarget.type.toUpperCase()})</p>
+                        <div>
+                            <label className="block text-xs font-medium text-zinc-500 mb-1">Email address</label>
+                            <input
+                                type="email"
+                                value={emailDraft}
+                                onChange={(e) => setEmailDraft(e.target.value)}
+                                placeholder="you@example.com"
+                                autoFocus
+                                className="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-sm text-zinc-900 dark:text-zinc-50 outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                        </div>
+                        <div className="flex gap-3">
+                            <button
+                                onClick={() => void submitTokenEmail()}
+                                disabled={sendingEmail || !EMAIL_PATTERN.test(emailDraft.trim())}
+                                className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold rounded-xl text-sm"
+                            >
+                                <Send size={14} />{sendingEmail ? 'Sending...' : 'Send now'}
+                            </button>
+                            <button
+                                onClick={() => setEmailTarget(null)}
+                                className="px-4 py-2 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 font-medium rounded-xl text-sm"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

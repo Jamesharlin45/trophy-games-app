@@ -3,7 +3,7 @@
  * into the Home screen once the animation ends.
  */
 
-import { Image, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
 import { useEffect } from 'react';
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withDelay, withTiming } from 'react-native-reanimated';
 import SplashLogo from '../../assets/images/logo.png';

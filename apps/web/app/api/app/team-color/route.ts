@@ -11,7 +11,6 @@
  */
 
 import { NextResponse } from 'next/server';
-import sharp from 'sharp';
 
 /** Hosts that can legitimately serve team crests to this app. */
 const ALLOWED_HOSTS = new Set([
@@ -51,6 +50,10 @@ function isAllowedCrestUrl(input: string): URL | null {
  */
 async function dominantColor(buffer: Buffer): Promise<string | null> {
   try {
+    // Load the native module only when this endpoint is actually called. It
+    // has no prebuilt binary for every host OS, and an eager top-level import
+    // makes `next build` fail while collecting page data on those platforms.
+    const { default: sharp } = await import('sharp');
     const { data, info } = await sharp(buffer)
       .resize(CENTER_SIZE, CENTER_SIZE, { fit: 'fill', withoutEnlargement: true })
       .raw()

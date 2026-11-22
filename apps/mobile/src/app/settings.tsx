@@ -2,7 +2,9 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { Settings, Globe, LogOut, Palette, Moon, Sun, Smartphone } from 'lucide-react-native';
+import { useUser } from '../context/UserContext';
+import { useDialog } from '../context/DialogContext';
+import { Settings, Globe, LogOut, Palette, Moon, Sun, Smartphone, Send } from 'lucide-react-native';
 import { accents, type AccentType } from '../theme/colors';
 import i18n, { tArray } from '../locales';
 
@@ -15,6 +17,8 @@ const MODE_OPTIONS = [
 export default function SettingsScreen() {
     const { themeColors, theme, accent, setTheme, setAccent } = useTheme();
     const { locale, setLocale } = useLanguage();
+    const { logout } = useUser();
+    const { showSignOutConfirm, joinTelegram } = useDialog();
 
     const languages = tArray<{ code: string; name: string }>('settings.languages');
 
@@ -105,17 +109,29 @@ export default function SettingsScreen() {
                 </View>
             </View>
 
+            {/* Telegram invite */}
+            <TouchableOpacity
+                style={[
+                    styles.section,
+                    styles.telegramBtn,
+                    { backgroundColor: themeColors.surfaceElevated, borderColor: themeColors.border },
+                ]}
+                onPress={() => void joinTelegram()}
+                accessibilityRole="link"
+                accessibilityLabel={i18n.t('settings.telegram')}
+                activeOpacity={0.7}
+            >
+                <Send size={20} color={themeColors.accent} />
+                <Text style={[styles.btnText, { color: themeColors.text }]}>{i18n.t('settings.telegram')}</Text>
+            </TouchableOpacity>
+
             {/* Sign out — outlined so it looks tappable */}
             <TouchableOpacity
                 style={[
                     styles.signOutBtn,
                     { borderColor: themeColors.accent, backgroundColor: 'transparent' },
                 ]}
-                onPress={() => {
-                    // Logic to clear user token / username would go here
-                    // Then redirect to onboarding
-                    // router.replace('/onboarding');
-                }}
+                onPress={() => showSignOutConfirm(() => void logout())}
                 accessibilityRole="button"
                 accessibilityLabel={i18n.t('settings.signOut')}
                 activeOpacity={0.7}
@@ -204,6 +220,14 @@ const styles = StyleSheet.create({
     langText: {
         fontSize: 16,
         fontWeight: '500',
+    },
+    telegramBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 10,
+        borderWidth: 1,
+        marginBottom: 0,
     },
     signOutBtn: {
         flexDirection: 'row',

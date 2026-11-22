@@ -8,6 +8,8 @@ import {
     revokeMembershipRequest,
 } from '@/lib/db/tokens';
 import type { TokenType } from '@/lib/db/tokens';
+import { enqueueTokenEmail } from '@/lib/db/email-outbox';
+import { scheduleDueEmails } from '@/lib/email-opportunistic';
 
 export const dynamic = 'force-dynamic';
 
@@ -60,7 +62,25 @@ export async function POST(request: Request) {
 
             const token = generateToken(req.type);
             await approveMembershipRequest(db, { requestId, token, matchId, expiresAt });
-            return NextResponse.json({ success: true, token });
+
+            // Manual approvals are immediate — no 1-minute purchase delay.
+            const queued = req.email
+                ? await enqueueTokenEmail(db, {
+                      token,
+                      toEmail: req.email,
+                      tier: req.type,
+                      expiresAt,
+                      requestId,
+                      dueNow: true,
+                  })
+                : null;
+            if (queued?.success) scheduleDueEmails();
+            return NextResponse.json({
+                success: true,
+                token,
+                emailQueued: queued?.success ?? false,
+                ...(queued && !queued.success ? { emailError: queued.reason } : {}),
+            });
         }
 
         if (action === 'reject') {

@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { isValidEmail } from './email-outbox';
 
 export type TokenType = 'vip' | 'paid';
 export type RequestStatus = 'pending' | 'approved' | 'rejected';
@@ -24,6 +25,8 @@ export interface DbMembershipRequest {
     _id: string;
     deviceId: string;
     username?: string;
+    /** Where the approved token will be emailed. */
+    email?: string;
     type: TokenType;
     status: RequestStatus;
     requestedAt: string;
@@ -55,6 +58,7 @@ interface MembershipRequestRow {
     id: string;
     device_id: string;
     username: string | null;
+    email: string | null;
     type: TokenType;
     status: RequestStatus;
     requested_at: string;
@@ -86,6 +90,7 @@ function mapRequest(row: MembershipRequestRow): DbMembershipRequest {
         _id: row.id,
         deviceId: row.device_id,
         username: row.username ?? undefined,
+        email: row.email ?? undefined,
         type: row.type,
         status: row.status,
         requestedAt: row.requested_at,
@@ -488,8 +493,26 @@ export async function claimToken(
  * same device+type blocks new ones. */
 export async function requestMembership(
     db: SupabaseClient,
-    input: { deviceId: string; username?: string; type: TokenType },
+    input: { deviceId: string; username?: string; type: TokenType; email: string },
 ): Promise<MembershipRequestResult> {
+    const email = input.email.trim();
+    if (!isValidEmail(email)) {
+        return { success: false, reason: 'Invalid email address' };
+    }
+
+    // Per-device rate limit: at most three manual requests per hour, so a
+    // single device cannot flood the admin queue.
+    const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const { data: recentRows } = await db
+        .from('membership_requests')
+        .select('id')
+        .eq('device_id', input.deviceId)
+        .gte('requested_at', since)
+        .limit(3);
+    if (recentRows && recentRows.length >= 3) {
+        return { success: false, reason: 'Rate limited: please try again later' };
+    }
+
     const { data: existingRows } = await db
         .from('membership_requests')
         .select('id')
@@ -509,6 +532,7 @@ export async function requestMembership(
             convex_id: crypto.randomUUID(),
             device_id: input.deviceId,
             username: input.username ?? null,
+            email,
             type: input.type,
             status: 'pending',
             requested_at: now,

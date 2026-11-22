@@ -255,6 +255,21 @@ export async function getHistory(db: SupabaseClient, limit = 100): Promise<DbMat
     return mapMatches((data ?? []) as MatchRow[]);
 }
 
+/** Mobile history feed: finished matches that carry a published tip — tier
+ * free/vip/paid with an ai_prediction; unpublished picks (tier
+ * 'unassigned' or null) are excluded. Newest first. */
+export async function getPublishedFinishedMatches(db: SupabaseClient): Promise<DbMatch[]> {
+    const { data } = await db
+        .from('matches')
+        .select('*')
+        .or('status.eq.Finished,status.eq.FT,is_history.eq.true')
+        .order('match_date', { ascending: false })
+        .limit(1000);
+    return mapMatches((data ?? []) as MatchRow[]).filter(
+        (m) => (m.matchType === 'free' || m.matchType === 'vip' || m.matchType === 'paid') && Boolean(m.aiPrediction),
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Mutations (ports of Convex mutations)
 // ---------------------------------------------------------------------------
