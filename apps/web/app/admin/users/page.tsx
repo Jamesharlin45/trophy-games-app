@@ -3,11 +3,13 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { ShieldAlert, ShieldCheck, RefreshCw, Ban, UserCheck, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
+import { getDeviceDisplayCode, isLegacyDeviceId } from '@/lib/device-id';
 
 interface User {
     _id: string;
     username: string;
     deviceId: string;
+    type?: 'vip' | 'paid';
     createdAt: string;
     lastActiveAt: string;
     failedAttempts: number;
@@ -83,6 +85,7 @@ export default function AdminUsersPage() {
                             <thead className="bg-zinc-50 dark:bg-zinc-800/60 text-xs text-zinc-500 dark:text-zinc-400 font-medium">
                                 <tr>
                                     <th className="px-4 py-3">Username</th>
+                                    <th className="px-4 py-3 text-center">Plan</th>
                                     <th className="px-4 py-3">Device ID</th>
                                     <th className="px-4 py-3 text-center">Status</th>
                                     <th className="px-4 py-3 text-center">Failed Attempts</th>
@@ -94,7 +97,21 @@ export default function AdminUsersPage() {
                                 {users.map(user => (
                                     <tr key={user._id} className={`hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors ${user.isBlocked ? 'opacity-70 bg-red-50/50 dark:bg-red-900/10' : ''}`}>
                                         <td className="px-4 py-3 font-semibold text-zinc-900 dark:text-zinc-100">{user.username}</td>
-                                        <td className="px-4 py-3 font-mono text-xs text-zinc-500 dark:text-zinc-500 max-w-40 truncate">{user.deviceId}</td>
+                                        <td className="px-4 py-3 text-center text-xs text-zinc-500">
+                                            {user.type ? user.type.toUpperCase() : '—'}
+                                        </td>
+                                        <td className="px-4 py-3 max-w-40 truncate">
+                                            <button
+                                                onClick={() => navigator.clipboard.writeText(user.deviceId).catch(() => { })}
+                                                title="Copy full device id"
+                                                className="font-mono text-xs text-zinc-500 dark:text-zinc-500 hover:text-blue-600"
+                                            >
+                                                {getDeviceDisplayCode(user.deviceId)}
+                                            </button>
+                                            {isLegacyDeviceId(user.deviceId) && (
+                                                <span className="ml-2 rounded bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-orange-700 dark:bg-orange-900/30 dark:text-orange-400">LEGACY</span>
+                                            )}
+                                        </td>
                                         <td className="px-4 py-3 text-center">
                                             {user.isBlocked ? (
                                                 <span className="inline-flex items-center gap-1 text-xs font-medium text-red-500"><ShieldAlert size={12} />Blocked</span>

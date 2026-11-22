@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { Key, Plus, RotateCcw, RefreshCw, CheckCircle2, XCircle, Crown, DollarSign, Ban, Hourglass, Mail, Send, AlertTriangle } from 'lucide-react';
+import { Key, Plus, RotateCcw, RefreshCw, CheckCircle2, XCircle, Crown, DollarSign, Ban, Hourglass, Mail, Send, AlertTriangle, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn, daysLeftLabel } from '@/lib/utils';
+import { getDeviceDisplayCode, isLegacyDeviceId } from '@/lib/device-id';
 
 interface TokenEmailStatus {
     status: 'pending' | 'sent' | 'failed' | 'none';
@@ -25,6 +26,7 @@ interface Token {
     revokedAt?: string;
     /** Prefilled from the originating purchase or manual request. */
     email?: string;
+    emailMasked?: string;
     emailStatus: TokenEmailStatus;
 }
 
@@ -34,6 +36,13 @@ interface EmailStatusData {
     failed: number;
     lastErrors: string[];
     config: Record<'SMTP_HOST' | 'SMTP_PORT' | 'SMTP_USER' | 'SMTP_PASS' | 'MAIL_FROM', boolean>;
+}
+
+interface LegacyStats {
+    tokens: number;
+    purchases: number;
+    requests: number;
+    users: number;
 }
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -52,6 +61,8 @@ export default function AdminTokensPage() {
     const [emailTarget, setEmailTarget] = useState<Token | null>(null);
     const [emailDraft, setEmailDraft] = useState('');
     const [sendingEmail, setSendingEmail] = useState(false);
+    const [legacyStats, setLegacyStats] = useState<LegacyStats | null>(null);
+    const [deletingToken, setDeletingToken] = useState<string | null>(null);
 
     const loadEmailStatus = useCallback(async () => {
         try {
@@ -80,12 +91,21 @@ export default function AdminTokensPage() {
         }
     }, []);
 
+    const loadLegacyStats = useCallback(async () => {
+        try {
+            const res = await fetch('/api/admin/legacy-stats');
+            if (res.ok) setLegacyStats((await res.json()) as LegacyStats);
+        } catch {
+            // The counters are informational; token management still works.
+        }
+    }, []);
+
     useEffect(() => {
         async function initialize() {
-            await Promise.all([loadTokens(), loadEmailStatus()]);
+            await Promise.all([loadTokens(), loadEmailStatus(), loadLegacyStats()]);
         }
         void initialize();
-    }, [loadTokens, loadEmailStatus]);
+    }, [loadTokens, loadEmailStatus, loadLegacyStats]);
 
     const createToken = async () => {
         if (!form.deviceId) return;
@@ -139,6 +159,39 @@ export default function AdminTokensPage() {
             toast.error(e instanceof Error ? e.message : 'Failed to remove access');
         } finally {
             setBusyToken(null);
+        }
+    };
+
+    // Hard delete: the token row and its pending emails are removed from the
+    // database. A purchase-backed token revokes (but keeps) the payment row so
+    // app restore cannot re-grant access. The list is reloaded from the server.
+    const deleteToken = async (token: Token) => {
+        const message =
+            `Permanently delete the ${token.type.toUpperCase()} token for ${token.username || 'this user'}? ` +
+            'This deletes the token and its pending token emails. ' +
+            'If it came from a purchase, the payment record is kept but marked revoked. This cannot be undone.';
+        if (!window.confirm(message)) return;
+        setDeletingToken(token.token);
+        try {
+            const res = await fetch('/api/admin/tokens', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token: token.token, hard: true }),
+            });
+            const data = (await res.json().catch(() => null)) as {
+                error?: string;
+                deletedOutbox?: number;
+                revokedPurchases?: number;
+            } | null;
+            if (!res.ok || data?.error) throw new Error(data?.error || 'Failed to delete token');
+            await Promise.all([loadTokens(), loadLegacyStats()]);
+            toast.success(
+                `Token deleted (${data?.deletedOutbox ?? 0} pending emails removed${data?.revokedPurchases ? `, ${data.revokedPurchases} purchase revoked` : ''})`,
+            );
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : 'Failed to delete token');
+        } finally {
+            setDeletingToken(null);
         }
     };
 
@@ -200,9 +253,16 @@ export default function AdminTokensPage() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ token: emailTarget.token, email: emailDraft.trim() }),
             });
-            const data = (await res.json().catch(() => null)) as { error?: string } | null;
-            if (!res.ok || data?.error) throw new Error(data?.error || 'Failed to send email');
-            toast.success('Token email queued — sending now');
+            const data = (await res.json().catch(() => null)) as {
+                error?: string;
+                emailStatus?: 'sent' | 'queued' | 'failed';
+                emailError?: string;
+                email?: string;
+            } | null;
+            if (!res.ok || data?.error) {
+                throw new Error(data?.emailError || data?.error || 'Failed to send email');
+            }
+            toast.success(`Email ${data?.emailStatus ?? 'queued'}${data?.email ? ` to ${data.email}` : ''}`);
             setEmailTarget(null);
             await Promise.all([loadTokens(), loadEmailStatus()]);
         } catch (e) {
@@ -251,13 +311,35 @@ export default function AdminTokensPage() {
                     <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">Generate and manage VIP & Paid access tokens for users.</p>
                 </div>
                 <div className="flex gap-2">
-                    <button onClick={() => { setLoading(true); void Promise.all([loadTokens(), loadEmailStatus()]); }} className="flex items-center gap-2 px-3 py-2 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 font-medium rounded-xl transition-colors text-sm">
+                    <button onClick={() => { setLoading(true); void Promise.all([loadTokens(), loadEmailStatus(), loadLegacyStats()]); }} className="flex items-center gap-2 px-3 py-2 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 font-medium rounded-xl transition-colors text-sm">
                         <RefreshCw size={14} />
                     </button>
                     <button onClick={() => setShowForm(!showForm)} className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition-colors text-sm">
                         <Plus size={16} />Generate Token
                     </button>
                 </div>
+            </div>
+
+            {/* Legacy device migration counters. */}
+            <div className="rounded-xl border border-orange-200 dark:border-orange-900 bg-orange-50/60 dark:bg-orange-950/20 p-5 space-y-2">
+                <h2 className="font-semibold text-zinc-900 dark:text-zinc-50 text-sm">Legacy device ids still in use</h2>
+                {legacyStats ? (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+                        {([
+                            ['Tokens', legacyStats.tokens],
+                            ['Purchases', legacyStats.purchases],
+                            ['Requests', legacyStats.requests],
+                            ['Users', legacyStats.users],
+                        ] as Array<[string, number]>).map(([label, count]) => (
+                            <div key={label} className="rounded-lg bg-white dark:bg-zinc-900/70 p-3">
+                                <div className="text-xs text-zinc-500">{label}</div>
+                                <div className="text-xl font-bold text-orange-600 dark:text-orange-400">{count}</div>
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <div className="text-sm text-zinc-400">Loading legacy counts...</div>
+                )}
             </div>
 
             {/* Email delivery diagnostics. Counts and error text only — never credentials. */}
@@ -423,7 +505,16 @@ export default function AdminTokensPage() {
                                         </td>
                                         <td className="px-4 py-3 max-w-32 truncate">
                                             <div className="font-medium text-zinc-900 dark:text-zinc-100">{token.username || 'Anonymous'}</div>
-                                            <div className="font-mono text-xs text-zinc-500 dark:text-zinc-500 mt-0.5">{token.deviceId}</div>
+                                            <button
+                                                onClick={() => navigator.clipboard.writeText(token.deviceId).catch(() => { })}
+                                                title="Copy full device id"
+                                                className="font-mono text-xs text-zinc-500 dark:text-zinc-500 mt-0.5 hover:text-blue-600"
+                                            >
+                                                {getDeviceDisplayCode(token.deviceId)}
+                                            </button>
+                                            {isLegacyDeviceId(token.deviceId) && (
+                                                <span className="ml-2 rounded bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-orange-700 dark:bg-orange-900/30 dark:text-orange-400">LEGACY</span>
+                                            )}
                                         </td>
                                         <td className="px-4 py-3 text-center">
                                             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${token.type === 'vip' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'}`}>
@@ -441,9 +532,9 @@ export default function AdminTokensPage() {
                                         </td>
                                         <td className="px-4 py-3 text-center">
                                             {token.emailStatus.status === 'sent'
-                                                ? <span className="inline-flex items-center gap-1 text-xs text-brand-green" title={token.email}><CheckCircle2 size={12} />Sent</span>
+                                                ? <span className="inline-flex items-center gap-1 text-xs text-brand-green" title={token.emailMasked}><CheckCircle2 size={12} />Sent{token.emailMasked ? ` to ${token.emailMasked}` : ''}</span>
                                                 : token.emailStatus.status === 'pending'
-                                                    ? <span className="inline-flex items-center gap-1 text-xs text-orange-500" title={token.emailStatus.lastError || token.email}><Hourglass size={12} />Pending</span>
+                                                    ? <span className="inline-flex items-center gap-1 text-xs text-orange-500" title={token.emailStatus.lastError || token.emailMasked}><Hourglass size={12} />Queued</span>
                                                     : token.emailStatus.status === 'failed'
                                                         ? <span className="inline-flex items-center gap-1 text-xs text-red-500" title={token.emailStatus.lastError || 'Email failed'}><XCircle size={12} />Failed{token.emailStatus.lastError ? ` — ${token.emailStatus.lastError}` : ''}</span>
                                                         : <span className="text-xs text-zinc-400">None</span>}
@@ -482,6 +573,14 @@ export default function AdminTokensPage() {
                                                     </button>
                                                 </>
                                             )}
+                                            <button
+                                                onClick={() => void deleteToken(token)}
+                                                disabled={deletingToken === token.token || busyToken === token.token}
+                                                className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50"
+                                                title="Permanently delete this token and its pending emails"
+                                            >
+                                                <Trash2 size={12} />Delete
+                                            </button>
                                         </td>
                                     </tr>
                                 ))}

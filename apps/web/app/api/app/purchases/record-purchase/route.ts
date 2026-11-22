@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { triggerDueEmailsIfDue } from '@/lib/email-opportunistic';
 import { createDb } from '@/lib/db/client';
 import { recordPurchase } from '@/lib/db/purchases';
+import { isValidDeviceId } from '@/lib/device-id';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,9 +31,9 @@ export async function POST(request: Request) {
     const purchaseToken = readString(body?.purchaseToken);
     const transactionId = readString(body?.transactionId);
     const receiptData = readString(body?.receiptData);
-    if (!deviceId || !productId || !purchaseToken) {
+    if (!deviceId || !productId || !purchaseToken || !isValidDeviceId(deviceId)) {
         return NextResponse.json(
-            { error: 'deviceId, productId and purchaseToken are required' },
+            { error: 'valid deviceId, productId and purchaseToken are required' },
             { status: 400 },
         );
     }

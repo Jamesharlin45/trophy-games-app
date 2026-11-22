@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { sendMail } from '@/lib/mailer';
+import { isValidDeviceId } from '@/lib/device-id';
 
 /** Server-side helpers for the `email_outbox` table. Rows are created by the
  * purchase email endpoint and by admin approvals / resends, and sent by
@@ -48,6 +49,8 @@ interface OutboxRow {
     attempts: number;
     last_error: string | null;
     created_at?: string;
+    request_id?: string | null;
+    purchase_id?: string | null;
 }
 
 interface PurchaseRow {
@@ -68,6 +71,19 @@ export function isValidEmail(email: string): boolean {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 }
 
+/** The canonical recipient shape: trimmed and lower-cased. */
+export function normalizeEmail(email: string): string {
+    return email.trim().toLowerCase();
+}
+
+/** a***@gmail.com — safe to display in admin toasts and tables. */
+export function maskEmail(email: string): string {
+    const normalized = normalizeEmail(email);
+    const at = normalized.indexOf('@');
+    if (at < 1) return '***';
+    return `${normalized.slice(0, 1)}***${normalized.slice(at)}`;
+}
+
 function nextSendAfter(dueNow?: boolean): string {
     const now = new Date();
     const sendAt = dueNow ? now : new Date(now.getTime() + EMAIL_DELAY_MINUTES * 60_000);
@@ -76,15 +92,15 @@ function nextSendAfter(dueNow?: boolean): string {
 
 async function setPurchaseEmailColumn(
     db: SupabaseClient,
-    deviceId: string,
     purchaseToken: string,
     email: string,
 ): Promise<void> {
+    // purchase_token is the authoritative Play identifier: the device id may
+    // have been re-bound from legacy to UUID after an app update.
     const { error } = await db
         .from('purchases')
         .update({ email })
-        .eq('purchase_token', purchaseToken)
-        .eq('device_id', deviceId);
+        .eq('purchase_token', purchaseToken);
     if (error) throw new Error(error.message);
 }
 
@@ -172,13 +188,13 @@ export async function enqueueTokenEmail(
         allowResend?: boolean;
     },
 ): Promise<EnqueueTokenEmailResult> {
-    const email = input.toEmail.trim();
+    const email = normalizeEmail(input.toEmail);
     if (!isValidEmail(email)) return { success: false, reason: 'Invalid email address' };
     if (!input.token) return { success: false, reason: 'Token is required' };
 
     const { data: rows, error } = await db
         .from('email_outbox')
-        .select('id, sent_at, cancelled_at, attempts')
+        .select('id, sent_at, cancelled_at, attempts, request_id, purchase_id')
         .eq('token', input.token)
         .limit(20);
     if (error) throw new Error(error.message);
@@ -205,7 +221,8 @@ export async function enqueueTokenEmail(
                 body_html: body.html,
                 send_after: sendAfter,
                 attempts: 0,
-                last_error: null,
+                request_id: input.requestId ?? pending.request_id ?? null,
+                purchase_id: input.purchaseId ?? pending.purchase_id ?? null,
                 cancelled_at: null,
             })
             .eq('id', pending.id);
@@ -228,6 +245,55 @@ export async function enqueueTokenEmail(
     return { success: true, action: 'inserted' };
 }
 
+/**
+ * Persist a queueing failure on the outbox row itself. Called when a token
+ * email cannot even be enqueued, so the admin UI can show the real error.
+ */
+export async function recordEmailFailure(
+    db: SupabaseClient,
+    input: {
+        token: string;
+        toEmail: string;
+        tier: string;
+        expiresAt?: string | null;
+        requestId?: string | null;
+        reason: string;
+    },
+): Promise<void> {
+    const body = buildEmailBody({
+        token: input.token,
+        plan: input.tier === 'vip' ? 'VIP' : 'Paid',
+        expiresAt: input.expiresAt ?? null,
+    });
+    const { data: rows, error: lookupError } = await db
+        .from('email_outbox')
+        .select('id')
+        .eq('token', input.token)
+        .is('sent_at', null)
+        .limit(1);
+    if (lookupError) throw new Error(lookupError.message);
+    if (rows && rows.length > 0) {
+        const { error } = await db
+            .from('email_outbox')
+            .update({ attempts: 5, last_error: input.reason })
+            .eq('id', (rows[0] as { id: string }).id);
+        if (error) throw new Error(error.message);
+        return;
+    }
+    const { error } = await db.from('email_outbox').insert({
+        to_email: normalizeEmail(input.toEmail),
+        subject: body.subject,
+        body_text: body.text,
+        body_html: body.html,
+        token: input.token,
+        request_id: input.requestId ?? null,
+        send_after: new Date().toISOString(),
+        attempts: 5,
+        last_error: input.reason,
+    });
+    if (error) throw new Error(error.message);
+}
+
 // ---------------------------------------------------------------------------
 // set-email (purchase flow)
 // ---------------------------------------------------------------------------
@@ -238,7 +304,10 @@ export async function setPurchaseEmail(
     db: SupabaseClient,
     input: { deviceId: string; purchaseToken: string; email: string; dueNow?: boolean },
 ): Promise<SetPurchaseEmailResult> {
-    const email = input.email.trim();
+    const email = normalizeEmail(input.email);
+    if (!isValidDeviceId(input.deviceId)) {
+        return { success: false, reason: 'Invalid device id' };
+    }
     if (!isValidEmail(email)) {
         return { success: false, reason: 'Invalid email address' };
     }
@@ -302,7 +371,7 @@ export async function setPurchaseEmail(
     });
     if (!queued.success) return { success: false, reason: queued.reason };
 
-    await setPurchaseEmailColumn(db, input.deviceId, input.purchaseToken, email);
+    await setPurchaseEmailColumn(db, input.purchaseToken, email);
     return { success: true, action: queued.action };
 }
 
@@ -347,16 +416,18 @@ function isSendable(
 }
 
 /** Send due outbox rows: `send_after <= now`, not sent/cancelled, attempts <
- * 5 — oldest first, at most `limit` per call (default 20). Before sending, a
- * row is cancelled when its token is revoked/inactive/expired or its purchase
- * is revoked. On SMTP failure the row gets an attempt + last_error. */
+ * 5 — oldest first, at most `limit` per call (default 20). Pass `token` to
+ * restrict the sweep to one approval/resend. Before sending, a row is
+ * cancelled when its token is missing/revoked/inactive/expired or its purchase
+ * is revoked; the reason is stored in last_error. On SMTP failure the row gets
+ * an attempt + last_error. */
 export async function sendDueEmails(
     db: SupabaseClient,
-    options: { limit?: number } = {},
+    options: { limit?: number; token?: string } = {},
 ): Promise<SendDueEmailsResult> {
     const limit = Math.max(1, Math.min(options.limit ?? 20, 50));
     const now = new Date();
-    const { data: rows, error } = await db
+    let query = db
         .from('email_outbox')
         .select('id, token, purchase_id, attempts, to_email, subject, body_text, body_html')
         .lte('send_after', now)
@@ -365,6 +436,8 @@ export async function sendDueEmails(
         .is('cancelled_at', null)
         .order('send_after', { ascending: true })
         .limit(limit);
+    if (options.token) query = query.eq('token', options.token);
+    const { data: rows, error } = await query;
     if (error) throw new Error(error.message);
 
     const result: SendDueEmailsResult = { sent: 0, cancelled: 0, failed: 0 };
@@ -381,9 +454,16 @@ export async function sendDueEmails(
     for (const row of dueRows) {
         const { purchase, token } = await fetchPurchaseAndToken(db, row);
         if (!isSendable(purchase, token, now)) {
+            const cancelReason = !token
+                ? 'Access token no longer exists; email cancelled'
+                : purchase?.status === 'revoked'
+                    ? 'Purchase access was revoked; email cancelled'
+                    : !token.is_active || token.revoked_at
+                        ? 'Access token was revoked; email cancelled'
+                        : 'Access token expired; email cancelled';
             const { error: cancelError } = await db
                 .from('email_outbox')
-                .update({ cancelled_at: new Date().toISOString() })
+                .update({ cancelled_at: new Date().toISOString(), last_error: cancelReason })
                 .eq('id', row.id);
             if (cancelError) throw new Error(cancelError.message);
             result.cancelled += 1;
@@ -399,7 +479,7 @@ export async function sendDueEmails(
         if (mail.ok) {
             const { error: updateError } = await db
                 .from('email_outbox')
-                .update({ sent_at: new Date().toISOString(), attempts: row.attempts + 1 })
+                .update({ sent_at: new Date().toISOString(), attempts: row.attempts + 1, last_error: null })
                 .eq('id', row.id);
             if (updateError) throw new Error(updateError.message);
             result.sent += 1;
@@ -461,7 +541,10 @@ export async function getEmailStatusesForTokens(
         if (row.sent_at !== null) {
             result.set(row.token, { status: 'sent' });
         } else if (row.cancelled_at !== null) {
-            result.set(row.token, { status: 'none' });
+            result.set(row.token, {
+                status: 'none',
+                ...(row.last_error ? { lastError: row.last_error } : {}),
+            });
         } else if (row.attempts >= 5) {
             result.set(row.token, { status: 'failed', lastError: row.last_error ?? undefined });
         } else {

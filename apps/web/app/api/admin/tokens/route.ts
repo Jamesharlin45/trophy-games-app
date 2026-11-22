@@ -1,9 +1,25 @@
 import { NextResponse } from 'next/server';
 import { createDb } from '@/lib/db/client';
-import { createToken, getAllRequests, getAllTokens, reactivateToken, revokeToken } from '@/lib/db/tokens';
+import {
+    createToken,
+    deleteTokenHard,
+    getAllRequests,
+    getAllTokens,
+    reactivateToken,
+    revokeToken,
+} from '@/lib/db/tokens';
 import type { TokenType } from '@/lib/db/tokens';
-import { enqueueTokenEmail, getEmailStatusesForTokens } from '@/lib/db/email-outbox';
-import { scheduleDueEmails } from '@/lib/email-opportunistic';
+import {
+    enqueueTokenEmail,
+    getEmailStatusesForTokens,
+    isValidEmail,
+    maskEmail,
+    normalizeEmail,
+    recordEmailFailure,
+} from '@/lib/db/email-outbox';
+import { redactSmtpSecrets } from '@/lib/email-diagnostics';
+import { scheduleTokenEmail } from '@/lib/email-opportunistic';
+import { isValidDeviceId } from '@/lib/device-id';
 
 export const dynamic = 'force-dynamic';
 
@@ -50,17 +66,27 @@ export async function GET() {
         );
 
         return NextResponse.json(
-            tokens.map((token) => ({
-                ...token,
-                email:
+            tokens.map((token) => {
+                const email =
                     requestEmails.get(token.token) ??
                     purchaseEmails.get(`${token.deviceId}|${token.type}`) ??
-                    undefined,
-                emailStatus: statuses.get(token.token) ?? { status: 'none' },
-            })),
+                    undefined;
+                const status = statuses.get(token.token) ?? { status: 'none' as const };
+                return {
+                    ...token,
+                    email,
+                    emailMasked: email ? maskEmail(email) : undefined,
+                    emailStatus: {
+                        ...status,
+                        ...(status.lastError
+                            ? { lastError: redactSmtpSecrets(status.lastError) }
+                            : {}),
+                    },
+                };
+            }),
         );
     } catch (error) {
-        console.error('[API] Get tokens failed:', error);
+        console.error('[API] Get tokens failed:', error instanceof Error ? error.message : 'unknown error');
         return NextResponse.json({ error: 'Failed to load tokens' }, { status: 500 });
     }
 }
@@ -82,57 +108,93 @@ export async function POST(request: Request) {
         if (!deviceId || !type) {
             return NextResponse.json({ error: 'deviceId and type required' }, { status: 400 });
         }
+        if (!isValidDeviceId(deviceId)) {
+            return NextResponse.json({ error: 'Invalid device id' }, { status: 400 });
+        }
 
         // When a token is created for a manual request, prefill the address
         // from that request unless the admin typed a different one.
-        let toEmail = email;
+        let toEmail = typeof email === 'string' ? normalizeEmail(email) : '';
         if (!toEmail && requestId) {
             const req = (await getAllRequests(db)).find((item) => item._id === requestId);
-            toEmail = req?.email;
+            toEmail = normalizeEmail(req?.email ?? '');
+        }
+        if (toEmail && !isValidEmail(toEmail)) {
+            return NextResponse.json({ error: 'Invalid email address' }, { status: 400 });
         }
 
         const token = generateToken(type);
         await createToken(db, { token, deviceId, username, type, matchId, expiresAt });
 
-        const queued = toEmail
-            ? await enqueueTokenEmail(db, {
-                  token,
-                  toEmail,
-                  tier: type,
-                  expiresAt,
-                  requestId: requestId ?? null,
-                  dueNow: true,
-              })
-            : null;
-        if (queued?.success) scheduleDueEmails();
+        let queued: Awaited<ReturnType<typeof enqueueTokenEmail>> | null = null;
+        if (toEmail) {
+            try {
+                queued = await enqueueTokenEmail(db, {
+                    token,
+                    toEmail,
+                    tier: type,
+                    expiresAt,
+                    requestId: requestId ?? null,
+                    dueNow: true,
+                });
+            } catch (error) {
+                const reason = redactSmtpSecrets(
+                    error instanceof Error ? error.message : 'Failed to queue email',
+                );
+                await recordEmailFailure(db, {
+                    token,
+                    toEmail,
+                    tier: type,
+                    expiresAt,
+                    requestId: requestId ?? null,
+                    reason,
+                });
+                queued = { success: false, reason };
+            }
+        }
+        if (queued?.success) scheduleTokenEmail(token);
 
         return NextResponse.json({
             success: true,
             token,
             ...(queued ? { emailQueued: queued.success } : {}),
-            ...(queued && !queued.success ? { emailError: queued.reason } : {}),
+            ...(toEmail ? { email: maskEmail(toEmail) } : {}),
+            ...(queued && !queued.success ? { emailError: redactSmtpSecrets(queued.reason) } : {}),
         });
     } catch (error) {
-        console.error('[API] Create token failed:', error);
+        console.error('[API] Create token failed:', error instanceof Error ? error.message : 'unknown error');
         return NextResponse.json({ error: 'Failed to create token' }, { status: 500 });
     }
 }
 
+/**
+ * DELETE /api/admin/tokens
+ * - { token }            → "Remove access" (soft revoke, existing behaviour).
+ * - { token, hard: true } → permanent delete of the token and its pending
+ *   emails; a purchase-backed token revokes its purchase record instead of
+ *   letting restore re-grant it.
+ */
 export async function DELETE(request: Request) {
     const db = createDb();
     if (!db) return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
     try {
-        const { token } = (await request.json()) as { token?: string };
+        const { token, hard } = (await request.json()) as { token?: string; hard?: boolean };
         if (!token) return NextResponse.json({ error: 'token is required' }, { status: 400 });
+        if (hard === true) {
+            const result = await deleteTokenHard(db, token);
+            if (result.deletedTokens === 0) {
+                return NextResponse.json({ error: 'Token not found' }, { status: 404 });
+            }
+            return NextResponse.json({ success: true, ...result });
+        }
         const changed = await revokeToken(db, token);
         if (changed === 0) {
             return NextResponse.json({ error: 'Token not found or already revoked' }, { status: 404 });
         }
         return NextResponse.json({ success: true, changed });
     } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        console.error('[API] Revoke token failed:', error);
-        return NextResponse.json({ error: `Failed to revoke token: ${detail}` }, { status: 500 });
+        console.error('[API] Delete token failed:', error instanceof Error ? error.message : 'unknown error');
+        return NextResponse.json({ error: 'Failed to delete token' }, { status: 500 });
     }
 }
 
@@ -148,8 +210,7 @@ export async function PUT(request: Request) {
         }
         return NextResponse.json({ success: true, changed });
     } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        console.error('[API] Reactivate token failed:', error);
-        return NextResponse.json({ error: `Failed to reactivate token: ${detail}` }, { status: 500 });
+        console.error('[API] Reactivate token failed:', error instanceof Error ? error.message : 'unknown error');
+        return NextResponse.json({ error: 'Failed to reactivate token' }, { status: 500 });
     }
 }
