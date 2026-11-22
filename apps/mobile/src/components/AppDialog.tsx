@@ -25,6 +25,7 @@ import Animated, {
 import { X } from 'lucide-react-native';
 import { useTheme } from '../context/ThemeContext';
 import type { ThemeColors } from '../theme/colors';
+import { neonBorder, neonShadow } from './neon/tokens';
 import { typography } from '../theme/typography';
 import i18n from '../locales';
 
@@ -60,8 +61,9 @@ export function AppDialog({
     showClose = true,
     testID,
 }: AppDialogProps) {
-    const { themeColors } = useTheme();
+    const { themeColors, isDark } = useTheme();
     const styles = getStyles(themeColors);
+    const cardGlow = neonShadow(themeColors.accent, isDark);
     const reducedMotion = useReducedMotion();
     const progress = useSharedValue(0);
 
@@ -103,7 +105,17 @@ export function AppDialog({
                   through to the backdrop, while deeper touchables (buttons,
                   scroll views) still win the responder negotiation.
                 */}
-                <Animated.View style={[styles.card, cardStyle]} onStartShouldSetResponder={() => true}>
+                <Animated.View
+                    style={[
+                        styles.card,
+                        {
+                            borderColor: neonBorder(themeColors.accent),
+                            ...cardGlow,
+                        },
+                        cardStyle,
+                    ]}
+                    onStartShouldSetResponder={() => true}
+                >
                     {showClose ? (
                         <TouchableOpacity
                             style={styles.closeBtn}
@@ -159,11 +171,11 @@ function getStyles(themeColors: ThemeColors) {
         },
         closeBtn: {
             position: 'absolute',
-            top: 12,
-            right: 12,
-            width: 34,
-            height: 34,
-            borderRadius: 17,
+            top: 10,
+            right: 10,
+            width: 44,
+            height: 44,
+            borderRadius: 22,
             alignItems: 'center',
             justifyContent: 'center',
             backgroundColor: themeColors.glass,

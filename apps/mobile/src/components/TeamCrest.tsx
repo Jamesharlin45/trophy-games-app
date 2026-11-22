@@ -6,7 +6,7 @@
 
 import { Image, StyleSheet, Text, View } from 'react-native';
 import { useEffect, useState } from 'react';
-import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useReducedMotion, useSharedValue, withTiming } from 'react-native-reanimated';
 import { readableCopy } from '../lib/colors';
 import { getCountryFlagUrl } from '../lib/flags';
 import { useTheme } from '../context/ThemeContext';
@@ -23,6 +23,7 @@ export interface TeamCrestProps {
 
 export function TeamCrest({ uri, name, size, teamColor, fallbackColors }: TeamCrestProps) {
     const { themeColors } = useTheme();
+    const reduceMotion = useReducedMotion();
     const [failed, setFailed] = useState(false);
 
     const safeName = String(name ?? '');
@@ -39,9 +40,10 @@ export function TeamCrest({ uri, name, size, teamColor, fallbackColors }: TeamCr
     const crestBg = useSharedValue(readableCopy(teamColor) ?? fallbackPrimary);
     const crestBorder = useSharedValue(readableCopy(teamColor) ?? fallbackSecondary);
     useEffect(() => {
-        crestBg.value = withTiming(readableCopy(teamColor) ?? fallbackPrimary, { duration: 600 });
-        crestBorder.value = withTiming(readableCopy(teamColor) ?? fallbackSecondary, { duration: 600 });
-    }, [teamColor, fallbackPrimary, fallbackSecondary]);
+        const duration = reduceMotion ? 0 : 180;
+        crestBg.value = withTiming(readableCopy(teamColor) ?? fallbackPrimary, { duration });
+        crestBorder.value = withTiming(readableCopy(teamColor) ?? fallbackSecondary, { duration });
+    }, [teamColor, fallbackPrimary, fallbackSecondary, reduceMotion, crestBg, crestBorder]);
 
 
     const animated = useAnimatedStyle(() => ({ backgroundColor: crestBg.value, borderColor: crestBorder.value }));

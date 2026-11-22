@@ -240,6 +240,7 @@ export default {
         lockedPreview: 'Prediction locked',
         live: 'Live',
         final: 'Final',
+        postponed: 'PST',
         free: 'Free',
         vip: 'VIP',
         paid: 'Paid',

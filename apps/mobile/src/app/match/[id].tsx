@@ -20,17 +20,16 @@ import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     ChevronLeft,
-    ChevronRight,
     Share2,
     Eye,
     ChartBar,
     Goal,
-    Link2,
     Lock,
     Crown,
     TrendingUp,
     Flag,
     Zap,
+    Check,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import * as ShareAPI from 'expo-sharing';
@@ -41,22 +40,27 @@ import { fetchMatchStats } from '../../api/footystats';
 import type { MatchDetailData } from '../../api/footystats';
 import { useTheme } from '../../context/ThemeContext';
 import type { ThemeColors } from '../../theme/colors';
-import { headerBgColor, headerTextColor, readableCopy } from '../../lib/colors';
+import { readableCopy } from '../../lib/colors';
 import { useTeamColors } from '../../hooks/useTeamColors';
 import { useMembershipAccess } from '../../hooks/useMembershipAccess';
 import { TeamCrest } from '../../components/TeamCrest';
-import { VsPill } from '../../components/VsPill';
-import { AnimatedBar } from '../../components/AnimatedBar';
 import { OverviewTabs } from '../../components/OverviewTabs';
-import { AnimatedPulse } from '../../components/AnimatedPulse';
 import { SkeletonList } from '../../components/Skeleton';
+import { NeonCard } from '../../components/neon/NeonCard';
+import { NeonPill } from '../../components/neon/NeonPill';
+import { NeonProgress } from '../../components/neon/NeonProgress';
+import { NeonButton } from '../../components/neon/NeonButton';
+import { onColor, readableAccent, withAlpha } from '../../components/neon/tokens';
 import i18n from '../../locales';
 
 type MatchViewModel = Omit<
     ApiMatch,
     'h2h' | 'detailedOdds' | 'homeLineup' | 'awayLineup' | 'goals' | 'stats' | 'potentials' | 'oddsComparison'
 > &
-    Partial<MatchDetailData>;
+    Partial<MatchDetailData> & {
+        // Raw web payload key; the camelCase field is the mapped shape.
+        ai_prediction?: { sources?: string[] };
+    };
 
 type AiPrediction = NonNullable<MatchViewModel['aiPrediction']>;
 type Risk = AiPrediction['risk'];
@@ -105,8 +109,9 @@ function textFor(key: string, fallback: string): string {
 export default function MatchDetailScreen() {
     const { id, matchData } = useLocalSearchParams();
     const router = useRouter();
-    const { themeColors } = useTheme();
+    const { themeColors, isDark } = useTheme();
     const styles = getStyles(themeColors);
+    const accentInk = readableAccent(themeColors, isDark);
     const access = useMembershipAccess();
 
     const [match, setMatch] = useState<MatchViewModel | null>(null);
@@ -199,7 +204,7 @@ export default function MatchDetailScreen() {
     const kickMs = match ? kickoff.getTime() : 0;
 
     // Declared before the early returns so hooks always run in the same order.
-    const rawSources = match?.aiPrediction?.sources;
+    const rawSources = match?.aiPrediction?.sources ?? match?.ai_prediction?.sources;
     const sources = useMemo(
         () => (Array.isArray(rawSources) ? rawSources.filter(Boolean) : []),
         [rawSources],
@@ -235,7 +240,7 @@ export default function MatchDetailScreen() {
                         {i18n.t('matchDetail.unavailable')}
                     </Text>
                     <TouchableOpacity onPress={() => router.back()} style={styles.backCta} accessibilityRole="button">
-                        <Text style={[styles.backCtaText, { color: themeColors.accent }]}>{i18n.t('matchDetail.goBack')}</Text>
+                        <Text style={[styles.backCtaText, { color: accentInk }]}>{i18n.t('matchDetail.goBack')}</Text>
                     </TouchableOpacity>
                 </View>
             </SafeAreaView>
@@ -263,21 +268,11 @@ export default function MatchDetailScreen() {
         : '';
     const showScore = (isLive || isFinished) && match.homeScore !== undefined && match.awayScore !== undefined;
 
-    const vsLabel = isFinished
-        ? textFor('matchDetail.statusFinished', 'FT')
-        : isLive
-            ? `${textFor('matchDetail.statusLive', 'LIVE')} • ${showScore ? scoreText : ''}`.trim()
-            : `${textFor('matchDetail.vs', 'VS')} — ${kickMs > 0 ? formatTime(kickoff) : ''}`.trim();
-
     const statusText = isFinished
         ? textFor('matchDetail.statusFinished', 'FT')
         : isLive
             ? textFor('matchDetail.statusLive', 'LIVE')
             : textFor('matchDetail.upcoming', 'Upcoming');
-
-    const homeColor = headerBgColor(teamColors.home, themeColors.accent);
-    const awayColor = headerBgColor(teamColors.away, themeColors.accent);
-    const headerText = headerTextColor(homeColor, themeColors.accentText, themeColors.text);
 
     const shareUrl = `trophy-games://match/${match.id}`;
     const handleShare = async () => {
@@ -295,46 +290,93 @@ export default function MatchDetailScreen() {
 
     return (
         <SafeAreaView style={styles.container} edges={['left', 'right', 'top']}>
-            <View style={[styles.headerBg, { backgroundColor: homeColor }]} />
-            <View style={[styles.headerFade, { backgroundColor: themeColors.background }]} />
-            <View style={[styles.headerAwayBlend, { backgroundColor: awayColor }]} />
+            <View style={styles.headerWrap}>
+                <NeonCard style={styles.headerCard} padded={false} radius={20}>
+                    <View style={styles.headerTop}>
+                        <TouchableOpacity
+                            onPress={() => router.back()}
+                            style={[styles.roundBtn, { borderColor: themeColors.border, backgroundColor: themeColors.glass }]}
+                            accessibilityRole="button"
+                            accessibilityLabel={textFor('matchDetail.goBack', 'Go back')}
+                        >
+                            <ChevronLeft size={22} color={themeColors.text} />
+                        </TouchableOpacity>
+                        <View style={styles.headerMeta}>
+                            <Text style={[styles.headerLeague, { color: themeColors.mutedText }]} numberOfLines={1}>
+                                {match.league || textFor('matchDetail.matchDetails', 'Match Details')}
+                            </Text>
+                            <Text style={[styles.headerKickoff, { color: themeColors.mutedText }]} numberOfLines={1}>
+                                {kickMs > 0 ? formatTime(kickoff) : match.country || ''}
+                            </Text>
+                        </View>
+                        <TouchableOpacity
+                            onPress={() => void handleShare()}
+                            style={[styles.roundBtn, { borderColor: themeColors.border, backgroundColor: themeColors.glass }]}
+                            accessibilityRole="button"
+                            accessibilityLabel={textFor('matchDetail.share', 'Share')}
+                        >
+                            <Share2 size={20} color={themeColors.text} />
+                        </TouchableOpacity>
+                    </View>
 
-            <View style={styles.headerInner}>
-                <View style={styles.headerTop}>
-                    <TouchableOpacity onPress={() => router.back()} style={styles.headerLeftBtn} accessibilityRole="button">
-                        <ChevronLeft size={26} color={headerText} />
-                    </TouchableOpacity>
-                    <Text style={[styles.headerTitle, { color: headerText }]} numberOfLines={1}>
-                        {match.league || textFor('matchDetail.matchDetails', 'Match Details')}
-                    </Text>
-                    <TouchableOpacity onPress={handleShare} style={styles.headerRightBtn} accessibilityRole="button" accessibilityLabel={textFor('matchDetail.share', 'Share')}>
-                        <Share2 size={22} color={headerText} />
-                    </TouchableOpacity>
-                </View>
+                    <View style={styles.crestRow}>
+                        <TeamCrest
+                            uri={match.homeTeamLogo}
+                            name={match.homeTeam}
+                            size={56}
+                            teamColor={readableCopy(teamColors.home)}
+                            fallbackColors={[themeColors.accent, themeColors.glass]}
+                        />
+                        <TeamCrest
+                            uri={match.awayTeamLogo}
+                            name={match.awayTeam}
+                            size={56}
+                            teamColor={readableCopy(teamColors.away)}
+                            fallbackColors={[themeColors.accent, themeColors.glass]}
+                        />
+                    </View>
 
-                <View style={styles.teamsRow}>
-                    <TeamCrest
-                        uri={match.homeTeamLogo}
-                        name={match.homeTeam}
-                        size={46}
-                        teamColor={readableCopy(teamColors.home)}
-                        fallbackColors={[themeColors.accent, themeColors.glass]}
-                    />
-                    <Text style={[styles.teamNameBig, { color: headerText }]} numberOfLines={2}>{match.homeTeam}</Text>
-                    <VsPill accent={themeColors.accent} accentText={themeColors.accentText} label={vsLabel} height={34} />
-                    {showCountdown ? <Text style={[styles.countdownText, { color: headerText }]}>{countdown}</Text> : null}
-                    <Text style={[styles.teamNameBig, { color: headerText }]} numberOfLines={2}>{match.awayTeam}</Text>
-                    <TeamCrest
-                        uri={match.awayTeamLogo}
-                        name={match.awayTeam}
-                        size={46}
-                        teamColor={readableCopy(teamColors.away)}
-                        fallbackColors={[themeColors.accent, themeColors.glass]}
-                    />
-                </View>
+                    <View style={styles.nameRow}>
+                        <Text style={[styles.teamNameBig, { color: themeColors.text }]} numberOfLines={2}>
+                            {match.homeTeam}
+                        </Text>
+                        <View style={styles.scoreCol}>
+                            <Text
+                                style={[
+                                    styles.scoreBig,
+                                    {
+                                        color: themeColors.text,
+                                        textShadowColor: withAlpha(themeColors.accent, isDark ? 0.65 : 0.3),
+                                        textShadowOffset: { width: 0, height: 0 },
+                                        textShadowRadius: isDark ? 14 : 10,
+                                    },
+                                ]}
+                            >
+                                {showScore ? scoreText : textFor('matchDetail.vs', 'VS')}
+                            </Text>
+                            {showCountdown ? (
+                                <Text style={[styles.countdownText, { color: accentInk }]}>{countdown}</Text>
+                            ) : null}
+                        </View>
+                        <Text style={[styles.teamNameBig, { color: themeColors.text }]} numberOfLines={2}>
+                            {match.awayTeam}
+                        </Text>
+                    </View>
 
-                {showScore && <Text style={[styles.scoreBig, { color: themeColors.accent }]}>{scoreText}</Text>}
-                <Text style={[styles.statusText, { color: headerText }]}>{statusText}</Text>
+                    <View style={styles.statusRow}>
+                        <NeonPill
+                            label={
+                                isFinished
+                                    ? textFor('matchDetail.statusFinished', 'FT')
+                                    : isLive
+                                        ? textFor('matchDetail.statusLive', 'LIVE')
+                                        : `${statusText} · ${kickMs > 0 ? formatTime(kickoff) : ''}`.trim()
+                            }
+                            tone={isLive ? 'success' : isFinished ? 'neutral' : 'accent'}
+                            dot
+                        />
+                    </View>
+                </NeonCard>
             </View>
 
             <OverviewTabs tabs={tabs} active={activeTab} onChange={setTab} />
@@ -396,15 +438,9 @@ function OverviewContent({
     lockTier: string;
     onUnlock: () => void;
 }) {
-    const { themeColors } = useTheme();
+    const { themeColors, isDark } = useTheme();
     const styles = getStyles(themeColors);
-
-    const riskColor = (() => {
-        if (risk === 'low') return themeColors.success;
-        if (risk === 'medium') return themeColors.warning;
-        if (risk === 'high') return themeColors.danger;
-        return themeColors.mutedText;
-    })();
+    const accentInk = readableAccent(themeColors, isDark);
 
     if (accessLoading) {
         return <SkeletonList style={{ paddingHorizontal: 16, width: '100%' }} />;
@@ -417,7 +453,7 @@ function OverviewContent({
     if (!hasPrediction) {
         return (
             <View style={styles.emptyState}>
-                <Crown size={24} color={themeColors.accent} />
+                <Crown size={24} color={accentInk} />
                 <Text style={[styles.emptyTitle, { color: themeColors.text }]}>{textFor('matchDetail.noPredictionTitle', 'No prediction yet')}</Text>
                 <Text style={[styles.emptyBody, { color: themeColors.mutedText }]}>{textFor('matchDetail.noPredictionBody', 'Check back later for AI analysis.')}</Text>
             </View>
@@ -438,95 +474,104 @@ function OverviewContent({
                 pickText={pickText}
                 confidence={confidence}
                 risk={risk}
-                riskColor={riskColor}
                 suggestedBet={match.aiPrediction?.suggestedBet}
                 oddValues={oddValues}
             />
 
-            {marketTotal > 0 && (
-                <View style={styles.pickCard}>
+            {marketTotal > 0 && oddValues[0]?.value !== undefined && (
+                <NeonCard style={styles.card} accessibilityLabel={textFor('matchDetail.marketView', 'Market view (from odds)')}>
                     <SectionTitle Icon={ChartBar} title={textFor('matchDetail.marketView', 'Market view (from odds)')} />
-                    <AnimatedBar value={marketTotal} height={10} radius={5} color={themeColors.accent} trackColor={themeColors.surfaceElevated} />
+                    <NeonProgress
+                        value={(Number.parseFloat(oddValues[0].value ?? '') / marketTotal) * 100}
+                        height={10}
+                        radius={5}
+                        accessibilityLabel={textFor('matchDetail.marketView', 'Market view (from odds)')}
+                    />
                     <View style={styles.marketLabels}>
                         {oddValues.map((v, i) => (
-                            <Text key={i} style={[styles.marketLabel, { color: themeColors.text }]}>{v.value}</Text>
+                            <Text key={i} style={[styles.marketLabel, { color: i === 0 ? accentInk : themeColors.text }]}>{v.value}</Text>
                         ))}
                     </View>
-                </View>
+                </NeonCard>
             )}
 
             <ExtraFields match={match} />
 
-            {reasoningLines.length > 0 ? (
-                <View style={styles.whySection}>
+            {reasoningLines.length > 0 || sourceList.length > 0 ? (
+                <NeonCard style={styles.card} accessibilityLabel={textFor('matchDetail.whyPick', 'Why this pick')}>
                     <SectionTitle Icon={TrendingUp} title={textFor('matchDetail.whyPick', 'Why this pick')} />
                     {reasoningLines.map((line, i) => (
-                        <View key={`${i}-${line.slice(0, 20)}`} style={[styles.bulletCard, { backgroundColor: themeColors.surface }]}>
-                            <Text style={[styles.bulletText, { color: themeColors.text }]}>• {line}</Text>
+                        <View key={`${i}-${line.slice(0, 20)}`} style={styles.reasonRow}>
+                            <View style={[styles.reasonIcon, { backgroundColor: themeColors.glass }]}>
+                                <Check size={14} color={accentInk} />
+                            </View>
+                            <Text style={[styles.reasonText, { color: themeColors.text }]}>{line}</Text>
                         </View>
                     ))}
-                </View>
-            ) : null}
-
-            {sourceList.length > 0 ? (
-                <View style={styles.whySection}>
-                    <SectionTitle Icon={Link2} title={textFor('matchDetail.sources', 'Sources')} />
-                    <View style={styles.sourcesRow}>
-                        {sourceList.map((s) => (
-                            <TouchableOpacity
-                                key={s.key}
-                                style={[styles.sourceChip, { backgroundColor: themeColors.surfaceElevated, borderColor: themeColors.border }]}
-                                onPress={() => void Linking.openURL(s.url)}
-                                accessibilityRole="link"
-                                accessibilityLabel={`${s.domain}`}
-                            >
-                                <Text style={[styles.sourceChipText, { color: themeColors.mutedText }]} numberOfLines={1}>
-                                    {s.domain}
-                                </Text>
-                                <ChevronRight size={14} color={themeColors.mutedText} />
-                            </TouchableOpacity>
-                        ))}
-                    </View>
-                </View>
+                    {sourceList.length > 0 ? (
+                        <View style={styles.sourcesBlock}>
+                            <Text style={[styles.sourcesLabel, { color: themeColors.mutedText }]}>
+                                {textFor('matchDetail.sources', 'Sources')}
+                            </Text>
+                            <View style={styles.sourcesRow}>
+                                {sourceList.map((s) => (
+                                    <TouchableOpacity
+                                        key={s.key}
+                                        style={[styles.sourceChip, { backgroundColor: themeColors.surfaceElevated, borderColor: themeColors.border }]}
+                                        onPress={() => void Linking.openURL(s.url)}
+                                        accessibilityRole="link"
+                                        accessibilityLabel={s.domain}
+                                    >
+                                        <Text style={[styles.sourceChipText, { color: themeColors.text }]} numberOfLines={1}>
+                                            {s.domain}
+                                        </Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+                        </View>
+                    ) : null}
+                </NeonCard>
             ) : null}
         </View>
     );
 }
 
 function SectionTitle({ Icon, title, color }: { Icon: LucideIcon; title: string; color?: string }) {
-    const { themeColors } = useTheme();
+    const { themeColors, isDark } = useTheme();
     return (
         <View style={sectionTitleStyles.row}>
-            <Icon size={14} color={color ?? themeColors.accent} />
+            <Icon size={14} color={color ?? readableAccent(themeColors, isDark)} />
             <Text style={[sectionTitleStyles.text, { color: themeColors.text }]}>{title}</Text>
         </View>
     );
 }
 
 const sectionTitleStyles = StyleSheet.create({
-    row: { flexDirection: 'row', alignItems: 'center', gap: 8, marginVertical: 14 },
+    row: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2, marginBottom: 10 },
     text: { fontSize: 13, fontWeight: '700', letterSpacing: 0.5 },
 });
 
 function LockedPickCard({ lockTier, onUnlock }: { lockTier: string; onUnlock: () => void }) {
-    const { themeColors } = useTheme();
+    const { themeColors, isDark } = useTheme();
     const styles = getStyles(themeColors);
+    const accentInk = readableAccent(themeColors, isDark);
     return (
-        <View style={styles.pickCard}>
+        <NeonCard style={styles.card} accessibilityLabel={textFor('matchDetail.lockedTitle', 'Prediction locked')}>
             <View style={styles.pickHeader}>
-                <Lock size={18} color={themeColors.accent} />
+                <Lock size={18} color={accentInk} />
                 <Text style={[styles.pickCardTitle, { color: themeColors.text }]}>{textFor('matchDetail.lockedTitle', 'Prediction locked')}</Text>
             </View>
-            <AnimatedPulse
-                style={[styles.unlockBtn, { backgroundColor: themeColors.accent }]}
+            <NeonButton
                 onPress={onUnlock}
-                accessibilityRole="button"
+                style={styles.unlockBtn}
+                radius={14}
+                accessibilityLabel={lockTier === 'vip' ? textFor('matchDetail.unlockVip', 'Unlock with VIP') : textFor('matchDetail.unlockPremium', 'Unlock with Premium')}
             >
                 <Text style={[styles.unlockBtnText, { color: themeColors.accentText }]}>
                     {lockTier === 'vip' ? textFor('matchDetail.unlockVip', 'Unlock with VIP') : textFor('matchDetail.unlockPremium', 'Unlock with Premium')}
                 </Text>
-            </AnimatedPulse>
-        </View>
+            </NeonButton>
+        </NeonCard>
     );
 }
 
@@ -534,59 +579,63 @@ function PickCard({
     pickText,
     confidence,
     risk,
-    riskColor,
     suggestedBet,
     oddValues,
 }: {
     pickText: string | undefined;
     confidence: number | undefined;
     risk: Risk;
-    riskColor: string;
     suggestedBet?: string;
     oddValues: { label: string; value?: string }[];
 }) {
-    const { themeColors } = useTheme();
+    const { themeColors, isDark } = useTheme();
     const styles = getStyles(themeColors);
+    const accentInk = readableAccent(themeColors, isDark);
 
     const listedOdds = oddValues.filter((v) => v.value !== undefined);
+    const riskTone = risk === 'low' ? 'success' : risk === 'medium' ? 'warning' : risk === 'high' ? 'danger' : 'neutral';
+    const riskLabel = risk ? textFor(`risk.${risk}`, risk) : '';
 
     return (
-        <View style={[styles.pickCard, { backgroundColor: themeColors.surface, borderColor: themeColors.border }]}>
-            <SectionTitle Icon={TrendingUp} title={textFor('matchDetail.pick', 'Pick')} color={themeColors.accent} />
+        <NeonCard style={styles.card} accessibilityLabel={textFor('matchDetail.pick', 'Pick')}>
+            <SectionTitle Icon={TrendingUp} title={textFor('matchDetail.pick', 'Pick')} color={accentInk} />
             <Text style={[styles.pickValue, { color: themeColors.text }]} numberOfLines={3}>
                 {pickText}
             </Text>
             {suggestedBet ? (
-                <Text style={[styles.suggestedChipText, { color: themeColors.accent }]}>
-                    {`${textFor('matchDetail.suggestedBet', 'Suggested bet')}: ${suggestedBet}`}
-                </Text>
+                <NeonPill label={`${textFor('matchDetail.suggestedBet', 'Suggested bet')}: ${suggestedBet}`} tone="accent" />
             ) : null}
 
             <View style={styles.confidenceWrap}>
                 <Text style={[styles.fieldLabel, { color: themeColors.mutedText }]}>{textFor('matchDetail.confidence', 'Confidence')}</Text>
-                <AnimatedBar value={confidence ?? 0} height={8} radius={4} color={themeColors.accent} trackColor={themeColors.surfaceElevated} />
+                <NeonProgress
+                    value={confidence ?? 0}
+                    height={8}
+                    radius={4}
+                    accessibilityLabel={textFor('matchDetail.confidence', 'Confidence')}
+                />
                 <Text style={[styles.pctText, { color: themeColors.text }]}>
                     {confidence !== undefined ? `${confidence}%` : '—'}
                 </Text>
             </View>
 
-            <View style={styles.riskRow}>
-                <Text style={[styles.fieldLabel, { color: themeColors.mutedText }]}>{textFor('matchDetail.risk', 'Risk')}</Text>
-                <View style={[styles.riskBadge, { backgroundColor: `${riskColor}22`, borderColor: `${riskColor}55` }]}>
-                    <Text style={[styles.riskBadgeText, { color: riskColor }]}>{risk ? textFor(`risk.${risk}`, risk) : '—'}</Text>
+            {riskLabel ? (
+                <View style={styles.riskRow}>
+                    <Text style={[styles.fieldLabel, { color: themeColors.mutedText }]}>{textFor('matchDetail.risk', 'Risk')}</Text>
+                    <NeonPill label={riskLabel} tone={riskTone} />
                 </View>
-            </View>
+            ) : null}
 
             {listedOdds.length > 0 ? (
                 <View style={styles.oddsRow}>
                     {listedOdds.map((v, i) => (
-                        <Text key={i} style={[styles.oddsStaticVal, i === 0 ? { color: themeColors.accent } : { color: themeColors.text }]}>
+                        <Text key={i} style={[styles.oddsStaticVal, i === 0 ? { color: accentInk } : { color: themeColors.text }]}>
                             {v.value}
                         </Text>
                     ))}
                 </View>
             ) : null}
-        </View>
+        </NeonCard>
     );
 }
 
@@ -603,16 +652,23 @@ interface ExtraRow {
 }
 
 function ExtraFields({ match }: { match: MatchViewModel }) {
-    const { themeColors } = useTheme();
-    const rows = buildExtraRows(match, themeColors);
+    const { themeColors, isDark } = useTheme();
+    const accentInk = readableAccent(themeColors, isDark);
+    const rows = buildExtraRows(match, themeColors, accentInk);
     const styles = getStyles(themeColors);
     if (rows.length === 0) return null;
 
     const renderCard = (row: ExtraRow) => (
-        <View key={row.key} style={[styles.extraCard, row.full ? styles.extraCardFull : styles.extraCardCol, { backgroundColor: themeColors.surface }]}>
-            <SectionTitle Icon={row.Icon} title={row.label} color={themeColors.accent} />
+        <NeonCard
+            key={row.key}
+            padded={false}
+            radius={14}
+            style={[styles.extraCard, row.full ? styles.extraCardFull : styles.extraCardCol]}
+            accessibilityLabel={row.label}
+        >
+            <SectionTitle Icon={row.Icon} title={row.label} color={accentInk} />
             {row.content}
-        </View>
+        </NeonCard>
     );
 
     // Two-column grid: non-full rows in pairs, full-width rows below.
@@ -641,12 +697,12 @@ function FormBadge({ char, themeColors }: { char: string; themeColors: ThemeColo
     const color = char === 'W' ? themeColors.success : char === 'D' ? themeColors.warning : themeColors.danger;
     return (
         <View style={[styles.formBadge, { backgroundColor: color }]}>
-            <Text style={styles.formBadgeText}>{char}</Text>
+            <Text style={[styles.formBadgeText, { color: onColor(color) }]}>{char}</Text>
         </View>
     );
 }
 
-function buildExtraRows(match: MatchViewModel, themeColors: ThemeColors): ExtraRow[] {
+function buildExtraRows(match: MatchViewModel, themeColors: ThemeColors, accentInk: string): ExtraRow[] {
     const rows: ExtraRow[] = [];
     const styles = getStyles(themeColors);
 
@@ -661,9 +717,7 @@ function buildExtraRows(match: MatchViewModel, themeColors: ThemeColors): ExtraR
                     {match.potentials.map((p, i) => (
                         <View key={i} style={styles.extraListItem}>
                             <Text style={[styles.potentialLabel, { color: themeColors.text }]} numberOfLines={1}>{p.label}</Text>
-                            <View style={[styles.potentialTrack, { backgroundColor: themeColors.surfaceElevated }]}>
-                                <AnimatedBar value={p.percent ?? 0} height={8} radius={4} color={themeColors.accent} />
-                            </View>
+                            <NeonProgress value={p.percent ?? 0} height={8} radius={4} style={styles.potentialTrack} />
                             <Text style={[styles.pctText, { color: themeColors.text }]}>{p.percent !== undefined ? `${p.percent}%` : p.value}</Text>
                         </View>
                     ))}
@@ -682,7 +736,7 @@ function buildExtraRows(match: MatchViewModel, themeColors: ThemeColors): ExtraR
             content: (
                 <View style={styles.h2hRow}>
                     <View style={styles.h2hStat}>
-                        <Text style={[styles.h2hVal, { color: themeColors.accent }]}>{s.wins}</Text>
+                        <Text style={[styles.h2hVal, { color: accentInk }]}>{s.wins}</Text>
                         <Text style={[styles.h2hLabel, { color: themeColors.mutedText }]}>{textFor('matchDetail.homeWins', 'HOME WINS')}</Text>
                     </View>
                     <View style={styles.h2hStat}>
@@ -722,7 +776,7 @@ function buildExtraRows(match: MatchViewModel, themeColors: ThemeColors): ExtraR
             label: textFor('matchDetail.xg', 'Expected goals (xG)'),
             content: (
                 <View style={styles.xgRow}>
-                    <Text style={[styles.xgVal, { color: themeColors.accent }]}>{(match.homeXg ?? 0).toFixed(2)}</Text>
+                    <Text style={[styles.xgVal, { color: accentInk }]}>{(match.homeXg ?? 0).toFixed(2)}</Text>
                     <Text style={[styles.xgLabel, { color: themeColors.mutedText }]}>{textFor('matchDetail.home', 'HOME')}</Text>
                     <Text style={[styles.xgVal, { color: themeColors.text }]}>{(match.awayXg ?? 0).toFixed(2)}</Text>
                     <Text style={[styles.xgLabel, { color: themeColors.mutedText }]}>{textFor('matchDetail.away', 'AWAY')}</Text>
@@ -746,7 +800,7 @@ function buildExtraRows(match: MatchViewModel, themeColors: ThemeColors): ExtraR
                                 <Text style={[styles.h2hHistoryTeams, { color: themeColors.text }]}>{h.home} vs {h.away}</Text>
                             </View>
                             <View style={styles.h2hHistoryRight}>
-                                <Text style={[styles.h2hHistoryScore, { color: themeColors.accent }]}>{h.score}</Text>
+                                <Text style={[styles.h2hHistoryScore, { color: accentInk }]}>{h.score}</Text>
                                 <Text style={[styles.h2hHistoryDate, { color: themeColors.mutedText }]}>{h.date}</Text>
                             </View>
                         </View>
@@ -765,7 +819,7 @@ function buildExtraRows(match: MatchViewModel, themeColors: ThemeColors): ExtraR
             content: (
                 <View style={styles.lineupCols}>
                     <View style={styles.lineupCol}>
-                        <Text style={[styles.lineupTeam, { color: themeColors.accent }]} numberOfLines={1}>{match.homeTeam}</Text>
+                        <Text style={[styles.lineupTeam, { color: accentInk }]} numberOfLines={1}>{match.homeTeam}</Text>
                         {(match.homeLineup || []).map((p, i) => (
                             <Text key={i} style={[styles.lineupPlayer, { color: themeColors.text }]} numberOfLines={1}>
                                 {p.number ? `${p.number}. ` : ''}{p.name}
@@ -804,7 +858,7 @@ function buildExtraRows(match: MatchViewModel, themeColors: ThemeColors): ExtraR
                                     <Text style={[styles.statLabel, { color: themeColors.mutedText }]}>{s.label}</Text>
                                     <Text style={[styles.statNum, { color: themeColors.text }]}>{s.away}{s.percent ? '%' : ''}</Text>
                                 </View>
-                                <AnimatedBar value={homePct} height={6} radius={3} color={themeColors.accent} trackColor={themeColors.surfaceElevated} />
+                                <NeonProgress value={homePct} height={6} radius={3} />
                             </View>
                         );
                     })}
@@ -821,7 +875,7 @@ function buildExtraRows(match: MatchViewModel, themeColors: ThemeColors): ExtraR
             content: (
                 <View style={styles.h2hRow}>
                     <View style={styles.h2hStat}>
-                        <Text style={[styles.h2hVal, { color: themeColors.accent }]}>{match.homeCorners ?? 0}</Text>
+                        <Text style={[styles.h2hVal, { color: accentInk }]}>{match.homeCorners ?? 0}</Text>
                         <Text style={[styles.h2hLabel, { color: themeColors.mutedText }]}>{match.homeTeam}</Text>
                     </View>
                     <View style={styles.h2hStat}>
@@ -853,8 +907,9 @@ function FormStreak({ form }: { form: string }) {
 // ---------------------------------------------------------------------------
 
 function OddsContent({ match }: { match: MatchViewModel }) {
-    const { themeColors } = useTheme();
+    const { themeColors, isDark } = useTheme();
     const styles = getStyles(themeColors);
+    const accentInk = readableAccent(themeColors, isDark);
     const dOdds = match.detailedOdds;
 
     const values1x2 = ['home', 'draw', 'away'] as const;
@@ -864,7 +919,7 @@ function OddsContent({ match }: { match: MatchViewModel }) {
         <View style={styles.oddsTab}>
             {dOdds && (
                 <View style={styles.oddsGrid}>
-                    <View style={[styles.oddsTile, { backgroundColor: themeColors.surface }]}>
+                    <NeonCard style={styles.oddsTile} padded={false}>
                         <Text style={[styles.tileLabel, { color: themeColors.mutedText }]}>{textFor('matchDetail.fullTime12', 'FULL TIME 1X2')}</Text>
                         <View style={styles.oddsRow}>
                             {values1x2.map((side, i) => (
@@ -877,13 +932,13 @@ function OddsContent({ match }: { match: MatchViewModel }) {
                                 </View>
                             ))}
                         </View>
-                    </View>
+                    </NeonCard>
                     {dOdds.ft?.ou && (
-                        <View style={[styles.oddsTile, { backgroundColor: themeColors.surface }]}>
+                        <NeonCard style={styles.oddsTile} padded={false}>
                             <Text style={[styles.tileLabel, { color: themeColors.mutedText }]}>{textFor('matchDetail.overUnder', 'GOALS OVER / UNDER')}</Text>
                             <View style={styles.oddsRow}>
                                 <View style={styles.oddsCell}>
-                                    <Text style={[styles.oddsVal, { color: themeColors.accent }]}>{cellValue(dOdds.ft.ou.over)}</Text>
+                                    <Text style={[styles.oddsVal, { color: accentInk }]}>{cellValue(dOdds.ft.ou.over)}</Text>
                                     <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>{textFor('matchDetail.over', 'OVER')} {dOdds.ft.ou.line}</Text>
                                 </View>
                                 <View style={[styles.oddsDivider, { backgroundColor: themeColors.border }]} />
@@ -892,14 +947,14 @@ function OddsContent({ match }: { match: MatchViewModel }) {
                                     <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>{textFor('matchDetail.under', 'UNDER')} {dOdds.ft.ou.line}</Text>
                                 </View>
                             </View>
-                        </View>
+                        </NeonCard>
                     )}
                     {dOdds.ft?.ah && (
-                        <View style={[styles.oddsTile, { backgroundColor: themeColors.surface }]}>
+                        <NeonCard style={styles.oddsTile} padded={false}>
                             <Text style={[styles.tileLabel, { color: themeColors.mutedText }]}>{textFor('matchDetail.asianHandicap', 'FT ASIAN HANDICAP')}</Text>
                             <View style={styles.oddsRow}>
                                 <View style={styles.oddsCell}>
-                                    <Text style={[styles.oddsVal, { color: themeColors.accent }]}>{cellValue(dOdds.ft.ah.home)}</Text>
+                                    <Text style={[styles.oddsVal, { color: accentInk }]}>{cellValue(dOdds.ft.ah.home)}</Text>
                                     <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>{textFor('matchDetail.home', 'HOME')}</Text>
                                 </View>
                                 <View style={[styles.oddsDivider, { backgroundColor: themeColors.border }]} />
@@ -908,14 +963,14 @@ function OddsContent({ match }: { match: MatchViewModel }) {
                                     <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>{textFor('matchDetail.away', 'AWAY')}</Text>
                                 </View>
                             </View>
-                        </View>
+                        </NeonCard>
                     )}
                     {dOdds.ht?.['1x2'] && (
-                        <View style={[styles.oddsTile, { backgroundColor: themeColors.surface }]}>
+                        <NeonCard style={styles.oddsTile} padded={false}>
                             <Text style={[styles.tileLabel, { color: themeColors.mutedText }]}>{textFor('matchDetail.halfTime12', 'HALF TIME 1X2')}</Text>
                             <View style={styles.oddsRow}>
                                 <View style={styles.oddsCell}>
-                                    <Text style={[styles.oddsVal, { color: themeColors.accent }]}>{cellValue(dOdds.ht['1x2'].home)}</Text>
+                                    <Text style={[styles.oddsVal, { color: accentInk }]}>{cellValue(dOdds.ht['1x2'].home)}</Text>
                                     <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>{textFor('matchDetail.home', 'HOME')}</Text>
                                 </View>
                                 <View style={[styles.oddsDivider, { backgroundColor: themeColors.border }]} />
@@ -929,7 +984,7 @@ function OddsContent({ match }: { match: MatchViewModel }) {
                                     <Text style={[styles.oddsSub, { color: themeColors.mutedText }]}>{textFor('matchDetail.away', 'AWAY')}</Text>
                                 </View>
                             </View>
-                        </View>
+                        </NeonCard>
                     )}
                 </View>
             )}
@@ -944,101 +999,132 @@ function OddsContent({ match }: { match: MatchViewModel }) {
 function getStyles(themeColors: ThemeColors) {
     return StyleSheet.create({
         // Shell
-        container: { flex: 1 },
-        headerBg: {
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            height: 200,
-            borderBottomLeftRadius: 20,
-            borderBottomRightRadius: 20,
-            zIndex: -1,
-        },
-        headerFade: {
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            height: 200,
-            opacity: 0.55,
-            zIndex: -1,
-        },
-        headerAwayBlend: {
-            position: 'absolute',
-            top: 0,
-            right: 0,
-            width: 64,
-            height: 200,
-            borderBottomLeftRadius: 14,
-            opacity: 0.4,
-            zIndex: -1,
-        },
-        headerInner: { paddingHorizontal: 16, paddingTop: 10 },
-        headerTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-        headerLeftBtn: { padding: 6 },
-        headerTitle: { flex: 1, fontSize: 11, fontWeight: '700', letterSpacing: 0.5, opacity: 0.9, textAlign: 'center' },
-        headerRightBtn: { padding: 6, minWidth: 36, alignItems: 'flex-end' },
-        teamsRow: { flexDirection: 'row', alignItems: 'center', marginTop: 14, gap: 8 },
-        teamNameBig: { flex: 1, fontSize: 15, fontWeight: '700', textAlign: 'center', letterSpacing: -0.2 },
-        countdownText: { fontSize: 11, fontWeight: '700', letterSpacing: 0.5 },
-        scoreBig: { fontSize: 30, fontWeight: '800', letterSpacing: -1, textAlign: 'center' },
-        statusText: { fontSize: 11, fontWeight: '600', opacity: 0.9, textAlign: 'center', marginTop: 8 },
-        content: { flex: 1 },
-        scrollContent: { padding: 14, paddingTop: 12, paddingBottom: 48 },
+        container: { flex: 1, backgroundColor: themeColors.background },
+
+        // Unavailable state
         unavailableWrap: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12, paddingHorizontal: 32 },
         unavailableText: { fontSize: 15, textAlign: 'center' },
-        backCta: { minHeight: 44, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center', borderRadius: 12, borderWidth: 1 },
+        backCta: {
+            minHeight: 44,
+            paddingHorizontal: 16,
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: themeColors.accent,
+        },
         backCtaText: { fontSize: 15, fontWeight: '700' },
 
-        // Overview content
+        // Header
+        headerWrap: { marginHorizontal: 14, marginTop: 10, marginBottom: 6 },
+        headerCard: { paddingHorizontal: 14, paddingTop: 12, paddingBottom: 14, gap: 12 },
+        headerTop: { flexDirection: 'row', alignItems: 'center' },
+        roundBtn: {
+            width: 44,
+            height: 44,
+            borderRadius: 22,
+            borderWidth: 1,
+            alignItems: 'center',
+            justifyContent: 'center',
+        },
+        headerMeta: { flex: 1, alignItems: 'center', gap: 2, paddingHorizontal: 8 },
+        headerLeague: { fontSize: 12, fontWeight: '700', letterSpacing: 0.3 },
+        headerKickoff: { fontSize: 11, fontWeight: '500' },
+        crestRow: { flexDirection: 'row', justifyContent: 'center', gap: 24, marginTop: 2 },
+        nameRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+        teamNameBig: {
+            flex: 1,
+            minWidth: 0,
+            fontSize: 14,
+            fontWeight: '700',
+            lineHeight: 18,
+            textAlign: 'center',
+        },
+        scoreCol: { width: 86, alignItems: 'center', gap: 2 },
+        scoreBig: {
+            fontSize: 30,
+            fontWeight: '800',
+            letterSpacing: -1,
+            textAlign: 'center',
+            fontVariant: ['tabular-nums'],
+            includeFontPadding: false,
+        },
+        countdownText: { fontSize: 11, fontWeight: '700', letterSpacing: 0.5, fontVariant: ['tabular-nums'] },
+        statusRow: { alignItems: 'center', marginTop: 2 },
+
+        // Content shell
+        content: { flex: 1 },
+        scrollContent: { paddingHorizontal: 14, paddingTop: 8, paddingBottom: 48 },
         overviewContent: { gap: 14 },
+        card: { gap: 8 },
 
         // Pick card
-        pickCard: { padding: 16, borderRadius: 18, borderWidth: 1, gap: 10 },
         pickHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
         pickCardTitle: { fontSize: 15, fontWeight: '700' },
         pickValue: { fontSize: 17, fontWeight: '800', lineHeight: 24 },
-        suggestedChipText: { fontSize: 11, fontWeight: '600' },
         oddsRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
-        oddsStaticVal: { fontSize: 14, fontWeight: '800', minWidth: 40 },
+        oddsStaticVal: { fontSize: 14, fontWeight: '800', minWidth: 40, fontVariant: ['tabular-nums'] },
         confidenceWrap: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-        fieldLabel: { fontSize: 14, fontWeight: '600' },
-        pctText: { fontSize: 13, fontWeight: '700', minWidth: 40, textAlign: 'right' },
+        fieldLabel: { fontSize: 13, fontWeight: '600' },
+        pctText: { fontSize: 13, fontWeight: '700', minWidth: 44, textAlign: 'right', fontVariant: ['tabular-nums'] },
         riskRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-        riskBadge: { minHeight: 32, paddingHorizontal: 10, borderWidth: 1, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-        riskBadgeText: { fontSize: 13, fontWeight: '700' },
-        marketLabels: { flexDirection: 'row', justifyContent: 'space-between', gap: 8, marginTop: 8 },
-        marketLabel: { fontSize: 12, fontWeight: '700' },
-        marketView: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 },
-        marketVals: { fontSize: 13, fontWeight: '700', minWidth: 44, textAlign: 'right' },
+        marketLabels: { flexDirection: 'row', justifyContent: 'space-between', gap: 8, marginTop: 4 },
+        marketLabel: { fontSize: 12, fontWeight: '700', fontVariant: ['tabular-nums'] },
 
         // Empty state
         emptyState: { alignItems: 'center', gap: 8, paddingVertical: 40 },
         emptyTitle: { fontSize: 17, fontWeight: '700', textAlign: 'center' },
         emptyBody: { fontSize: 13, textAlign: 'center', lineHeight: 18 },
 
+        // Why this pick + sources
+        reasonRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingVertical: 6 },
+        reasonIcon: { width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center', marginTop: 1 },
+        reasonText: { flex: 1, fontSize: 13, lineHeight: 20 },
+        sourcesBlock: {
+            marginTop: 6,
+            paddingTop: 12,
+            gap: 8,
+            borderTopWidth: 1,
+            borderTopColor: themeColors.border,
+        },
+        sourcesLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 0.4 },
+        sourcesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+        sourceChip: {
+            minHeight: 44,
+            maxWidth: 180,
+            paddingHorizontal: 12,
+            borderRadius: 14,
+            borderWidth: 1,
+            alignItems: 'center',
+            justifyContent: 'center',
+        },
+        sourceChipText: { fontSize: 12, fontWeight: '600' },
+
+        // Locked card
+        unlockBtn: { marginTop: 4 },
+        unlockBtnText: { fontSize: 14, fontWeight: '700', textAlign: 'center' },
+
         // Extras grid
         extraGrid: { gap: 10 },
-        extraPair: { flexDirection: 'row', gap: 10, alignItems: 'flex-start' },
+        extraPair: { flexDirection: 'row', gap: 10, alignItems: 'stretch' },
         extraCol: { flex: 1 },
-        extraCard: { padding: 12, borderRadius: 14, flex: 1 },
+        extraCard: { padding: 14, flex: 1 },
         extraCardFull: { alignItems: 'stretch' },
         extraCardCol: { alignItems: 'center' },
         extraList: { gap: 8 },
         extraListItem: { flexDirection: 'row', alignItems: 'center', gap: 8 },
         potentialLabel: { fontSize: 12, fontWeight: '600', flex: 1 },
-        potentialTrack: { flex: 1, height: 8, borderRadius: 4, overflow: 'hidden' },
+        potentialTrack: { flex: 1 },
         streakRow: { flexDirection: 'row', gap: 4 },
         formBadge: { width: 26, height: 26, borderRadius: 6, alignItems: 'center', justifyContent: 'center' },
-        formBadgeText: { fontSize: 10, fontWeight: '700', color: 'white' },
+        formBadgeText: { fontSize: 10, fontWeight: '700' },
         xgRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', gap: 6 },
         xgVal: { fontSize: 22, fontWeight: '800' },
         xgLabel: { fontSize: 11, fontWeight: '600', letterSpacing: 0.5 },
         h2hRow: { flexDirection: 'row', justifyContent: 'space-around', gap: 6 },
         h2hStat: { alignItems: 'center', gap: 4 },
         h2hVal: { fontSize: 20, fontWeight: '800' },
-        h2hLabel: { fontSize: 8, fontWeight: '600', letterSpacing: 0.5, textTransform: 'uppercase' },
+        h2hLabel: { fontSize: 9, fontWeight: '600', letterSpacing: 0.5, textTransform: 'uppercase', textAlign: 'center' },
         h2hHistoryCard: { gap: 0 },
         h2hHistoryRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10 },
         h2hHistoryLeft: { flex: 1 },
@@ -1058,30 +1144,14 @@ function getStyles(themeColors: ThemeColors) {
         statNum: { fontSize: 13, fontWeight: '700' },
         statLabel: { fontSize: 10, fontWeight: '500', letterSpacing: 0.5 },
 
-        // Why this pick
-        whySection: { gap: 4 },
-        bulletCard: { padding: 12, borderRadius: 12, gap: 6, borderWidth: 1 },
-        bulletText: { fontSize: 13, lineHeight: 20 },
-
-        // Sources
-        sourcesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-        sourceChip: { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 5, maxWidth: 130 },
-        sourceChipText: { fontSize: 9, fontWeight: '600', letterSpacing: 0.3 },
-
-        // Locked
-
         // Odds tab
         oddsTab: { gap: 10 },
         oddsGrid: { gap: 10 },
-        oddsTile: { padding: 16, borderRadius: 18 },
-        tileLabel: { fontSize: 9, fontWeight: '600', letterSpacing: 0.5, marginBottom: 12 },
+        oddsTile: { padding: 16 },
+        tileLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 0.5, marginBottom: 12 },
         oddsCell: { alignItems: 'center', flex: 1 },
         oddsDivider: { width: 1, height: 30, backgroundColor: themeColors.border },
         oddsVal: { fontSize: 15, fontWeight: '800' },
-        oddsSub: { fontSize: 8, fontWeight: '600', letterSpacing: 0.5, marginTop: 2 },
-
-        // Locked pick card
-        unlockBtn: { minHeight: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center', width: '100%' },
-        unlockBtnText: { fontSize: 14, fontWeight: '700', textAlign: 'center' },
+        oddsSub: { fontSize: 9, fontWeight: '600', letterSpacing: 0.5, marginTop: 2 },
     });
 }

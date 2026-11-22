@@ -1,9 +1,10 @@
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, TextInput } from 'react-native';
 import { Zap, Search } from 'lucide-react-native';
 import { useState, useCallback, useMemo } from 'react';
-import { MatchCard } from '../../components/MatchCard';
+import { MatchSectionList } from '../../components/neon/MatchSectionList';
 import { DatePickerStrip } from '../../components/DatePickerStrip';
 import { SkeletonList } from '../../components/Skeleton';
+import { readableAccent } from '../../components/neon/tokens';
 import { useTheme } from '../../context/ThemeContext';
 import type { ThemeColors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
@@ -42,11 +43,12 @@ export default function FreeTipsScreen() {
     }, [selectedDate, refetch]);
     const connection = useNoConnectionDialog(error, retryConnection);
 
-    const matches = matchesData ?? [];
+    const matches = useMemo(() => matchesData ?? [], [matchesData]);
 
     const [refreshing, setRefreshing] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
-    const { themeColors } = useTheme();
+    const { themeColors, isDark } = useTheme();
+    const accent = readableAccent(themeColors, isDark);
     const styles = getStyles(themeColors);
 
     const leagues = useMemo(() => {
@@ -157,51 +159,41 @@ export default function FreeTipsScreen() {
                 </View>
             </View>
 
-            <ScrollView
-                style={styles.fixtureList}
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={styles.scrollContent}
-                refreshControl={
-                    <RefreshControl
-                        refreshing={refreshing}
-                        onRefresh={onRefresh}
-                        tintColor={themeColors.accent}
-                        colors={[themeColors.accent]}
-                    />
-                }
-            >
-                {loading ? (
-                    <SkeletonList />
-                ) : filteredMatches.length > 0 ? (
-                    <View style={styles.fixtureGrid}>
-                        {filteredMatches.map((match, idx) => (
-                            <MatchCard
-                                key={match.id}
-                                match={match}
-                                access={{ paid: access.paid, vip: access.vip }}
-                                index={idx}
-                            />
-                        ))}
+            {loading ? (
+                <SkeletonList style={styles.scrollContent} />
+            ) : filteredMatches.length > 0 ? (
+                <MatchSectionList
+                    matches={filteredMatches}
+                    access={{ paid: access.paid, vip: access.vip }}
+                    style={styles.fixtureList}
+                    contentContainerStyle={styles.scrollContent}
+                    refreshControl={
+                        <RefreshControl
+                            refreshing={refreshing}
+                            onRefresh={onRefresh}
+                            tintColor={accent}
+                            colors={[accent]}
+                        />
+                    }
+                />
+            ) : (
+                <ScrollView contentContainerStyle={styles.emptyContainer}>
+                    <View
+                        style={[
+                            styles.emptyIconWrapper,
+                            { backgroundColor: themeColors.surfaceElevated, borderColor: themeColors.accent },
+                        ]}
+                    >
+                        <Zap size={36} color={accent} />
                     </View>
-                ) : (
-                    <View style={styles.emptyContainer}>
-                        <View
-                            style={[
-                                styles.emptyIconWrapper,
-                                { backgroundColor: themeColors.surfaceElevated, borderColor: themeColors.border },
-                            ]}
-                        >
-                            <Zap size={36} color={themeColors.accent} />
-                        </View>
-                        <View style={styles.emptyTextGroup}>
-                            <Text style={[styles.emptyTitle, { color: themeColors.text }]}>{i18n.t('home.noMatches')}</Text>
-                            <Text style={[styles.emptySubtitle, { color: themeColors.mutedText }]}>
-                                {i18n.t('home.noResultsSub')}
-                            </Text>
-                        </View>
+                    <View style={styles.emptyTextGroup}>
+                        <Text style={[styles.emptyTitle, { color: themeColors.text }]}>{i18n.t('home.noMatches')}</Text>
+                        <Text style={[styles.emptySubtitle, { color: themeColors.mutedText }]}>
+                            {i18n.t('home.noResultsSub')}
+                        </Text>
                     </View>
-                )}
-            </ScrollView>
+                </ScrollView>
+            )}
         </View>
     );
 }

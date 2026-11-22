@@ -5,7 +5,7 @@
 
 import { TouchableOpacity } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
-import { useAnimatedStyle, useSharedValue, useReducedMotion, withSpring } from 'react-native-reanimated';
+import { useAnimatedStyle, useSharedValue, useReducedMotion, withTiming } from 'react-native-reanimated';
 
 export interface PressScaleProps {
     style?: StyleProp<ViewStyle>;
@@ -33,11 +33,11 @@ export function PressScale({
     const animated = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
 
     const handleIn = () => {
-        if (!motionOff) scale.value = withSpring(0.98, { mass: 1.2, damping: 20 });
+        if (!motionOff) scale.value = withTiming(0.98, { duration: 90 });
         onPressIn?.();
     };
     const handleOut = () => {
-        if (!motionOff) scale.value = withSpring(1, { mass: 1.2, damping: 20 });
+        if (!motionOff) scale.value = withTiming(1, { duration: 90 });
         onPressOut?.();
     };
 

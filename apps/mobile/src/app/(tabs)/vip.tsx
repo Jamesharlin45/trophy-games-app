@@ -1,10 +1,11 @@
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, TextInput, Alert, KeyboardAvoidingView, Platform } from 'react-native';
 import { Crown, Key, CheckCircle2, Clock, Send } from 'lucide-react-native';
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { MatchCard } from '../../components/MatchCard';
+import { MatchSectionList } from '../../components/neon/MatchSectionList';
 import { DatePickerStrip } from '../../components/DatePickerStrip';
 import { SkeletonList } from '../../components/Skeleton';
-import { AnimatedPulse } from '../../components/AnimatedPulse';
+import { NeonButton } from '../../components/neon/NeonButton';
+import { readableAccent } from '../../components/neon/tokens';
 import { useTheme } from '../../context/ThemeContext';
 import type { ThemeColors } from '../../theme/colors';
 import { useUser } from '../../context/UserContext';
@@ -22,8 +23,9 @@ const toTitleCase = (str: string) =>
     str.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
 
 export default function VIPTipsScreen() {
-    const { themeColors } = useTheme();
+    const { themeColors, isDark } = useTheme();
     const styles = getStyles(themeColors);
+    const accent = readableAccent(themeColors, isDark);
     const router = useRouter();
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
     const [selectedLeague, setSelectedLeague] = useState('All');
@@ -65,7 +67,7 @@ export default function VIPTipsScreen() {
         { enabled: memberStatus === 'active', pollMs: 60000 },
     );
 
-    const matches = matchesData ?? [];
+    const matches = useMemo(() => matchesData ?? [], [matchesData]);
     const loading = matchesLoading && memberStatus === 'active';
 
     const dates = useMemo(() => {
@@ -176,7 +178,7 @@ export default function VIPTipsScreen() {
                     showsVerticalScrollIndicator={false}
                 >
                     <View style={[styles.gateBadge, { backgroundColor: themeColors.accent }]}>
-                        <Crown size={18} color="white" />
+                        <Crown size={18} color={themeColors.accentText} />
                         <Text style={styles.gateBadgeText}>{i18n.t('vip.gateBadge')}</Text>
                     </View>
 
@@ -187,25 +189,25 @@ export default function VIPTipsScreen() {
 
                     {tArray('vip.features').map((f, i) => (
                         <View key={i} style={styles.featureRow}>
-                            <CheckCircle2 size={14} color={themeColors.accent} />
+                            <CheckCircle2 size={14} color={accent} />
                             <Text style={[styles.featureText, { color: themeColors.text }]}>{f}</Text>
                         </View>
                     ))}
 
                     {memberStatus === 'none' && !enteringToken && (
-                        <AnimatedPulse style={[styles.primaryBtn, { backgroundColor: themeColors.accent }]} onPress={askForEmail} disabled={requesting} accessibilityRole="button">
+                        <NeonButton style={styles.primaryBtn} onPress={askForEmail} disabled={requesting} accessibilityRole="button">
                             {requesting ? <Text style={styles.primaryBtnText}>{i18n.t('common.checking')}</Text> : (
                                 <>
-                                    <Send size={16} color="white" />
+                                    <Send size={16} color={themeColors.accentText} />
                                     <Text style={styles.primaryBtnText}>{i18n.t('vip.requestBtn')}</Text>
                                 </>
                             )}
-                        </AnimatedPulse>
+                        </NeonButton>
                     )}
 
                     {memberStatus === 'pending' && !enteringToken && (
                         <View style={[styles.pendingCard, { backgroundColor: themeColors.surface, borderColor: themeColors.accent }]}>
-                            <Clock size={20} color={themeColors.accent} />
+                            <Clock size={20} color={accent} />
                             <Text style={[styles.pendingTitle, { color: themeColors.text }]}>{i18n.t('vip.pendingTitle')}</Text>
                             <Text style={[styles.pendingText, { color: themeColors.mutedText }]}>
                                 {i18n.t('vip.pendingBody')}
@@ -224,9 +226,9 @@ export default function VIPTipsScreen() {
                     )}
 
                     {/* Get VIP access - navigate to Store tab */}
-                    <AnimatedPulse style={[styles.primaryBtn, { backgroundColor: themeColors.accent }]} onPress={() => router.push('/market')} accessibilityRole="button">
+                    <NeonButton style={styles.primaryBtn} onPress={() => router.push('/market')} accessibilityRole="button">
                         <Text style={styles.primaryBtnText}>{i18n.t('vip.getAccess')}</Text>
-                    </AnimatedPulse>
+                    </NeonButton>
 
                     {/* Enter token */}
                     {!enteringToken ? (
@@ -251,8 +253,8 @@ export default function VIPTipsScreen() {
                                 autoCorrect={false}
                             />
                             <View style={styles.tokenBtnRow}>
-                                <AnimatedPulse
-                                    style={[styles.primaryBtn, { backgroundColor: themeColors.accent, flex: 1 }]}
+                                <NeonButton
+                                    style={[styles.primaryBtn, styles.tokenActionBtn]}
                                     onPress={verifyToken}
                                     disabled={verifyingToken || !tokenInput.trim()}
                                     accessibilityRole="button"
@@ -261,7 +263,7 @@ export default function VIPTipsScreen() {
                                         ? <Text style={styles.primaryBtnText}>{i18n.t('common.verifying')}</Text>
                                         : <Text style={styles.primaryBtnText}>{i18n.t('vip.verifyBtn')}</Text>
                                     }
-                                </AnimatedPulse>
+                                </NeonButton>
                                 <TouchableOpacity
                                     style={[styles.cancelBtn, { backgroundColor: themeColors.surfaceElevated }]}
                                     onPress={() => { setEnteringToken(false); setTokenInput(''); }}
@@ -301,7 +303,7 @@ export default function VIPTipsScreen() {
                                 { backgroundColor: selectedLeague === league ? themeColors.accent : themeColors.surfaceElevated },
                             ]}
                         >
-                            <Text style={[styles.leagueChipText, { color: selectedLeague === league ? 'white' : themeColors.mutedText }]}>
+                            <Text style={[styles.leagueChipText, { color: selectedLeague === league ? themeColors.accentText : themeColors.mutedText }]}>
                                 {league === 'All' ? i18n.t('common.all') : toTitleCase(league)}
                             </Text>
                         </TouchableOpacity>
@@ -311,46 +313,37 @@ export default function VIPTipsScreen() {
 
             {/* VIP active badge */}
             <View style={[styles.activeBanner, { backgroundColor: `${themeColors.accent}15`, borderColor: `${themeColors.accent}30` }]}>
-                <Crown size={14} color={themeColors.accent} />
-                <Text style={[styles.activeBannerText, { color: themeColors.accent }]}>{i18n.t('vip.activeBanner')}</Text>
+                <Crown size={14} color={accent} />
+                <Text style={[styles.activeBannerText, { color: accent }]}>{i18n.t('vip.activeBanner')}</Text>
             </View>
 
-            <ScrollView
-                style={styles.content}
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={styles.scrollContent}
-                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={themeColors.accent} colors={[themeColors.accent]} />}
-            >
-                <View style={styles.sectionHeader}>
-                    <Crown size={14} color={themeColors.accent} />
-                    <Text style={[styles.sectionTitle, { color: themeColors.text }]}>{i18n.t('vip.sectionTitle')}</Text>
-                </View>
-
-                {loading ? (
-                    <SkeletonList style={styles.skeletonList} />
-                ) : filteredMatches.length > 0 ? (
-                    <View style={styles.fixtureGrid}>
-                        {filteredMatches.map((match, idx) => (
-                            <MatchCard
-                                key={match.id}
-                                match={match}
-                                access={{ paid: false, vip: memberStatus === 'active' }}
-                                index={idx}
-                            />
-                        ))}
-                    </View>
-                ) : (
-                    <View style={styles.emptyContainer}>
-                        <View style={[styles.emptyIconWrapper, { backgroundColor: themeColors.surfaceElevated }]}>
-                            <Crown size={36} color={themeColors.mutedText} />
+            {loading ? (
+                <SkeletonList style={styles.scrollContent} />
+            ) : filteredMatches.length > 0 ? (
+                <MatchSectionList
+                    matches={filteredMatches}
+                    access={{ paid: false, vip: memberStatus === 'active' }}
+                    style={styles.content}
+                    contentContainerStyle={styles.scrollContent}
+                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={accent} colors={[accent]} />}
+                    ListHeaderComponent={
+                        <View style={styles.sectionHeader}>
+                            <Crown size={14} color={accent} />
+                            <Text style={[styles.sectionTitle, { color: themeColors.text }]}>{i18n.t('vip.sectionTitle')}</Text>
                         </View>
-                        <Text style={[styles.emptyText, { color: themeColors.text }]}>{i18n.t('vip.emptyTitle')}</Text>
-                        <Text style={[styles.emptySubtext, { color: themeColors.mutedText }]}>
-                            {i18n.t('vip.emptySub')}
-                        </Text>
+                    }
+                />
+            ) : (
+                <ScrollView contentContainerStyle={styles.emptyContainer}>
+                    <View style={[styles.emptyIconWrapper, { backgroundColor: themeColors.surfaceElevated }]}>
+                        <Crown size={36} color={themeColors.mutedText} />
                     </View>
-                )}
-            </ScrollView>
+                    <Text style={[styles.emptyText, { color: themeColors.text }]}>{i18n.t('vip.emptyTitle')}</Text>
+                    <Text style={[styles.emptySubtext, { color: themeColors.mutedText }]}>
+                        {i18n.t('vip.emptySub')}
+                    </Text>
+                </ScrollView>
+            )}
         </View>
     );
 }
@@ -375,23 +368,22 @@ function getStyles(themeColors: ThemeColors) {
         borderRadius: 20,
         marginBottom: 4,
     },
-    gateBadgeText: { ...typography.gateBadge, color: 'white' },
+    gateBadgeText: { ...typography.gateBadge, color: themeColors.accentText },
     gateTitle: { ...typography.gateTitle },
     gateSubtitle: { ...typography.gateSubtitle, textAlign: 'center', paddingHorizontal: 16 },
     featureRow: { flexDirection: 'row', alignItems: 'center', gap: 10, alignSelf: 'flex-start', width: '100%', paddingHorizontal: 8 },
     featureText: { ...typography.featureText },
     primaryBtn: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 8,
-        paddingVertical: 16,
         borderRadius: 16,
         width: '100%',
         marginTop: 8,
         minHeight: 52,
     },
-    primaryBtnText: { ...typography.primaryBtn, color: 'white' },
+    tokenActionBtn: {
+        flex: 1,
+        marginTop: 0,
+    },
+    primaryBtnText: { ...typography.primaryBtn, color: themeColors.accentText },
     secondaryBtn: {
         flexDirection: 'row',
         alignItems: 'center',

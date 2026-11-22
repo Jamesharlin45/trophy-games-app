@@ -1,16 +1,14 @@
 /**
- * Tab bar for the match overview page. Indicator slides when the active tab
- * changes; fades in once all tabs have been measured. Tabs are given as a
- * plain list, so new tabs can be added later by appending entries.
+ * Tab bar for the match overview page. Every tab uses the same outline icon
+ * in both states; the active tab is shown with accent text and a static neon
+ * underline. Tabs are a plain list so new tabs can be appended later.
  */
 
 import { StyleSheet, Text, View } from 'react-native';
-import type { LayoutChangeEvent } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import type { LucideIcon } from 'lucide-react-native';
-import { useEffect, useState } from 'react';
 import { PressScale } from './PressScale';
 import { useTheme } from '../context/ThemeContext';
+import { readableAccent, withAlpha } from './neon/tokens';
 
 export interface TabDef {
     id: string;
@@ -27,46 +25,39 @@ export function OverviewTabs({
     active: string;
     onChange: (id: string) => void;
 }) {
-    const { themeColors } = useTheme();
-    const [frames, setFrames] = useState<(Readonly<{ left: number; width: number }> | undefined)[]>([]);
-    const indX = useSharedValue(0);
-    const indW = useSharedValue(0);
-    const opacity = useSharedValue(0);
-    const animated = useAnimatedStyle(() => ({ left: indX.value, width: indW.value, opacity: opacity.value }));
-
-    const handleLayout = (i: number, layout: { x: number; width: number }) => {
-        setFrames((prev) => {
-            const next = [...prev];
-            next[i] = { left: layout.x, width: layout.width };
-            return next;
-        });
-    };
-
-    useEffect(() => {
-        const idx = tabs.findIndex((t) => t.id === active);
-        const m = idx >= 0 ? frames[idx] : undefined;
-        if (!m) return;
-        indX.value = withTiming(m.left, { duration: 300 });
-        indW.value = withTiming(m.width, { duration: 300 });
-        opacity.value = withTiming(1, { duration: 200 });
-    }, [active, tabs, frames, indX, indW, opacity]);
+    const { themeColors, isDark } = useTheme();
+    const accentInk = readableAccent(themeColors, isDark);
 
     return (
-        <View style={styles.bar}>
-            <Animated.View style={[styles.indicator, { backgroundColor: themeColors.accent }, animated]} />
-            {tabs.map((tab, i) => {
+        <View style={[styles.bar, { borderBottomColor: themeColors.border }]}>
+            {tabs.map((tab) => {
                 const isActive = active === tab.id;
-                const color = isActive ? themeColors.accent : themeColors.mutedText;
+                const color = isActive ? accentInk : themeColors.mutedText;
                 return (
-                    <View
-                        key={tab.id}
-                        style={styles.slot}
-                        onLayout={(e: LayoutChangeEvent) => handleLayout(i, e.nativeEvent.layout)}
-                    >
-                        <PressScale style={styles.btn} onPress={() => onChange(tab.id)} accessibilityLabel={tab.label}>
-                            <tab.Icon size={17} color={color} fill={isActive ? color : 'none'} />
+                    <View key={tab.id} style={styles.slot}>
+                        <PressScale
+                            style={styles.btn}
+                            onPress={() => onChange(tab.id)}
+                            accessibilityLabel={tab.label}
+                        >
+                            <tab.Icon color={color} size={17} strokeWidth={isActive ? 2.2 : 1.8} />
                             <Text style={[styles.label, { color }]}>{tab.label}</Text>
                         </PressScale>
+                        {isActive ? (
+                            <View
+                                style={[
+                                    styles.underline,
+                                    {
+                                        backgroundColor: themeColors.accent,
+                                        shadowColor: themeColors.accent,
+                                        shadowOpacity: isDark ? 0.5 : 0.22,
+                                        shadowRadius: 10,
+                                        elevation: isDark ? 5 : 1,
+                                        borderColor: withAlpha(themeColors.accent, 0.5),
+                                    },
+                                ]}
+                            />
+                        ) : null}
                     </View>
                 );
             })}
@@ -78,19 +69,31 @@ const styles = StyleSheet.create({
     bar: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'space-between',
         paddingHorizontal: 16,
-        paddingVertical: 10,
+        paddingVertical: 8,
         borderBottomWidth: 1,
     },
-    indicator: {
+    slot: {
+        flex: 1,
+        alignItems: 'center',
+        minHeight: 44,
+        justifyContent: 'center',
+    },
+    btn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        minHeight: 44,
+        paddingHorizontal: 8,
+    },
+    label: { fontSize: 13, fontWeight: '700' },
+    underline: {
         position: 'absolute',
-        left: 0,
         bottom: 0,
         height: 2,
+        width: '55%',
         borderRadius: 1,
+        borderWidth: 1,
     },
-    slot: { flex: 1, alignItems: 'center' },
-    btn: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-    label: { fontSize: 13, fontWeight: '600' },
 });

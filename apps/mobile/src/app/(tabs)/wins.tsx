@@ -1,7 +1,9 @@
 import { View, Text, ScrollView, StyleSheet, RefreshControl, TouchableOpacity } from 'react-native';
 import { CheckCircle2, Trophy, TrendingUp } from 'lucide-react-native';
 import { useState, useCallback, useMemo } from 'react';
-import { MatchCard } from '../../components/MatchCard';
+import { MatchSectionList } from '../../components/neon/MatchSectionList';
+import { NeonPill, type NeonTone } from '../../components/neon/NeonPill';
+import { readableAccent, readableOnSurface } from '../../components/neon/tokens';
 import { DatePickerStrip } from '../../components/DatePickerStrip';
 import { SkeletonList } from '../../components/Skeleton';
 import { useTheme } from '../../context/ThemeContext';
@@ -14,6 +16,11 @@ import { useMembershipAccess } from '../../hooks/useMembershipAccess';
 import i18n from '../../locales';
 
 type HistoryMatch = HistoryResponse['matches'][number];
+/** Both the history route shape and the shared ApiMatch shape are rendered
+ * here, so helpers accept either result vocabulary. */
+type ScoredMatch = Omit<HistoryMatch, 'result'> & {
+    result?: HistoryResult | NonNullable<ApiMatch['result']>;
+};
 
 const toTitleCase = (str: string) =>
     str.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
@@ -30,13 +37,13 @@ function getDateRange() {
 
 /** Pick text shown under each card (pick, then suggested bet, then the
  * AI prediction sentence). */
-function pickText(match: HistoryMatch, access: { paid: boolean; vip: boolean }): string {
+function pickText(match: ScoredMatch, access: { paid: boolean; vip: boolean }): string {
     const locked = isLockedMatch(match, access);
     if (locked) return i18n.t('matchCard.lockedPreview');
     return match.aiPrediction?.pick ?? match.aiPrediction?.suggestedBet ?? match.aiPrediction?.prediction ?? '—';
 }
 
-function isLockedMatch(match: HistoryMatch, access: { paid: boolean; vip: boolean }): boolean {
+function isLockedMatch(match: ScoredMatch, access: { paid: boolean; vip: boolean }): boolean {
     return (match.matchType === 'paid' && !access.paid) || (match.matchType === 'vip' && !access.vip);
 }
 
@@ -45,7 +52,7 @@ function resultOf(match: HistoryMatch): HistoryResult {
 }
 
 /** Convert the history-route result vocabulary ('won'/'lost'/'void'/'pending')
- * to the stored one ('win'/'lose'/'void'/'pending') for the shared MatchCard,
+ * to the stored one ('win'/'lose'/'void'/'pending') for the shared MatchRow,
  * which reads the match shape but not the result. */
 function toStoredResult(result: HistoryResult): NonNullable<ApiMatch['result']> {
     if (result === 'won') return 'win';
@@ -57,42 +64,18 @@ function toApiMatch(match: HistoryMatch): ApiMatch {
     return { ...match, result: toStoredResult(resultOf(match)) };
 }
 
-function ResultBadge({ result, themeColors }: { result: HistoryResult; themeColors: ThemeColors }) {
-    const label = result === 'won'
-        ? i18n.t('wins.resultWin')
-        : result === 'lost'
-            ? i18n.t('wins.resultLoss')
-            : result === 'void'
-                ? i18n.t('wins.resultVoid')
-                : i18n.t('wins.resultPending');
-    const bg = result === 'won'
-        ? themeColors.success
-        : result === 'lost'
-            ? themeColors.danger
-            : result === 'void'
-                ? themeColors.glass
-                : themeColors.warning;
-    const fg = result === 'void' ? themeColors.mutedText : themeColors.accentText;
-    return (
-        <View style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'center',
-            paddingHorizontal: 10,
-            paddingVertical: 4,
-            borderRadius: 9,
-            borderWidth: 1,
-            backgroundColor: bg,
-            borderColor: result === 'void' ? themeColors.border : bg,
-        }}>
-            <Text style={{ fontSize: 10, fontWeight: '700', letterSpacing: 0.5, color: fg }}>{label}</Text>
-        </View>
-    );
+function resultPill(result: HistoryResult | NonNullable<ApiMatch['result']>): { label: string; tone: NeonTone } {
+    if (result === 'won' || result === 'win') return { label: i18n.t('wins.resultWin'), tone: 'success' };
+    if (result === 'lost' || result === 'lose') return { label: i18n.t('wins.resultLoss'), tone: 'danger' };
+    if (result === 'void' || result === 'draw') return { label: i18n.t('wins.resultVoid'), tone: 'neutral' };
+    return { label: i18n.t('wins.resultPending'), tone: 'warning' };
 }
 
 export default function WinsScreen() {
-    const { themeColors } = useTheme();
+    const { themeColors, isDark } = useTheme();
     const styles = getStyles(themeColors);
+    const accent = readableAccent(themeColors, isDark);
+    const blue = readableOnSurface(themeColors.blue10, themeColors, isDark);
     const [refreshing, setRefreshing] = useState(false);
     const [selectedLeague, setSelectedLeague] = useState('All');
     const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
@@ -168,7 +151,7 @@ export default function WinsScreen() {
                         >
                             <Text style={[
                                 styles.leagueChipText,
-                                { color: selectedLeague === league ? 'white' : themeColors.mutedText }
+                                { color: selectedLeague === league ? themeColors.accentText : themeColors.mutedText }
                             ]}>
                                 {league === 'All' ? i18n.t('common.all') : toTitleCase(league)}
                             </Text>
@@ -180,7 +163,7 @@ export default function WinsScreen() {
             {/* Stats banner */}
             <View style={[styles.statsRow, { borderBottomColor: themeColors.border }]}>
                 <View style={styles.statBox}>
-                    <Trophy size={18} color={themeColors.accent} />
+                    <Trophy size={18} color={accent} />
                     <View>
                         <Text style={[styles.statValue, { color: themeColors.text }]}>{strikeRate}%</Text>
                         <Text style={[styles.statLabel, { color: themeColors.mutedText }]}>{i18n.t('wins.strikeRate')}</Text>
@@ -188,7 +171,7 @@ export default function WinsScreen() {
                 </View>
                 <View style={styles.statDivider} />
                 <View style={styles.statBox}>
-                    <TrendingUp size={18} color={themeColors.blue10} />
+                    <TrendingUp size={18} color={blue} />
                     <View>
                         <Text style={[styles.statValue, { color: themeColors.text }]}>{strikeRate30d}%</Text>
                         <Text style={[styles.statLabel, { color: themeColors.mutedText }]}>{i18n.t('wins.strikeRate30d')}</Text>
@@ -201,61 +184,56 @@ export default function WinsScreen() {
                 </View>
             </View>
 
-            <ScrollView
-                style={styles.content}
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={styles.scrollContent}
-                refreshControl={
-                    <RefreshControl
-                        refreshing={refreshing}
-                        onRefresh={onRefresh}
-                        tintColor={themeColors.accent}
-                        colors={[themeColors.accent]}
-                    />
-                }
-            >
-                <View style={styles.sectionHeader}>
-                    <CheckCircle2 size={14} color={themeColors.accent} />
-                    <Text style={[styles.sectionTitle, { color: themeColors.text }]}>{i18n.t('wins.section')}</Text>
-                </View>
-
-                {loading ? (
-                    <SkeletonList style={styles.skeletonList} />
-                ) : filteredMatches.length > 0 ? (
-                    <View style={styles.fixtureGrid}>
-                        {filteredMatches.map((match, idx) => (
-                            <View key={match._id || match.id} style={styles.resultItem}>
-                                <MatchCard
-                                    match={toApiMatch(match)}
-                                    access={{ paid: access.paid, vip: access.vip }}
-                                    index={idx}
-                                />
-                                <View style={styles.metaRow}>
-                                    <View style={styles.metaContent}>
-                                        <Text style={[styles.metaLabel, { color: themeColors.mutedText }]} numberOfLines={1}>
-                                            {i18n.t('wins.pick')}
-                                        </Text>
-                                        <Text style={[styles.metaText, { color: themeColors.text }]} numberOfLines={2}>
-                                            {pickText(match, access)}
-                                        </Text>
-                                    </View>
-                                    <ResultBadge result={resultOf(match)} themeColors={themeColors} />
-                                </View>
-                            </View>
-                        ))}
-                    </View>
-                ) : (
-                    <View style={styles.emptyContainer}>
-                        <View style={[styles.emptyIconWrapper, { backgroundColor: themeColors.surfaceElevated }]}>
-                            <Trophy size={36} color={themeColors.mutedText} />
+            {loading ? (
+                <SkeletonList style={styles.scrollContent} />
+            ) : filteredMatches.length > 0 ? (
+                <MatchSectionList
+                    matches={filteredMatches.map(toApiMatch)}
+                    access={{ paid: access.paid, vip: access.vip }}
+                    style={styles.content}
+                    contentContainerStyle={styles.scrollContent}
+                    refreshControl={
+                        <RefreshControl
+                            refreshing={refreshing}
+                            onRefresh={onRefresh}
+                            tintColor={accent}
+                            colors={[accent]}
+                        />
+                    }
+                    ListHeaderComponent={
+                        <View style={styles.sectionHeader}>
+                            <CheckCircle2 size={14} color={accent} />
+                            <Text style={[styles.sectionTitle, { color: themeColors.text }]}>{i18n.t('wins.section')}</Text>
                         </View>
-                        <Text style={[styles.emptyText, { color: themeColors.text }]}>{i18n.t('wins.emptyTitle')}</Text>
-                        <Text style={[styles.emptySubtext, { color: themeColors.mutedText }]}>
-                            {i18n.t('wins.emptySub')}
-                        </Text>
+                    }
+                    renderFooter={(match) => {
+                        const pill = resultPill(match.result ?? 'pending');
+                        return (
+                            <View style={styles.metaRow}>
+                                <View style={styles.metaContent}>
+                                    <Text style={[styles.metaLabel, { color: themeColors.mutedText }]} numberOfLines={1}>
+                                        {i18n.t('wins.pick')}
+                                    </Text>
+                                    <Text style={[styles.metaText, { color: themeColors.text }]} numberOfLines={2}>
+                                        {pickText(match, access)}
+                                    </Text>
+                                </View>
+                                <NeonPill label={pill.label} tone={pill.tone} style={styles.resultPill} />
+                            </View>
+                        );
+                    }}
+                />
+            ) : (
+                <ScrollView contentContainerStyle={styles.emptyContainer}>
+                    <View style={[styles.emptyIconWrapper, { backgroundColor: themeColors.surfaceElevated }]}>
+                        <Trophy size={36} color={themeColors.mutedText} />
                     </View>
-                )}
-            </ScrollView>
+                    <Text style={[styles.emptyText, { color: themeColors.text }]}>{i18n.t('wins.emptyTitle')}</Text>
+                    <Text style={[styles.emptySubtext, { color: themeColors.mutedText }]}>
+                        {i18n.t('wins.emptySub')}
+                    </Text>
+                </ScrollView>
+            )}
         </View>
     );
 }
@@ -316,6 +294,7 @@ function getStyles(themeColors: ThemeColors) {
         metaContent: { flex: 1, gap: 3, minWidth: 0 },
         metaLabel: { fontSize: 10, fontWeight: '600', letterSpacing: 0.3 },
         metaText: { fontSize: 12, fontWeight: '500', lineHeight: 16 },
+        resultPill: { flexShrink: 0 },
         emptyContainer: { paddingVertical: 70, alignItems: 'center', gap: 14 },
         emptyIconWrapper: {
             width: 72,
