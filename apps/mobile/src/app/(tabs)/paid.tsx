@@ -1,10 +1,11 @@
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, TextInput, Alert, KeyboardAvoidingView, Platform } from 'react-native';
 import { DollarSign, Zap, CheckCircle2, Clock, Send, Key } from 'lucide-react-native';
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { MatchCard } from '../../components/MatchCard';
+import { MatchSectionList } from '../../components/neon/MatchSectionList';
 import { DatePickerStrip } from '../../components/DatePickerStrip';
 import { SkeletonList } from '../../components/Skeleton';
-import { AnimatedPulse } from '../../components/AnimatedPulse';
+import { NeonButton } from '../../components/neon/NeonButton';
+import { onColor, readableAccent, readableOnSurface } from '../../components/neon/tokens';
 import { useTheme } from '../../context/ThemeContext';
 import type { ThemeColors } from '../../theme/colors';
 import { useUser } from '../../context/UserContext';
@@ -22,8 +23,10 @@ const toTitleCase = (str: string) =>
     str.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
 
 export default function PaidTipsScreen() {
-    const { themeColors } = useTheme();
+    const { themeColors, isDark } = useTheme();
     const styles = getStyles(themeColors);
+    const accent = readableAccent(themeColors, isDark);
+    const orange = readableOnSurface(themeColors.orange9, themeColors, isDark);
     const router = useRouter();
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
     const [selectedLeague, setSelectedLeague] = useState('All');
@@ -65,7 +68,7 @@ export default function PaidTipsScreen() {
         { enabled: memberStatus === 'active', pollMs: 60000 },
     );
 
-    const matches = matchesData ?? [];
+    const matches = useMemo(() => matchesData ?? [], [matchesData]);
     const loading = matchesLoading && memberStatus === 'active';
 
     const dates = useMemo(() => {
@@ -174,7 +177,7 @@ export default function PaidTipsScreen() {
                     showsVerticalScrollIndicator={false}
                 >
                     <View style={[styles.gateBadge, { backgroundColor: themeColors.orange9 }]}>
-                        <DollarSign size={16} color="white" />
+                        <DollarSign size={16} color={onColor(themeColors.orange9)} />
                         <Text style={styles.gateBadgeText}>{i18n.t('paid.gateBadge')}</Text>
                     </View>
 
@@ -185,25 +188,25 @@ export default function PaidTipsScreen() {
 
                     {tArray('paid.features').map((f, i) => (
                         <View key={i} style={styles.featureRow}>
-                            <CheckCircle2 size={13} color={themeColors.orange9} />
+                            <CheckCircle2 size={13} color={orange} />
                             <Text style={[styles.featureText, { color: themeColors.text }]}>{f}</Text>
                         </View>
                     ))}
 
                     {memberStatus === 'none' && !enteringToken && (
-                        <AnimatedPulse style={[styles.primaryBtn, { backgroundColor: themeColors.orange9 }]} onPress={askForEmail} disabled={requesting} accessibilityRole="button">
-                            {requesting ? <Text style={styles.primaryBtnText}>{i18n.t('common.checking')}</Text> : (
+                        <NeonButton style={styles.primaryBtn} color={themeColors.orange9} onPress={askForEmail} disabled={requesting} accessibilityRole="button">
+                            {requesting ? <Text style={styles.orangeBtnText}>{i18n.t('common.checking')}</Text> : (
                                 <>
-                                    <Send size={15} color="white" />
-                                    <Text style={styles.primaryBtnText}>{i18n.t('paid.requestBtn')}</Text>
+                                    <Send size={15} color={onColor(themeColors.orange9)} />
+                                    <Text style={styles.orangeBtnText}>{i18n.t('paid.requestBtn')}</Text>
                                 </>
                             )}
-                        </AnimatedPulse>
+                        </NeonButton>
                     )}
 
                     {memberStatus === 'pending' && !enteringToken && (
                         <View style={[styles.pendingCard, { backgroundColor: themeColors.surface, borderColor: themeColors.orange9 }]}>
-                            <Clock size={18} color={themeColors.orange9} />
+                            <Clock size={18} color={orange} />
                             <Text style={[styles.pendingTitle, { color: themeColors.text }]}>{i18n.t('paid.pendingTitle')}</Text>
                             <Text style={[styles.pendingText, { color: themeColors.mutedText }]}>
                                 {i18n.t('paid.pendingBody')}
@@ -222,9 +225,9 @@ export default function PaidTipsScreen() {
                     )}
 
                     {/* Get Premium access - navigate to Store tab */}
-                    <AnimatedPulse style={[styles.primaryBtn, { backgroundColor: themeColors.accent }]} onPress={() => router.push('/market')} accessibilityRole="button">
+                    <NeonButton style={styles.primaryBtn} onPress={() => router.push('/market')} accessibilityRole="button">
                         <Text style={styles.primaryBtnText}>{i18n.t('paid.getAccess')}</Text>
-                    </AnimatedPulse>
+                    </NeonButton>
 
                     {!enteringToken ? (
                         <TouchableOpacity
@@ -248,17 +251,18 @@ export default function PaidTipsScreen() {
                                 autoCorrect={false}
                             />
                             <View style={styles.tokenBtnRow}>
-                                <AnimatedPulse
-                                    style={[styles.primaryBtn, { backgroundColor: themeColors.orange9, flex: 1 }]}
+                                <NeonButton
+                                    style={[styles.primaryBtn, styles.tokenActionBtn]}
+                                    color={themeColors.orange9}
                                     onPress={verifyToken}
                                     disabled={verifyingToken || !tokenInput.trim()}
                                     accessibilityRole="button"
                                 >
                                     {verifyingToken
-                                        ? <Text style={styles.primaryBtnText}>{i18n.t('common.verifying')}</Text>
-                                        : <Text style={styles.primaryBtnText}>{i18n.t('paid.verifyBtn')}</Text>
+                                        ? <Text style={styles.orangeBtnText}>{i18n.t('common.verifying')}</Text>
+                                        : <Text style={styles.orangeBtnText}>{i18n.t('paid.verifyBtn')}</Text>
                                     }
-                                </AnimatedPulse>
+                                </NeonButton>
                                 <TouchableOpacity
                                     style={[styles.cancelBtn, { backgroundColor: themeColors.surfaceElevated }]}
                                     onPress={() => { setEnteringToken(false); setTokenInput(''); }}
@@ -295,7 +299,7 @@ export default function PaidTipsScreen() {
                                 { backgroundColor: selectedLeague === league ? themeColors.accent : themeColors.surfaceElevated },
                             ]}
                         >
-                            <Text style={[styles.leagueChipText, { color: selectedLeague === league ? 'white' : themeColors.mutedText }]}>
+                            <Text style={[styles.leagueChipText, { color: selectedLeague === league ? themeColors.accentText : themeColors.mutedText }]}>
                                 {league === 'All' ? i18n.t('common.all') : toTitleCase(league)}
                             </Text>
                         </TouchableOpacity>
@@ -304,46 +308,37 @@ export default function PaidTipsScreen() {
             </View>
 
             <View style={[styles.activeBanner, { backgroundColor: `${themeColors.orange9}15`, borderBottomColor: `${themeColors.orange9}30` }]}>
-                <DollarSign size={13} color={themeColors.orange9} />
-                <Text style={[styles.activeBannerText, { color: themeColors.orange9 }]}>{i18n.t('paid.activeBanner')}</Text>
+                <DollarSign size={13} color={orange} />
+                <Text style={[styles.activeBannerText, { color: orange }]}>{i18n.t('paid.activeBanner')}</Text>
             </View>
 
-            <ScrollView
-                style={styles.content}
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={styles.scrollContent}
-                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={themeColors.accent} colors={[themeColors.accent]} />}
-            >
-                <View style={styles.sectionHeader}>
-                    <Zap size={14} color={themeColors.orange9} />
-                    <Text style={[styles.sectionTitle, { color: themeColors.text }]}>{i18n.t('paid.sectionTitle')}</Text>
-                </View>
-
-                {loading ? (
-                    <SkeletonList style={styles.skeletonList} />
-                ) : filteredMatches.length > 0 ? (
-                    <View style={styles.fixtureGrid}>
-                        {filteredMatches.map((match, idx) => (
-                            <MatchCard
-                                key={match.id}
-                                match={match}
-                                access={{ paid: memberStatus === 'active', vip: false }}
-                                index={idx}
-                            />
-                        ))}
-                    </View>
-                ) : (
-                    <View style={styles.emptyContainer}>
-                        <View style={[styles.emptyIconWrapper, { backgroundColor: themeColors.surfaceElevated }]}>
-                            <DollarSign size={36} color={themeColors.mutedText} />
+            {loading ? (
+                <SkeletonList style={styles.scrollContent} />
+            ) : filteredMatches.length > 0 ? (
+                <MatchSectionList
+                    matches={filteredMatches}
+                    access={{ paid: memberStatus === 'active', vip: false }}
+                    style={styles.content}
+                    contentContainerStyle={styles.scrollContent}
+                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={accent} colors={[accent]} />}
+                    ListHeaderComponent={
+                        <View style={styles.sectionHeader}>
+                            <Zap size={14} color={orange} />
+                            <Text style={[styles.sectionTitle, { color: themeColors.text }]}>{i18n.t('paid.sectionTitle')}</Text>
                         </View>
-                        <Text style={[styles.emptyText, { color: themeColors.text }]}>{i18n.t('paid.emptyTitle')}</Text>
-                        <Text style={[styles.emptySubtext, { color: themeColors.mutedText }]}>
-                            {i18n.t('paid.emptySub')}
-                        </Text>
+                    }
+                />
+            ) : (
+                <ScrollView contentContainerStyle={styles.emptyContainer}>
+                    <View style={[styles.emptyIconWrapper, { backgroundColor: themeColors.surfaceElevated }]}>
+                        <DollarSign size={36} color={themeColors.mutedText} />
                     </View>
-                )}
-            </ScrollView>
+                    <Text style={[styles.emptyText, { color: themeColors.text }]}>{i18n.t('paid.emptyTitle')}</Text>
+                    <Text style={[styles.emptySubtext, { color: themeColors.mutedText }]}>
+                        {i18n.t('paid.emptySub')}
+                    </Text>
+                </ScrollView>
+            )}
         </View>
     );
 }
@@ -353,13 +348,15 @@ function getStyles(themeColors: ThemeColors) {
     container: { flex: 1 },
     gateContainer: { padding: 28, paddingTop: 48, alignItems: 'center', gap: 16, paddingBottom: 100 },
     gateBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, marginBottom: 4 },
-    gateBadgeText: { ...typography.gateBadge, color: 'white' },
+    gateBadgeText: { ...typography.gateBadge, color: onColor(themeColors.orange9) },
     gateTitle: { ...typography.gateTitle },
     gateSubtitle: { ...typography.gateSubtitle, textAlign: 'center', paddingHorizontal: 16 },
     featureRow: { flexDirection: 'row', alignItems: 'center', gap: 10, alignSelf: 'flex-start', width: '100%', paddingHorizontal: 8 },
     featureText: { ...typography.featureText },
-    primaryBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 16, borderRadius: 16, width: '100%', marginTop: 8, minHeight: 52 },
-    primaryBtnText: { ...typography.primaryBtn, color: 'white' },
+    primaryBtn: { borderRadius: 16, width: '100%', marginTop: 8, minHeight: 52 },
+    tokenActionBtn: { flex: 1, marginTop: 0 },
+    primaryBtnText: { ...typography.primaryBtn, color: themeColors.accentText },
+    orangeBtnText: { ...typography.primaryBtn, color: onColor(themeColors.orange9) },
     secondaryBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 13, borderRadius: 14, width: '100%', borderWidth: 1, minHeight: 48 },
     secondaryBtnText: { ...typography.secondaryBtn },
     pendingCard: { width: '100%', padding: 20, borderRadius: 18, alignItems: 'center', gap: 10, borderWidth: 1, borderStyle: 'dashed' },

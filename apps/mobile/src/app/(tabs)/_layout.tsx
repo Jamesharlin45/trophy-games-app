@@ -1,12 +1,15 @@
+import { StyleSheet, View } from 'react-native';
 import { Tabs } from 'expo-router';
 import { Home, DollarSign, Crown, CheckCircle, Store } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../context/ThemeContext';
+import { readableAccent } from '../../components/neon/tokens';
 import i18n from '../../locales';
 
 export default function TabLayout() {
-    const { themeColors } = useTheme();
+    const { themeColors, isDark } = useTheme();
     const insets = useSafeAreaInsets();
+    const accentInk = readableAccent(themeColors, isDark);
 
     const tabs = [
         { name: 'index', Icon: Home, key: 'home' },
@@ -20,7 +23,7 @@ export default function TabLayout() {
         <Tabs
             screenOptions={{
                 headerShown: false,
-                tabBarActiveTintColor: themeColors.accent,
+                tabBarActiveTintColor: accentInk,
                 tabBarInactiveTintColor: themeColors.mutedText,
                 tabBarLabelStyle: {
                     fontSize: 10,
@@ -43,7 +46,10 @@ export default function TabLayout() {
                     options={{
                         title: i18n.t(`tabs.${key}`),
                         tabBarIcon: ({ color, focused }) => (
-                            <Icon color={color} size={22} fill={focused ? color : 'none'} />
+                            <View style={styles.iconWrap}>
+                                <Icon color={color} size={22} strokeWidth={focused ? 2.2 : 1.8} />
+                                {focused ? <View style={[styles.dot, { backgroundColor: themeColors.accent }]} /> : null}
+                            </View>
                         ),
                     }}
                 />
@@ -51,3 +57,19 @@ export default function TabLayout() {
         </Tabs>
     );
 }
+
+const styles = StyleSheet.create({
+    iconWrap: {
+        width: 44,
+        height: 28,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    dot: {
+        position: 'absolute',
+        bottom: 0,
+        width: 4,
+        height: 4,
+        borderRadius: 2,
+    },
+});

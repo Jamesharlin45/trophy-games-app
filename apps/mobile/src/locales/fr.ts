@@ -240,6 +240,7 @@ export default {
         lockedPreview: 'Pronostic verrouillé',
         live: 'En direct',
         final: 'Termine',
+        postponed: 'PST',
         free: 'Gratuit',
         vip: 'VIP',
         paid: 'Premium',

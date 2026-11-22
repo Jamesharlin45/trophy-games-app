@@ -1,61 +1,82 @@
 /**
- * Animated splash: the app icon scales and glows in, then the splash fades
- * into the Home screen once the animation ends.
+ * Animated splash: the app icon scales and glows in once, then the splash
+ * fades into the Home screen. Reduce motion skips straight to the app.
  */
 
-import { Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { useEffect } from 'react';
-import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withDelay, withTiming } from 'react-native-reanimated';
+import Animated, {
+    runOnJS,
+    useAnimatedStyle,
+    useReducedMotion,
+    useSharedValue,
+    withDelay,
+    withTiming,
+} from 'react-native-reanimated';
 import SplashLogo from '../../assets/images/logo.png';
+import { useTheme } from '../context/ThemeContext';
+import { withAlpha } from './neon/tokens';
 import i18n from '../locales';
 
 export default function SplashAnim({ onDone }: { onDone: () => void }) {
     const brand = i18n.t('splash.brand');
+    const { themeColors } = useTheme();
+    const reduceMotion = useReducedMotion();
 
-    const iconScale = useSharedValue(0.55);
+    const iconScale = useSharedValue(0.72);
     const glow = useSharedValue(0);
     const brandOpacity = useSharedValue(0);
     const exit = useSharedValue(1);
 
     useEffect(() => {
-        iconScale.value = withDelay(
-            60,
-            withTiming(1, { duration: 320 }, () => {
-                glow.value = withDelay(260, withTiming(0.95, { duration: 700 }));
-                brandOpacity.value = withDelay(420, withTiming(1, { duration: 320 }));
-            }),
-        );
-        const t = setTimeout(() => {
-            exit.value = withTiming(0, { duration: 380 }, () => runOnJS(onDone)());
-        }, 1200);
-        return () => clearTimeout(t);
-    }, [onDone]);
+        if (reduceMotion) {
+            iconScale.value = 1;
+            glow.value = 0.85;
+            brandOpacity.value = 1;
+            exit.value = 0;
+            onDone();
+            return undefined;
+        }
+
+        iconScale.value = withTiming(1, { duration: 200 });
+        glow.value = withDelay(100, withTiming(0.85, { duration: 240 }));
+        brandOpacity.value = withDelay(140, withTiming(1, { duration: 200 }));
+        const timer = setTimeout(() => {
+            exit.value = withTiming(0, { duration: 220 }, () => runOnJS(onDone)());
+        }, 650);
+        return () => clearTimeout(timer);
+    }, [onDone, reduceMotion, iconScale, glow, brandOpacity, exit]);
 
     const iconStyle = useAnimatedStyle(() => ({ transform: [{ scale: iconScale.value }] }));
     const glowStyle = useAnimatedStyle(() => ({
         opacity: glow.value,
-        transform: [{ scale: 0.92 + glow.value * 0.45 }],
+        transform: [{ scale: 0.92 + glow.value * 0.08 }],
     }));
     const brandStyle = useAnimatedStyle(() => ({ opacity: brandOpacity.value }));
     const exitStyle = useAnimatedStyle(() => ({ opacity: exit.value }));
 
     return (
-        <Animated.View style={[styles.container, exitStyle]}>
+        <Animated.View style={[styles.container, { backgroundColor: themeColors.background }, exitStyle]}>
             <View style={styles.glowWrap}>
-                <Animated.View style={[styles.glow, glowStyle]} />
+                <Animated.View
+                    style={[
+                        styles.glow,
+                        { backgroundColor: withAlpha(themeColors.accent, 0.3) },
+                        glowStyle,
+                    ]}
+                />
             </View>
             <Animated.Image source={SplashLogo} style={[styles.icon, iconStyle]} resizeMode="contain" />
             <Animated.View style={[styles.brand, brandStyle]}>
-                <Text style={styles.brandText}>{brand}</Text>
+                <Text style={[styles.brandText, { color: themeColors.text }]}>{brand}</Text>
             </Animated.View>
         </Animated.View>
     );
 }
 
-const styles = {
+const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#0A0C0F',
         alignItems: 'center',
         justifyContent: 'center',
         gap: 18,
@@ -65,9 +86,8 @@ const styles = {
         width: 150,
         height: 150,
         borderRadius: 75,
-        backgroundColor: 'rgba(0, 200, 5, 0.30)',
     },
     icon: { width: 78, height: 78 },
     brand: { marginTop: 10 },
-    brandText: { color: '#FFFFFF', fontSize: 22, fontWeight: '700', letterSpacing: 0.5 },
-} as const;
+    brandText: { fontSize: 22, fontWeight: '700', letterSpacing: 0.5 },
+});
