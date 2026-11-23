@@ -1,54 +1,52 @@
 import { StyleSheet, View } from 'react-native';
 import { Tabs } from 'expo-router';
-import { Home, DollarSign, Crown, CheckCircle, Store } from 'lucide-react-native';
+import { Ionicons } from '@expo/vector-icons';
+import type { IonName } from '../../components/design/AppTabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../context/ThemeContext';
-import { readableAccent } from '../../components/neon/tokens';
 import i18n from '../../locales';
 
 export default function TabLayout() {
-    const { themeColors, isDark } = useTheme();
+    const { themeColors } = useTheme();
     const insets = useSafeAreaInsets();
-    const accentInk = readableAccent(themeColors, isDark);
 
-    const tabs = [
-        { name: 'index', Icon: Home, key: 'home' },
-        { name: 'paid', Icon: DollarSign, key: 'paid' },
-        { name: 'vip', Icon: Crown, key: 'vip' },
-        { name: 'wins', Icon: CheckCircle, key: 'analysis' },
-        { name: 'market', Icon: Store, key: 'market' },
+    const tabs: { name: string; icon: IonName; key: string }[] = [
+        { name: 'index', icon: 'home-outline', key: 'home' },
+        { name: 'paid', icon: 'cash-outline', key: 'paid' },
+        { name: 'vip', icon: 'medal-outline', key: 'vip' },
+        { name: 'wins', icon: 'checkmark-circle-outline', key: 'analysis' },
+        { name: 'market', icon: 'storefront-outline', key: 'market' },
     ];
 
     return (
         <Tabs
             screenOptions={{
                 headerShown: false,
-                tabBarActiveTintColor: accentInk,
-                tabBarInactiveTintColor: themeColors.mutedText,
-                tabBarLabelStyle: {
-                    fontSize: 10,
-                    fontWeight: '600',
-                    marginBottom: 5,
-                },
                 tabBarStyle: {
                     backgroundColor: themeColors.background,
                     borderTopColor: themeColors.border,
                     height: 60 + insets.bottom,
-                    paddingTop: 5,
+                    paddingTop: 4,
                     paddingBottom: insets.bottom,
                 },
             }}
         >
-            {tabs.map(({ name, Icon, key }) => (
+            {tabs.map(({ name, icon, key }) => (
                 <Tabs.Screen
                     key={name}
                     name={name}
                     options={{
                         title: i18n.t(`tabs.${key}`),
-                        tabBarIcon: ({ color, focused }) => (
+                        tabBarIcon: ({ focused }) => (
                             <View style={styles.iconWrap}>
-                                <Icon color={color} size={22} strokeWidth={focused ? 2.2 : 1.8} />
-                                {focused ? <View style={[styles.dot, { backgroundColor: themeColors.accent }]} /> : null}
+                                <Ionicons
+                                    name={icon}
+                                    size={22}
+                                    color={focused ? themeColors.accent : themeColors.textSecondary}
+                                />
+                                {focused ? (
+                                    <View style={[styles.activeBar, { backgroundColor: themeColors.accent }]} />
+                                ) : null}
                             </View>
                         ),
                     }}
@@ -61,15 +59,14 @@ export default function TabLayout() {
 const styles = StyleSheet.create({
     iconWrap: {
         width: 44,
-        height: 28,
+        height: 30,
         alignItems: 'center',
-        justifyContent: 'center',
+        justifyContent: 'flex-start',
     },
-    dot: {
-        position: 'absolute',
-        bottom: 0,
-        width: 4,
-        height: 4,
-        borderRadius: 2,
+    activeBar: {
+        height: 3,
+        width: 16,
+        borderRadius: 1.5,
+        marginTop: 3,
     },
 });

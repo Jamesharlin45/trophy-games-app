@@ -1,15 +1,13 @@
 /**
  * LeagueHeader — sticky section header for grouped match lists.
- * Full league name (ellipsis only when it really does not fit), small
- * secondary country and a match count on the right.
+ * League logo (22px), full league name (small secondary), country, and a
+ * match count on the right. Opaque tokens; neutral border underline.
  */
 
 import { Image, StyleSheet, Text, View } from 'react-native';
-import { Trophy } from 'lucide-react-native';
 import { useTheme } from '../../context/ThemeContext';
 import type { ThemeColors } from '../../theme/colors';
-import { readableAccent, withAlpha } from './tokens';
-import { NeonPill } from './NeonPill';
+import { Pill } from '../design/Pill';
 
 export interface LeagueHeaderProps {
     league: string;
@@ -19,31 +17,27 @@ export interface LeagueHeaderProps {
 }
 
 export function LeagueHeader({ league, country, logo, count }: LeagueHeaderProps) {
-    const { themeColors, isDark } = useTheme();
+    const { themeColors } = useTheme();
     const styles = getStyles(themeColors);
 
     return (
         <View style={styles.header}>
             {logo ? (
                 <Image source={{ uri: logo }} style={styles.logo} resizeMode="contain" />
-            ) : (
-                <View style={[styles.logo, styles.logoFallback]}>
-                    <Trophy size={14} color={readableAccent(themeColors, isDark)} />
-                </View>
-            )}
+            ) : null}
 
             <View style={styles.copy}>
-                <Text style={[styles.name, { color: themeColors.text }]} numberOfLines={2}>
+                <Text style={[styles.name, { color: themeColors.onSurface }]} numberOfLines={2}>
                     {league}
                 </Text>
                 {country ? (
-                    <Text style={[styles.country, { color: themeColors.mutedText }]} numberOfLines={1}>
+                    <Text style={[styles.country, { color: themeColors.textSecondary }]} numberOfLines={1}>
                         {country}
                     </Text>
                 ) : null}
             </View>
 
-            <NeonPill label={String(count)} tone="neutral" style={styles.count} />
+            <Pill label={String(count)} tone="neutral" style={styles.count} />
         </View>
     );
 }
@@ -51,27 +45,20 @@ export function LeagueHeader({ league, country, logo, count }: LeagueHeaderProps
 function getStyles(themeColors: ThemeColors) {
     return StyleSheet.create({
         header: {
-            minHeight: 58,
+            minHeight: 56,
             flexDirection: 'row',
             alignItems: 'center',
-            gap: 12,
-            paddingHorizontal: 18,
+            gap: 10,
+            paddingHorizontal: 16,
             paddingVertical: 10,
-            backgroundColor: themeColors.surface,
+            backgroundColor: themeColors.surfaceAlt,
             borderBottomWidth: 1,
-            borderBottomColor: withAlpha(themeColors.accent, 0.35),
+            borderBottomColor: themeColors.border,
         },
         logo: {
             width: 22,
             height: 22,
             borderRadius: 6,
-        },
-        logoFallback: {
-            alignItems: 'center',
-            justifyContent: 'center',
-            borderWidth: 1,
-            borderColor: withAlpha(themeColors.accent, 0.4),
-            backgroundColor: themeColors.glass,
         },
         copy: {
             flex: 1,
@@ -79,9 +66,9 @@ function getStyles(themeColors: ThemeColors) {
             gap: 2,
         },
         name: {
-            fontSize: 14,
+            fontSize: 15,
             fontWeight: '700',
-            lineHeight: 17,
+            lineHeight: 18,
         },
         country: {
             fontSize: 11,

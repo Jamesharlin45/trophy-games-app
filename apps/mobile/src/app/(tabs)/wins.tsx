@@ -3,7 +3,7 @@ import { CheckCircle2, Trophy, TrendingUp } from 'lucide-react-native';
 import { useState, useCallback, useMemo } from 'react';
 import { MatchSectionList } from '../../components/neon/MatchSectionList';
 import { NeonPill, type NeonTone } from '../../components/neon/NeonPill';
-import { readableAccent, readableOnSurface } from '../../components/neon/tokens';
+import { onColor, readableAccent } from '../../components/neon/tokens';
 import { DatePickerStrip } from '../../components/DatePickerStrip';
 import { SkeletonList } from '../../components/Skeleton';
 import { useTheme } from '../../context/ThemeContext';
@@ -36,15 +36,24 @@ function getDateRange() {
 }
 
 /** Pick text shown under each card (pick, then suggested bet, then the
- * AI prediction sentence). */
+ * AI prediction sentence). Finished matches show the real prediction for
+ * every tier — never the "Unlock" preview. */
 function pickText(match: ScoredMatch, access: { paid: boolean; vip: boolean }): string {
-    const locked = isLockedMatch(match, access);
+    const locked = isLockedMatch(match, access) && !isFinishedMatch(match);
     if (locked) return i18n.t('matchCard.lockedPreview');
     return match.aiPrediction?.pick ?? match.aiPrediction?.suggestedBet ?? match.aiPrediction?.prediction ?? '—';
 }
 
 function isLockedMatch(match: ScoredMatch, access: { paid: boolean; vip: boolean }): boolean {
     return (match.matchType === 'paid' && !access.paid) || (match.matchType === 'vip' && !access.vip);
+}
+
+/** History rule: finished matches show predictions for every tier; only
+ * UPCOMING/LIVE matches lock. (bug: Analysis tab + match page history.) */
+function isFinishedMatch(match: ScoredMatch): boolean {
+    const result = match.result;
+    if (result && result !== 'pending') return true;
+    return match.status === 'Finished' || match.status === 'FT' || match.status === 'AET' || match.status === 'PEN';
 }
 
 function resultOf(match: HistoryMatch): HistoryResult {
@@ -72,10 +81,10 @@ function resultPill(result: HistoryResult | NonNullable<ApiMatch['result']>): { 
 }
 
 export default function WinsScreen() {
-    const { themeColors, isDark } = useTheme();
+    const { themeColors } = useTheme();
     const styles = getStyles(themeColors);
-    const accent = readableAccent(themeColors, isDark);
-    const blue = readableOnSurface(themeColors.blue10, themeColors, isDark);
+    const accent = readableAccent(themeColors);
+    const blue = onColor(themeColors.blue10);
     const [refreshing, setRefreshing] = useState(false);
     const [selectedLeague, setSelectedLeague] = useState('All');
     const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
@@ -146,12 +155,17 @@ export default function WinsScreen() {
                             onPress={() => setSelectedLeague(league)}
                             style={[
                                 styles.leagueChip,
-                                { backgroundColor: selectedLeague === league ? themeColors.accent : themeColors.surfaceElevated },
+                                {
+                                    backgroundColor: selectedLeague === league
+                                        ? themeColors.accent
+                                        : themeColors.surfaceAlt,
+                                    borderColor: selectedLeague === league ? themeColors.accent : themeColors.border,
+                                },
                             ]}
                         >
                             <Text style={[
                                 styles.leagueChipText,
-                                { color: selectedLeague === league ? themeColors.accentText : themeColors.mutedText }
+                                { color: selectedLeague === league ? themeColors.onAccent : themeColors.textSecondary }
                             ]}>
                                 {league === 'All' ? i18n.t('common.all') : toTitleCase(league)}
                             </Text>
@@ -165,22 +179,22 @@ export default function WinsScreen() {
                 <View style={styles.statBox}>
                     <Trophy size={18} color={accent} />
                     <View>
-                        <Text style={[styles.statValue, { color: themeColors.text }]}>{strikeRate}%</Text>
-                        <Text style={[styles.statLabel, { color: themeColors.mutedText }]}>{i18n.t('wins.strikeRate')}</Text>
+                        <Text style={[styles.statValue, { color: themeColors.onSurface }]}>{strikeRate}%</Text>
+                        <Text style={[styles.statLabel, { color: themeColors.textSecondary }]}>{i18n.t('wins.strikeRate')}</Text>
                     </View>
                 </View>
                 <View style={styles.statDivider} />
                 <View style={styles.statBox}>
                     <TrendingUp size={18} color={blue} />
                     <View>
-                        <Text style={[styles.statValue, { color: themeColors.text }]}>{strikeRate30d}%</Text>
-                        <Text style={[styles.statLabel, { color: themeColors.mutedText }]}>{i18n.t('wins.strikeRate30d')}</Text>
+                        <Text style={[styles.statValue, { color: themeColors.onSurface }]}>{strikeRate30d}%</Text>
+                        <Text style={[styles.statLabel, { color: themeColors.textSecondary }]}>{i18n.t('wins.strikeRate30d')}</Text>
                     </View>
                 </View>
                 <View style={styles.statDivider} />
                 <View style={styles.statBox}>
-                    <Text style={[styles.statValue, { color: themeColors.text }]}>{winsCount}/{totalCount}</Text>
-                    <Text style={[styles.statLabel, { color: themeColors.mutedText }]}>{i18n.t('wins.winsTotal')}</Text>
+                    <Text style={[styles.statValue, { color: themeColors.onSurface }]}>{winsCount}/{totalCount}</Text>
+                    <Text style={[styles.statLabel, { color: themeColors.textSecondary }]}>{i18n.t('wins.winsTotal')}</Text>
                 </View>
             </View>
 
@@ -252,7 +266,6 @@ function getStyles(themeColors: ThemeColors) {
             paddingVertical: 6,
             borderRadius: 12,
             borderWidth: 1,
-            borderColor: themeColors.border,
         },
         leagueChipText: { ...typography.chipText },
         statsRow: {
@@ -265,7 +278,7 @@ function getStyles(themeColors: ThemeColors) {
         },
         statBox: { flexDirection: 'row', alignItems: 'center', gap: 10 },
         statValue: { ...typography.statValue },
-        statLabel: { ...typography.statLabel },
+        statLabel: { ...typography.statLabel, color: themeColors.textSecondary },
         statDivider: { width: 1, height: 22 },
         content: { flex: 1 },
         scrollContent: { padding: 14, paddingBottom: 40 },

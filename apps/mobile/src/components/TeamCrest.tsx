@@ -1,108 +1,91 @@
 /**
- * Team crest badge. Shows the team logo image when available, else a country
- * flag (existing behaviour), else bold initials. The background animates from
- * the fallback colour to the real team colour once it arrives.
+ * TeamCrest — badge/crest for teams.
+ *
+ * Design system: the ring is ALWAYS neutral (themeColors.border) so it
+ * survives every theme. A missing or broken logo becomes a neutral circle
+ * with the team's two-letter initials — never a solid accent colour.
  */
 
 import { Image, StyleSheet, Text, View } from 'react-native';
-import { useEffect, useState } from 'react';
-import Animated, { useAnimatedStyle, useReducedMotion, useSharedValue, withTiming } from 'react-native-reanimated';
-import { readableCopy } from '../lib/colors';
-import { getCountryFlagUrl } from '../lib/flags';
+import { useState } from 'react';
 import { useTheme } from '../context/ThemeContext';
 
 export interface TeamCrestProps {
     uri?: string;
     name?: string;
     size: number;
-    /** Team colour (already hex) from the team-colour service. */
+    /** Unused today — kept for API compatibility. Rings are neutral. */
     teamColor?: string;
-    /** [fallback primary, fallback secondary] used until the colour arrives. */
+    /** Kept for API compatibility; the neutral fallback circle is used. */
     fallbackColors?: [string, string];
 }
 
-export function TeamCrest({ uri, name, size, teamColor, fallbackColors }: TeamCrestProps) {
+export function TeamCrest({ uri, name, size }: TeamCrestProps) {
     const { themeColors } = useTheme();
-    const reduceMotion = useReducedMotion();
     const [failed, setFailed] = useState(false);
 
     const safeName = String(name ?? '');
     const initials = safeName
         .split(' ')
         .slice(0, 2)
-        .map((w) => w[0])
+        .map((word) => word[0])
         .join('')
         .toUpperCase();
 
-    const fallbackPrimary = fallbackColors?.[0] ?? themeColors.accent;
-    const fallbackSecondary = fallbackColors?.[1] ?? themeColors.accent;
-
-    const crestBg = useSharedValue(readableCopy(teamColor) ?? fallbackPrimary);
-    const crestBorder = useSharedValue(readableCopy(teamColor) ?? fallbackSecondary);
-    useEffect(() => {
-        const duration = reduceMotion ? 0 : 180;
-        crestBg.value = withTiming(readableCopy(teamColor) ?? fallbackPrimary, { duration });
-        crestBorder.value = withTiming(readableCopy(teamColor) ?? fallbackSecondary, { duration });
-    }, [teamColor, fallbackPrimary, fallbackSecondary, reduceMotion, crestBg, crestBorder]);
-
-
-    const animated = useAnimatedStyle(() => ({ backgroundColor: crestBg.value, borderColor: crestBorder.value }));
-
     const logoUri = uri && !failed ? uri : undefined;
-    const flagUri = !uri || failed ? getCountryFlagUrl(safeName) : undefined;
-
     const radius = size / 2;
-
-    if (flagUri) {
-        return (
-            <View
-                style={{
-                    width: size,
-                    height: size,
-                    borderRadius: radius,
-                    overflow: 'hidden',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                }}
-            >
-                <Image source={{ uri: flagUri }} style={{ width: size, height: size, resizeMode: 'contain' }} />
-            </View>
-        );
-    }
+    const styles = getStyles(themeColors);
 
     const crestStyle = [
         styles.crest,
-        { width: size, height: size, borderWidth: Math.max(1, size / 12) },
-        animated,
+        {
+            width: size,
+            height: size,
+            borderWidth: Math.max(1, size / 12),
+            borderRadius: radius,
+        },
     ];
 
     if (logoUri) {
         return (
-            <Animated.View style={crestStyle}>
-                <Image source={{ uri: logoUri }} style={{ width: size, height: size, resizeMode: 'contain' }} onError={() => setFailed(true)} />
-            </Animated.View>
+            <View style={crestStyle}>
+                <Image
+                    source={{ uri: logoUri }}
+                    style={{ width: size, height: size, resizeMode: 'contain' }}
+                    onError={() => setFailed(true)}
+                />
+            </View>
         );
     }
 
     return (
-        <Animated.View style={crestStyle}>
+        <View style={crestStyle}>
             {initials ? (
-                <Text style={{ color: themeColors.accentText, fontSize: size * 0.42, fontWeight: '800' }}>{initials}</Text>
+                <Text
+                    style={[
+                        styles.initials,
+                        { color: themeColors.onSurface, fontSize: Math.max(8, size * 0.4) },
+                    ]}
+                >
+                    {initials}
+                </Text>
             ) : null}
-        </Animated.View>
+        </View>
     );
 }
 
-const styles = StyleSheet.create({
-    crest: {
-        borderRadius: 23,
-        alignItems: 'center',
-        justifyContent: 'center',
-        overflow: 'hidden',
-        shadowColor: '#000000',
-        shadowOpacity: 0.2,
-        shadowRadius: 6,
-        shadowOffset: { width: 0, height: 2 },
-        elevation: 5,
-    },
-});
+function getStyles(themeColors: ReturnType<typeof useTheme>['themeColors']) {
+    return StyleSheet.create({
+        crest: {
+            alignItems: 'center',
+            justifyContent: 'center',
+            overflow: 'hidden',
+            backgroundColor: themeColors.surfaceAlt,
+            borderColor: themeColors.border,
+        },
+        initials: {
+            fontWeight: '800',
+            letterSpacing: -0.5,
+        },
+    });
+}

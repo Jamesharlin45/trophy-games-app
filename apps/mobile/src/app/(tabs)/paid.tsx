@@ -5,7 +5,7 @@ import { MatchSectionList } from '../../components/neon/MatchSectionList';
 import { DatePickerStrip } from '../../components/DatePickerStrip';
 import { SkeletonList } from '../../components/Skeleton';
 import { NeonButton } from '../../components/neon/NeonButton';
-import { onColor, readableAccent, readableOnSurface } from '../../components/neon/tokens';
+import { onColor, readableAccent } from '../../components/neon/tokens';
 import { useTheme } from '../../context/ThemeContext';
 import type { ThemeColors } from '../../theme/colors';
 import { useUser } from '../../context/UserContext';
@@ -23,10 +23,10 @@ const toTitleCase = (str: string) =>
     str.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
 
 export default function PaidTipsScreen() {
-    const { themeColors, isDark } = useTheme();
+    const { themeColors } = useTheme();
     const styles = getStyles(themeColors);
-    const accent = readableAccent(themeColors, isDark);
-    const orange = readableOnSurface(themeColors.orange9, themeColors, isDark);
+    const accent = readableAccent(themeColors);
+    const orange = onColor(themeColors.orange9);
     const router = useRouter();
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
     const [selectedLeague, setSelectedLeague] = useState('All');

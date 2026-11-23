@@ -12,7 +12,7 @@ import type { StyleProp, ViewStyle } from 'react-native';
 import { CheckCircle2, LogOut, TriangleAlert, WifiOff } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { AppDialog } from '../AppDialog';
-import { onColor, readableOnSurface, withAlpha } from '../neon/tokens';
+import { onColor, withAlpha } from '../neon/tokens';
 import { useTheme } from '../../context/ThemeContext';
 import type { ThemeColors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
@@ -62,11 +62,11 @@ function DialogButton({
 }
 
 function DialogIcon({ icon: Icon, color }: { icon: LucideIcon; color: string }) {
-    const { themeColors, isDark } = useTheme();
+    const { themeColors } = useTheme();
     const styles = getStyles(themeColors);
     return (
         <View style={[styles.iconBubble, { backgroundColor: withAlpha(color, 0.12), borderColor: withAlpha(color, 0.42) }]}>
-            <Icon size={26} color={readableOnSurface(color, themeColors, isDark)} />
+            <Icon size={26} color={onColor(color)} />
         </View>
     );
 }
