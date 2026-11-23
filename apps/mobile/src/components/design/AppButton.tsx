@@ -11,7 +11,7 @@ import type { StyleProp, ViewStyle } from 'react-native';
 import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react-native';
 import { useTheme } from '../../context/ThemeContext';
-import { onColor, readableAccent, withAlpha } from '../neon/tokens';
+import { onColor, withAlpha } from '../neon/tokens';
 
 export type AppButtonVariant = 'primary' | 'outline' | 'ghost' | 'danger';
 
@@ -50,11 +50,15 @@ export function AppButton({
 
     const isPrimary = variant === 'primary';
     const fill = color ?? (variant === 'danger' ? themeColors.danger : themeColors.accent);
+    // onAccent is only for SOLID fills. Ghost/transparent buttons sit on the
+    // glass surface, so their label uses readable ink instead.
     const labelColor = variant === 'danger'
         ? onColor(themeColors.danger)
         : isPrimary
             ? (color ? onColor(color) : themeColors.onAccent)
-            : readableAccent(themeColors);
+            : variant === 'ghost'
+                ? onColor(themeColors.glass)
+                : themeColors.onAccent;
 
     return (
         <View style={[styles.wrap, disabled && styles.disabledWrap, style]}>
@@ -72,7 +76,7 @@ export function AppButton({
                     {
                         borderRadius: radius ?? 18,
                         backgroundColor: isPrimary || variant === 'outline' ? fill : themeColors.glass,
-                        borderColor: variant === 'primary' ? undefined : fill,
+                        ...(variant === 'primary' ? {} : { borderColor: fill }),
                     },
                     disabled && styles.disabled,
                 ]}

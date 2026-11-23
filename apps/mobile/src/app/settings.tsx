@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -7,6 +7,8 @@ import { useDialog } from '../context/DialogContext';
 import { Ionicons } from '@expo/vector-icons';
 import { accents, type AccentType } from '../theme/colors';
 import i18n, { tArray } from '../locales';
+import { AppButton } from '../components/design/AppButton';
+import { clearLastError, copyLastError, readLastError, formatLastErrorDetails, type LastError } from '../lib/errorDiagnostics';
 
 const MODE_OPTIONS = [
     { mode: 'light', Icon: 'sunny-outline', labelKey: 'settings.light' as const },
@@ -20,6 +22,19 @@ export default function SettingsScreen() {
     const { logout } = useUser();
     const { showSignOutConfirm, joinTelegram } = useDialog();
     const styles = getStyles();
+
+    // Diagnostics → "Last error": read the stored crash record on mount.
+    const [lastError, setLastError] = useState<LastError | null>(null);
+    useEffect(() => {
+        void readLastError().then((err) => setLastError(err));
+    }, []);
+
+    const handleClearError = () => {
+        void clearLastError().then(() => setLastError(null));
+    };
+    const handleCopyError = () => {
+        void copyLastError(lastError);
+    };
 
     const languages = tArray<{ code: string; name: string }>('settings.languages');
 
@@ -136,6 +151,43 @@ export default function SettingsScreen() {
                 <Text style={[styles.btnText, { color: themeColors.onSurface }]}>{i18n.t('settings.telegram')}</Text>
             </TouchableOpacity>
 
+            {/* Diagnostics — last uncaught error (message, stack, route, timestamp).
+                Stored in AsyncStorage, never sent anywhere. */}
+            <View style={[styles.section, { backgroundColor: themeColors.surfaceAlt }]}>
+                <View style={styles.sectionHeader}>
+                    <Ionicons name="construct-outline" size={20} color={themeColors.accent} />
+                    <Text style={[styles.sectionTitle, { color: themeColors.onSurface }]}>
+                        {i18n.t('settings.diagnostics')}
+                    </Text>
+                </View>
+                <Text style={[styles.rowLabel, { color: themeColors.textSecondary }]}>
+                    {i18n.t('settings.lastError')}
+                </Text>
+                <Text style={[styles.diagText, { color: themeColors.onSurface }]} numberOfLines={8}>
+                    {lastError
+                        ? `${lastError.route}\n${lastError.message}\n${formatLastErrorDetails(lastError).split('\n').slice(1).join('\n')}`
+                        : i18n.t('settings.noError')}
+                </Text>
+                <View style={styles.diagActions}>
+                    <AppButton
+                        variant="outline"
+                        onPress={handleCopyError}
+                        style={styles.diagBtn}
+                        disabled={lastError == null}
+                    >
+                        {i18n.t('settings.copyLastError')}
+                    </AppButton>
+                    <AppButton
+                        variant="outline"
+                        onPress={handleClearError}
+                        style={styles.diagBtn}
+                        disabled={lastError == null}
+                    >
+                        {i18n.t('settings.clearError')}
+                    </AppButton>
+                </View>
+            </View>
+
             {/* Sign out — outlined so it looks tappable */}
             <TouchableOpacity
                 style={[
@@ -249,6 +301,21 @@ const getStyles = () => StyleSheet.create({
         borderWidth: 2,
         marginTop: 20,
         minHeight: 48,
+    },
+    diagText: {
+        fontSize: 11,
+        fontWeight: '500',
+        fontFamily: 'monospace',
+        lineHeight: 16,
+        paddingVertical: 10,
+    },
+    diagActions: {
+        flexDirection: 'row',
+        gap: 8,
+        marginTop: 10,
+    },
+    diagBtn: {
+        flex: 1,
     },
     btnText: {
         fontSize: 16,

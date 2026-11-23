@@ -35,4 +35,28 @@ export default tseslint.config(
             'react-hooks/rules-of-hooks': 'off',
         },
     },
+    {
+        // Jest configs are CommonJS Node scripts, not app code.
+        files: ['jest.config.js', 'jest-expo-rn81-preset.js', 'scripts/**/*.{js,cjs,mjs}'],
+        languageOptions: {
+            globals: {
+                require: 'readonly',
+                module: 'readonly',
+                exports: 'readonly',
+                __dirname: 'readonly',
+                __filename: 'readonly',
+                process: 'readonly',
+                console: 'readonly',
+                structuredClone: 'readonly',
+                Buffer: 'readonly',
+                setImmediate: 'readonly',
+                clearImmediate: 'readonly',
+                jest: 'readonly',
+            },
+        },
+        rules: {
+            '@typescript-eslint/no-require-imports': 'off',
+            '@typescript-eslint/no-explicit-any': 'off',
+        },
+    },
 );

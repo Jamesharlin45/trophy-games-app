@@ -47,7 +47,7 @@ function badgeStyle(kind: BadgeKind, themeColors: ThemeColors): { color: string;
         case 'lose':
             return { color: themeColors.danger, textColor: onColor(themeColors.danger) };
         case 'void':
-            return { color: themeColors.textSecondary, textColor: themeColors.onSurface };
+            return { color: themeColors.textSecondary, textColor: onColor(themeColors.textSecondary) };
         case 'pending':
             return { color: themeColors.warning, textColor: onColor(themeColors.warning) };
         case 'free':

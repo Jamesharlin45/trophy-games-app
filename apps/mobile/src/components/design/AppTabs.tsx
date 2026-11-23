@@ -39,7 +39,9 @@ export function AppTabs({ tabs, active, onChange, showLabels = true, style }: Ap
         <View style={[styles.bar, style]}>
             {tabs.map((tab) => {
                 const isActive = active === tab.id;
-                const color = isActive ? themeColors.accent : themeColors.textSecondary;
+                // The active label sits on the surface: it must be readable
+                // there (accent isn't guaranteed to be readable on the surface).
+                const color = isActive ? themeColors.onSurface : themeColors.textSecondary;
                 return (
                     <View key={tab.id} style={styles.slot}>
                         <PressScale

@@ -6,7 +6,7 @@ import * as NavigationBar from 'expo-navigation-bar';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import * as SplashScreen from 'expo-splash-screen';
 import { useFonts } from 'expo-font';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useRouter, usePathname } from 'expo-router';
 import { Sun, Moon, Bell, Settings } from 'lucide-react-native';
 import { Ionicons } from '@expo/vector-icons';
 import AppIconAsset from '../../assets/images/logo.png';
@@ -20,8 +20,15 @@ import { usePushNotifications } from '../hooks/usePushNotifications';
 import { useApiQuery } from '../hooks/useLiveQuery';
 import { api } from '../api/client';
 import SplashAnim from '../components/SplashAnim';
+import { AppErrorBoundary } from '../components/AppErrorBoundary';
+import { installGlobalErrorHandler, setCurrentRoute } from '../lib/errorDiagnostics';
 
 SplashScreen.preventAutoHideAsync();
+
+// Global JS error handler: stores the last uncaught error (message, stack,
+// route, timestamp — no personal data) in AsyncStorage for the Settings
+// → Diagnostics screen. Nothing is ever sent anywhere.
+installGlobalErrorHandler();
 
 export default function RootLayout() {
     const [loaded] = useFonts({});
@@ -60,7 +67,12 @@ function RootLayoutContent() {
 
 function AppContent() {
     const router = useRouter();
+    const pathname = usePathname();
     const { theme, isDark, themeColors, toggleTheme } = useTheme();
+    // Track the route for diagnostics (stored alongside any caught error).
+    useEffect(() => {
+        setCurrentRoute(pathname ?? 'unknown');
+    }, [pathname]);
     const { username, isLoading: isUserLoading } = useUser();
     const { expoPushToken } = usePushNotifications();
     const insets = useSafeAreaInsets();
@@ -120,6 +132,7 @@ function AppContent() {
         <ThemeProvider value={isDark ? DarkTheme : DefaultTheme}>
             <StatusBar style={isDark ? 'light' : 'dark'} />
             <View style={[styles.container, { backgroundColor: themeColors.background, paddingTop: insets.top }]}>
+                <AppErrorBoundary>
                 <Stack screenOptions={{
                     headerStyle: { backgroundColor: themeColors.background },
                     headerShadowVisible: false,
@@ -169,6 +182,7 @@ function AppContent() {
                     <Stack.Screen name="alerts" options={{ presentation: 'modal', title: 'Alerts' }} />
                     <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
                 </Stack>
+                </AppErrorBoundary>
             </View>
         </ThemeProvider>
         </DialogProvider>

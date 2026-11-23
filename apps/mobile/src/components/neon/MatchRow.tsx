@@ -27,7 +27,7 @@ import i18n from '../../locales';
 import { Card } from '../design/Card';
 import { Pill } from '../design/Pill';
 import { Badge } from '../design/Badge';
-import { readableAccent, withAlpha } from './tokens';
+import { withAlpha } from './tokens';
 
 export interface MatchRowProps {
     match: ApiMatch;
@@ -98,7 +98,6 @@ export function MatchRow({ match, access, footer, onOpen }: MatchRowProps) {
     const router = useRouter();
     const { themeColors } = useTheme();
     const styles = getStyles(themeColors);
-    const accentInk = readableAccent(themeColors);
 
     const openDetail = () => {
         if (onOpen) {
@@ -147,7 +146,7 @@ export function MatchRow({ match, access, footer, onOpen }: MatchRowProps) {
                 accessibilityLabel={`${match.homeTeam} vs ${match.awayTeam}`}
             >
                 <View style={styles.timeCol}>
-                    <Text style={[styles.status, { color: live ? accentInk : themeColors.text }]}>
+                    <Text style={[styles.status, { color: live ? themeColors.onSurface : themeColors.text }]}>
                         {statusText}
                     </Text>
                     {timeLabel(match).date ? (
@@ -191,8 +190,8 @@ export function MatchRow({ match, access, footer, onOpen }: MatchRowProps) {
                 <View style={styles.rightCol}>
                     {showScore ? (
                         <View style={styles.scoreCol}>
-                            <Text style={[styles.score, { color: accentInk }]}>{match.homeScore}</Text>
-                            <Text style={[styles.score, { color: accentInk }]}>{match.awayScore}</Text>
+                            <Text style={[styles.score, { color: themeColors.onSurface }]}>{match.homeScore}</Text>
+                            <Text style={[styles.score, { color: themeColors.onSurface }]}>{match.awayScore}</Text>
                             {result && result !== 'pending' ? (
                                 <Badge
                                     kind={result === 'win' ? 'win' : result === 'lose' ? 'lose' : 'void'}
@@ -210,7 +209,8 @@ export function MatchRow({ match, access, footer, onOpen }: MatchRowProps) {
 
                     {showAi ? (
                         <View style={styles.aiRow}>
-                            <Text style={[styles.pct, { color: accentInk }]}>{`${Math.round(confidence)}%`}</Text>
+                            {/* Readable ink: accentInk is for SOLID fills only. */}
+                            <Text style={[styles.pct, { color: themeColors.onSurface }]}>{`${Math.round(confidence)}%`}</Text>
                             <Text style={[styles.aiTag, { color: themeColors.textSecondary }]}>AI</Text>
                         </View>
                     ) : null}

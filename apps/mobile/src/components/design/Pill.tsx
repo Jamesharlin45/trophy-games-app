@@ -1,7 +1,10 @@
 /**
  * Pill — compact status / tier / result label (design system `Pill`).
- * Filled pills use the onAccent token for text; outline pills use the theme
- * border. Every tone maps to an opaque theme token.
+ *
+ * Filled pills use the onAccent token for text (onAccent is only valid on a
+ * SOLID accent fill). Outline/transparent pills use the readable ink for the
+ * pill's surface — onColor(fill) on glass, so the label is readable in every
+ * theme and accent.
  */
 
 import { StyleSheet, Text, View } from 'react-native';
@@ -10,7 +13,7 @@ import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react-native';
 import { useTheme } from '../../context/ThemeContext';
 import type { ThemeColors } from '../../theme/colors';
-import { neonAccentBorder, onColor, readableAccent, withAlpha } from '../neon/tokens';
+import { neonAccentBorder, onColor, withAlpha } from '../neon/tokens';
 
 export type PillTone = 'accent' | 'info' | 'success' | 'warning' | 'danger' | 'neutral';
 
@@ -44,11 +47,9 @@ export function Pill({
     const { themeColors } = useTheme();
     const styles = getStyles();
     const color = toneColor(tone, themeColors);
-    const textColor = filled
-        ? tone === 'accent'
-            ? themeColors.onAccent
-            : onColor(color)
-        : readableAccent(themeColors);
+    // onAccent is only for SOLID accent fills. Outline/transparent pills are
+    // readable on their glass surface instead.
+    const textColor = filled ? (tone === 'accent' ? themeColors.onAccent : onColor(color)) : onColor(themeColors.glass);
 
     const content: ReactNode = (
         <>

@@ -105,7 +105,7 @@ function relativeLuminance(color: string): number {
     if (hex.length === 3) hex = hex.split('').map((c) => c + c).join('');
     if (hex.length !== 6 && hex.length !== 8) return 0;
     const channel = (raw: string): number => {
-        const c = Number(raw) / 255;
+        const c = parseInt(raw, 16) / 255;
         return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
     };
     return 0.2126 * channel(hex.slice(0, 2)) + 0.7152 * channel(hex.slice(2, 4)) + 0.0722 * channel(hex.slice(4, 6));

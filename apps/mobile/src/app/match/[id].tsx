@@ -42,46 +42,66 @@ import { Pill } from '../../components/design/Pill';
 import { ProgressBar } from '../../components/design/ProgressBar';
 import { onColor, readableAccent } from '../../components/neon/tokens';
 import i18n from '../../locales';
+import { setStringAsync as setClipboardString } from 'expo-clipboard';
+import { AppErrorBoundary } from '../../components/AppErrorBoundary';
+
+/**
+ * Match screen — wrapped in an ErrorBoundary so a render crash shows the
+ * friendly fallback (Back / Retry / Copy error details) instead of closing
+ * the app. The page-level error handling (loading / error / not-found
+ * states) lives inside MatchDetailScreenInner.
+ */
+export default function MatchScreen() {
+    return (
+        <AppErrorBoundary>
+            <MatchDetailScreenInner />
+        </AppErrorBoundary>
+    );
+}
+import {
+    domainOf,
+    formatDate,
+    formatTime,
+    isFinishedMatch,
+    isLiveMatch,
+    marketTotal as marketOddsTotal,
+    clampPercent,
+    normalizeDetailedOdds,
+    normalizeH2h,
+    normalizeLineups,
+    normalizePotentials,
+    normalizeStats,
+    parseConfidence,
+    parseOdds,
+    pickTextFrom,
+    reasoningLines as reasoningLinesOf,
+    formString,
+    impliedProbabilities,
+    normalizedOdds,
+    riskOf,
+    sourceUrls,
+    parseTimestamp,
+    scoreText,
+    shareUrlFor,
+    toFiniteNumber,
+    xgOf,
+} from '../../utils/matchData';
+import type { NormalizedAiPrediction, NormalizedOdds13 } from '../../utils/matchData';
 
 type MatchViewModel = Omit<
     ApiMatch,
-    'h2h' | 'detailedOdds' | 'homeLineup' | 'awayLineup' | 'goals' | 'stats' | 'potentials' | 'oddsComparison'
+    'h2h' | 'detailedOdds' | 'homeLineup' | 'awayLineup' | 'goals' | 'stats' | 'potentials' | 'oddsComparison' | 'aiPrediction'
 > &
     Partial<MatchDetailData> & {
+        aiPrediction?: NormalizedAiPrediction | null;
         // Raw web payload key; the camelCase field is the mapped shape.
         ai_prediction?: { sources?: string[] };
     };
 
-type AiPrediction = NonNullable<MatchViewModel['aiPrediction']>;
-type Risk = AiPrediction['risk'];
-type Odds13 = { home?: string; draw?: string; away?: string };
+type Risk = ReturnType<typeof riskOf>;
+type Odds13 = NormalizedOdds13;
 
-function formatTime(date: Date): string {
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
-function formatDate(date: Date): string {
-    return date.toLocaleDateString([], { weekday: 'short', month: 'short', day: '2-digit' });
-}
-
-function domainOf(url: string): string {
-    try {
-        return new URL(url).hostname.replace(/^www\./, '');
-    } catch {
-        const host = url.replace(/^https?:\/\//, '').split('/')[0];
-        return host.replace(/^www\./, '');
-    }
-}
-
-function isFinishedStatus(status?: string): boolean {
-    return status === 'Finished' || status === 'FT' || status === 'AET' || status === 'PEN';
-}
-
-function isFinishedMatch(match: MatchViewModel): boolean {
-    return isFinishedStatus(match.status) || (match.result !== undefined && match.result !== 'pending');
-}
-
-export default function MatchDetailScreen() {
+function MatchDetailScreenInner() {
     const { id, matchData } = useLocalSearchParams();
     const router = useRouter();
     const { themeColors } = useTheme();
@@ -92,102 +112,104 @@ export default function MatchDetailScreen() {
     const [match, setMatch] = useState<MatchViewModel | null>(null);
     const [loading, setLoading] = useState(true);
     const [tab, setTab] = useState('overview');
+    const [error, setError] = useState<{ message: string; stack?: string } | null>(null);
 
-    useFocusEffect(
-        useCallback(() => {
-            let cancelled = false;
+    const reloadMatch = useCallback(async () => {
+        let cancelled = false;
 
-            const loadMatch = async () => {
-                setLoading(true);
 
-                // 1. Start with instant placeholder from navigation params.
-                let base: MatchViewModel | null = null;
-                if (matchData) {
-                    try {
-                        const parsed: unknown = JSON.parse(decodeURIComponent(matchData as string));
-                        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-                            base = parsed as MatchViewModel;
-                            if (!cancelled) setMatch(base);
-                        }
-                    } catch (parseError) {
-                        console.warn('[Match Detail] Failed to parse matchData param:', parseError);
-                    }
-                }
+        const loadMatch = async () => {
+            setLoading(true);
+            setError(null);
 
-                // 2. The API record gives the overlay (matchType, scores, status).
-                let merged: MatchViewModel | null = base;
+            // 1. Start with instant placeholder from navigation params.
+            let base: MatchViewModel | null = null;
+            if (matchData) {
                 try {
-                    const remoteMatch = await api.matches.byId(id as string);
-                    if (remoteMatch) {
-                        const patch = Object.fromEntries(
-                            Object.entries(remoteMatch).filter(([, v]) => v !== undefined && v !== ''),
-                        ) as Partial<MatchViewModel>;
-                        const next: MatchViewModel = {
-                            ...(base ?? {}),
-                            ...patch,
-                            league: remoteMatch.league || base?.league || '',
-                            country: remoteMatch.country || base?.country,
-                        } as MatchViewModel;
-                        merged = next;
-                        if (!cancelled) setMatch(next);
+                    const parsed: unknown = JSON.parse(decodeURIComponent(matchData as string));
+                    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                        base = parsed as MatchViewModel;
+                        if (!cancelled) setMatch(base);
                     }
-                } catch (apiError) {
-                    console.warn('[Match Detail] Match lookup failed:', apiError);
+                } catch (parseError) {
+                    console.warn('[Match Detail] Failed to parse matchData param:', parseError);
                 }
+            }
 
-                // 3. Fetch the rich match-stats from the API (same source as web).
-                try {
-                    const stats = await fetchMatchStats(id as string);
-                    if (stats && !cancelled) {
-                        const richPatch = Object.fromEntries(
-                            Object.entries(stats).filter(([, v]) =>
-                                v !== undefined && v !== '' && !(Array.isArray(v) && v.length === 0),
-                            ),
-                        ) as Partial<MatchViewModel>;
-                        setMatch({
-                            ...(merged ?? {}),
-                            ...richPatch,
-                            league: merged?.league || stats.league,
-                            country: merged?.country || stats.country,
-                            matchType: merged?.matchType,
-                        } as MatchViewModel);
-                    }
-                } catch (statsError) {
-                    console.warn('[Match Detail] match-stats fetch failed:', statsError);
+            // 2. The API record gives the overlay (matchType, scores, status).
+            let merged: MatchViewModel | null = base;
+            try {
+                const remoteMatch = await api.matches.byId(id as string);
+                if (remoteMatch) {
+                    const patch = Object.fromEntries(
+                        Object.entries(remoteMatch).filter(([, v]) => v !== undefined && v !== ''),
+                    ) as Partial<MatchViewModel>;
+                    const next: MatchViewModel = {
+                        ...(base ?? {}),
+                        ...patch,
+                        league: remoteMatch.league || base?.league || '',
+                        country: remoteMatch.country || base?.country,
+                    } as MatchViewModel;
+                    merged = next;
+                    if (!cancelled) setMatch(next);
                 }
+            } catch (apiError) {
+                // Error state with a Retry button — never a crash, never a false "done".
+                if (!cancelled) {
+                    setError({
+                        message: apiError instanceof Error ? apiError.message : String(apiError),
+                        stack: apiError instanceof Error ? apiError.stack : undefined,
+                    });
+                }
+            }
 
-                if (!cancelled) setLoading(false);
-            };
+            // 3. Fetch the rich match-stats from the API (same source as web).
+            try {
+                const stats = await fetchMatchStats(id as string);
+                if (stats && !cancelled) {
+                    const richPatch = Object.fromEntries(
+                        Object.entries(stats).filter(([, v]) =>
+                            v !== undefined && v !== '' && !(Array.isArray(v) && v.length === 0),
+                        ),
+                    ) as Partial<MatchViewModel>;
+                    setMatch({
+                        ...(merged ?? {}),
+                        ...richPatch,
+                        league: merged?.league || stats.league,
+                        country: merged?.country || stats.country,
+                        matchType: merged?.matchType,
+                    } as MatchViewModel);
+                }
+            } catch (statsError) {
+                // Rich stats are optional — the page renders with what we have.
+                console.warn('[Match Detail] match-stats fetch failed:', statsError);
+            }
 
-            void loadMatch();
-            return () => { cancelled = true; };
-        }, [id, matchData]),
-    );
+            if (!cancelled) setLoading(false);
+        };
+
+        void loadMatch();
+        return () => { cancelled = true; };
+    }, [id, matchData]);
+
+    useFocusEffect(useCallback(() => void reloadMatch(), [reloadMatch]));
 
     // ---- Derived state (hooks first, so ordering stays stable) ----
-    const isLive = match?.status?.includes('Live') || match?.status === 'Halftime' || match?.status === 'HT';
-    const isFinished = isFinishedMatch(match as MatchViewModel);
-    const odds1x2: Odds13 | undefined = match?.detailedOdds?.ft?.['1x2'];
-    const hasDetailedOdds = Boolean(
-        (odds1x2?.home && odds1x2.home !== '') ||
-        (odds1x2?.draw && odds1x2.draw !== '') ||
-        (odds1x2?.away && odds1x2.away !== ''),
-    );
-    const kickoff = match ? new Date(match.timestamp) : new Date(0);
+    const isLive = match ? isLiveMatch(match.status) : false;
+    const isFinished = isFinishedMatch(match);
+    const odds1x2: Odds13 = normalizedOdds(match?.detailedOdds?.ft?.['1x2']);
+    const hasDetailedOdds = Boolean(odds1x2.home || odds1x2.draw || odds1x2.away);
+    const kickoff = parseTimestamp(match?.timestamp);
     const kickMs = match ? kickoff.getTime() : 0;
 
-    const rawSources = match?.aiPrediction?.sources ?? match?.ai_prediction?.sources;
-    const sources = useMemo(
-        () => (Array.isArray(rawSources) ? rawSources.filter(Boolean) : []),
-        [rawSources],
-    );
+    const sources = useMemo(() => sourceUrls(match?.aiPrediction ?? match?.ai_prediction), [match?.aiPrediction, match?.ai_prediction]);
     const sourceList = useMemo(
         () => sources.map((s) => ({ key: s, domain: domainOf(s), url: s })),
         [sources],
     );
 
-    const homeForm = match?.homeForm || '';
-    const awayForm = match?.awayForm || '';
+    const homeForm = formString(match?.homeForm);
+    const awayForm = formString(match?.awayForm);
 
     const tabs = useMemo<AppTabDef[]>(
         () => [
@@ -208,6 +230,16 @@ export default function MatchDetailScreen() {
         [hasDetailedOdds, match?.stats, match?.h2h?.history, homeForm, awayForm],
     );
     const activeTab = tabs.find((t) => t.id === tab) ? tab : 'overview';
+
+    if (error) {
+        return (
+            <MatchPageErrorScreen
+                error={error}
+                onBack={() => router.back()}
+                onRetry={() => void reloadMatch()}
+            />
+        );
+    }
 
     if (loading && !match) {
         return (
@@ -232,19 +264,17 @@ export default function MatchDetailScreen() {
         );
     }
 
-    const ai = match.aiPrediction;
-    const pickText = ai?.pick || ai?.suggestedBet || ai?.prediction;
-    const hasPrediction = typeof pickText === 'string' && pickText.trim().length > 0;
-    const confidence = typeof ai?.confidence === 'number' ? Math.max(0, Math.min(100, ai.confidence)) : undefined;
-    const risk = ai?.risk;
-    const reasoningLines = Array.isArray(ai?.reasoning) ? ai.reasoning.filter(Boolean) : [];
+    const ai = match.aiPrediction ?? null;
+    const pickText = pickTextFrom(ai);
+    const hasPrediction = pickText !== undefined;
+    const confidence = parseConfidence(ai?.confidence);
+    const risk = riskOf(ai);
+    const reasoningList = reasoningLinesOf(ai);
 
-    const scoreText = (match.homeScore !== undefined && match.awayScore !== undefined)
-        ? `${match.homeScore} - ${match.awayScore}`
-        : '';
+    const scoreDisplay = scoreText(match.homeScore, match.awayScore);
     const showScore = (isLive || isFinished) && match.homeScore !== undefined && match.awayScore !== undefined;
 
-    const shareUrl = `trophy-games://match/${match.id}`;
+    const shareUrl = shareUrlFor(match.id);
     const handleShare = async () => {
         try {
             const available = await ShareAPI.isAvailableAsync();
@@ -301,7 +331,7 @@ export default function MatchDetailScreen() {
                         <View style={styles.timeWrap}>
                             {showScore ? (
                                 <>
-                                    <Text style={[styles.scoreBig, { color: themeColors.onSurface }]}>{scoreText}</Text>
+                                    <Text style={[styles.scoreBig, { color: themeColors.onSurface }]}>{scoreDisplay}</Text>
                                     <Text style={[styles.ftText, { color: accentInk }]}>
                                         {textFor('matchDetail.statusFinished', 'FT')}
                                     </Text>
@@ -365,7 +395,7 @@ export default function MatchDetailScreen() {
                         pickText={pickText}
                         confidence={confidence}
                         risk={risk}
-                        reasoningLines={reasoningLines}
+                        reasoningLines={reasoningList}
                         sourceList={sourceList}
                         lockTier={match.matchType === 'vip' ? 'vip' : 'paid'}
                         isLocked={!isFinished && ((match.matchType === 'paid' && !access.paid) || (match.matchType === 'vip' && !access.vip))}
@@ -439,13 +469,20 @@ function OverviewContent({
         );
     }
 
+    const dOdds: Odds13 = normalizedOdds(match.detailedOdds?.ft?.['1x2']);
     const oddValues: { label: string; value?: string }[] = [];
-    const dOdds: Odds13 | undefined = match.detailedOdds?.ft?.['1x2'];
-    if (dOdds?.home) oddValues.push({ label: textFor('matchDetail.home', 'HOME'), value: dOdds.home });
-    if (dOdds?.draw) oddValues.push({ label: textFor('matchDetail.draw', 'DRAW'), value: dOdds.draw });
-    if (dOdds?.away) oddValues.push({ label: textFor('matchDetail.away', 'AWAY'), value: dOdds.away });
+    if (dOdds.home) oddValues.push({ label: textFor('matchDetail.home', 'HOME'), value: dOdds.home });
+    if (dOdds.draw) oddValues.push({ label: textFor('matchDetail.draw', 'DRAW'), value: dOdds.draw });
+    if (dOdds.away) oddValues.push({ label: textFor('matchDetail.away', 'AWAY'), value: dOdds.away });
 
-    const marketTotal = oddValues.reduce((acc, v) => acc + (Number.parseFloat(v.value ?? '') || 0), 0);
+    const impliedProbs = impliedProbabilities(dOdds);
+    const oddsTotal = marketOddsTotal(dOdds);
+    const firstOdds = oddValues[0] ? parseOdds(oddValues[0].value) : null;
+    // Implied probabilities show only when every odds value is valid and > 1.
+    const marketPct = oddsTotal > 0 && firstOdds !== null && oddValues[0]
+        ? clampPercent((firstOdds / oddsTotal) * 100)
+        : null;
+    const labelValues = impliedProbs ? impliedProbs.map((pct) => `${Math.round(pct)}%`) : oddValues.map((v) => v.value);
 
     return (
         <View style={styles.overviewContent}>
@@ -457,18 +494,18 @@ function OverviewContent({
                 oddValues={oddValues}
             />
 
-            {marketTotal > 0 && oddValues[0]?.value !== undefined && (
+            {marketPct !== null && (
                 <Card style={styles.card} accessibilityLabel={textFor('matchDetail.marketView', 'Market view (from odds)')}>
                     <SectionTitle name="stats-chart-outline" title={textFor('matchDetail.marketView', 'Market view (from odds)')} />
                     <ProgressBar
-                        value={(Number.parseFloat(oddValues[0].value ?? '') / marketTotal) * 100}
+                        value={marketPct}
                         height={10}
                         radius={5}
                         accessibilityLabel={textFor('matchDetail.marketView', 'Market view (from odds)')}
                     />
                     <View style={styles.marketLabels}>
-                        {oddValues.map((v, i) => (
-                            <Text key={i} style={[styles.marketLabel, { color: i === 0 ? accentInk : themeColors.onSurface }]}>{v.value}</Text>
+                        {labelValues.map((value, i) => (
+                            <Text key={i} style={[styles.marketLabel, { color: i === 0 ? accentInk : themeColors.onSurface }]}>{value}</Text>
                         ))}
                     </View>
                 </Card>
@@ -512,6 +549,57 @@ function OverviewContent({
                 </Card>
             ) : null}
         </View>
+    );
+}
+
+/**
+ * Error screen for the match page — shown when the lookup throws. Has Back,
+ * Retry and a "Copy error details" button. Rendered inside the page's own
+ * ErrorBoundary, so it also covers render-time exceptions on this screen.
+ */
+function MatchPageErrorScreen({
+    error,
+    onBack,
+    onRetry,
+}: {
+    error: { message: string; stack?: string };
+    onBack: () => void;
+    onRetry: () => void;
+}) {
+    const { themeColors } = useTheme();
+    const styles = getStyles(themeColors);
+
+    const copyDetails = () => {
+        const stack = (error.stack ?? '').split('\n').slice(0, 15).join('\n').trim();
+        const details = [error.message.trim(), stack].filter(Boolean).join('\n');
+        if (details) {
+            void setClipboardString(details);
+        }
+    };
+
+    return (
+        <SafeAreaView style={styles.container} edges={['left', 'right']}>
+            <View style={styles.unavailableWrap}>
+                <Ionicons name="alert-circle-outline" size={28} color={themeColors.accent} />
+                <Text style={[styles.unavailableTitle, { color: themeColors.onSurface }]}>
+                    {textFor('matchDetail.errorTitle', 'Couldn’t load match')}
+                </Text>
+                <Text style={[styles.unavailableText, { color: themeColors.textSecondary }]}>
+                    {error.message || textFor('matchDetail.errorBody', 'Something went wrong while loading this match.')}
+                </Text>
+                <View style={styles.errorCtaRow}>
+                    <AppButton onPress={onBack} style={styles.cta}>
+                        {textFor('matchDetail.goBack', 'Go back')}
+                    </AppButton>
+                    <AppButton onPress={onRetry} style={styles.cta}>
+                        {textFor('matchDetail.retry', 'Retry')}
+                    </AppButton>
+                    <AppButton onPress={copyDetails} style={styles.cta}>
+                        {textFor('matchDetail.copyError', 'Copy error details')}
+                    </AppButton>
+                </View>
+            </View>
+        </SafeAreaView>
     );
 }
 
@@ -677,7 +765,16 @@ function buildExtraRows(match: MatchViewModel, themeColors: ThemeColors, accentI
     const onText = themeColors.onSurface;
     const muted = themeColors.textSecondary;
 
-    if (match.potentials && match.potentials.length > 0) {
+    // Normalized, null-safe views of the rich detail data.
+    const potentials = normalizePotentials(match.potentials);
+    const h2h = normalizeH2h(match.h2h);
+    const h2hSummary = h2h.summary;
+    const h2hHistory = h2h.history ?? [];
+    const stats = normalizeStats(match.stats);
+    const homeXg = xgOf(match.homeXg);
+    const awayXg = xgOf(match.awayXg);
+
+    if (potentials.length > 0) {
         rows.push({
             key: 'potentials',
             name: 'stats-chart-outline',
@@ -685,7 +782,7 @@ function buildExtraRows(match: MatchViewModel, themeColors: ThemeColors, accentI
             full: true,
             content: (
                 <View style={styles.extraList}>
-                    {match.potentials.map((p, i) => (
+                    {potentials.map((p, i) => (
                         <View key={i} style={styles.extraListItem}>
                             <Text style={[styles.potentialLabel, { color: onText }]} numberOfLines={1}>{p.label}</Text>
                             <ProgressBar value={p.percent ?? 0} height={8} radius={4} style={styles.potentialTrack} />
@@ -697,9 +794,8 @@ function buildExtraRows(match: MatchViewModel, themeColors: ThemeColors, accentI
         });
     }
 
-    const h2h = match.h2h;
-    if (h2h?.summary) {
-        const s = h2h.summary;
+    if (h2hSummary) {
+        const s = h2hSummary;
         rows.push({
             key: 'h2h-summary',
             name: 'flag-outline',
@@ -723,20 +819,20 @@ function buildExtraRows(match: MatchViewModel, themeColors: ThemeColors, accentI
         });
     }
 
-    if (match.homeForm) {
+    if (homeFormRaw(match.homeForm)) {
         rows.push({
             key: 'form-home',
             name: 'analytics-outline',
             label: `${match.homeTeam} — ${textFor('matchDetail.form', 'Recent form')}`,
-            content: <FormStreak form={match.homeForm} />,
+            content: <FormStreak form={homeFormRaw(match.homeForm)} />,
         });
     }
-    if (match.awayForm) {
+    if (homeFormRaw(match.awayForm)) {
         rows.push({
             key: 'form-away',
             name: 'analytics-outline',
             label: `${match.awayTeam} — ${textFor('matchDetail.form', 'Recent form')}`,
-            content: <FormStreak form={match.awayForm} />,
+            content: <FormStreak form={homeFormRaw(match.awayForm)} />,
         });
     }
 
@@ -747,16 +843,16 @@ function buildExtraRows(match: MatchViewModel, themeColors: ThemeColors, accentI
             label: textFor('matchDetail.xg', 'Expected goals (xG)'),
             content: (
                 <View style={styles.xgRow}>
-                    <Text style={[styles.xgVal, { color: accentInk }]}>{(match.homeXg ?? 0).toFixed(2)}</Text>
+                    <Text style={[styles.xgVal, { color: accentInk }]}>{homeXg.toFixed(2)}</Text>
                     <Text style={[styles.xgLabel, { color: muted }]}>{textFor('matchDetail.home', 'HOME')}</Text>
-                    <Text style={[styles.xgVal, { color: onText }]}>{(match.awayXg ?? 0).toFixed(2)}</Text>
+                    <Text style={[styles.xgVal, { color: onText }]}>{awayXg.toFixed(2)}</Text>
                     <Text style={[styles.xgLabel, { color: muted }]}>{textFor('matchDetail.away', 'AWAY')}</Text>
                 </View>
             ),
         });
     }
 
-    if (h2h?.history && h2h.history.length > 0) {
+    if (h2hHistory.length > 0) {
         rows.push({
             key: 'h2h-history',
             name: 'flag-outline',
@@ -764,7 +860,7 @@ function buildExtraRows(match: MatchViewModel, themeColors: ThemeColors, accentI
             full: true,
             content: (
                 <View style={styles.h2hHistoryCard}>
-                    {h2h.history.map((h, i) => (
+                    {h2hHistory.map((h, i) => (
                         <View key={i} style={[styles.h2hHistoryRow, i > 0 && { borderTopWidth: 1, borderTopColor: themeColors.border }]}>
                             <View style={styles.h2hHistoryLeft}>
                                 <Text style={[styles.h2hHistoryLeague, { color: muted }]}>{h.league}</Text>
@@ -781,7 +877,9 @@ function buildExtraRows(match: MatchViewModel, themeColors: ThemeColors, accentI
         });
     }
 
-    if (match.homeLineup || match.awayLineup) {
+    const homeLineup = normalizeLineups(match.homeLineup);
+    const awayLineup = normalizeLineups(match.awayLineup);
+    if (homeLineup.length > 0 || awayLineup.length > 0) {
         rows.push({
             key: 'lineups',
             name: 'flashlight-outline',
@@ -791,18 +889,18 @@ function buildExtraRows(match: MatchViewModel, themeColors: ThemeColors, accentI
                 <View style={styles.lineupCols}>
                     <View style={styles.lineupCol}>
                         <Text style={[styles.lineupTeam, { color: accentInk }]} numberOfLines={1}>{match.homeTeam}</Text>
-                        {(match.homeLineup || []).map((p, i) => (
+                        {homeLineup.map((p, i) => (
                             <Text key={i} style={[styles.lineupPlayer, { color: onText }]} numberOfLines={1}>
-                                {p.number ? `${p.number}. ` : ''}{p.name}
+                                {p.number !== undefined ? `${p.number}. ` : ''}{p.name}
                             </Text>
                         ))}
                     </View>
                     <View style={styles.lineupDivider} />
                     <View style={styles.lineupCol}>
                         <Text style={[styles.lineupTeam, { color: onText }]} numberOfLines={1}>{match.awayTeam}</Text>
-                        {(match.awayLineup || []).map((p, i) => (
+                        {awayLineup.map((p, i) => (
                             <Text key={i} style={[styles.lineupPlayer, { color: onText }]} numberOfLines={1}>
-                                {p.number ? `${p.number}. ` : ''}{p.name}
+                                {p.number !== undefined ? `${p.number}. ` : ''}{p.name}
                             </Text>
                         ))}
                     </View>
@@ -811,7 +909,7 @@ function buildExtraRows(match: MatchViewModel, themeColors: ThemeColors, accentI
         });
     }
 
-    if (match.stats && match.stats.length > 0) {
+    if (stats.length > 0) {
         rows.push({
             key: 'stats',
             name: 'stats-chart-outline',
@@ -819,9 +917,9 @@ function buildExtraRows(match: MatchViewModel, themeColors: ThemeColors, accentI
             full: true,
             content: (
                 <View style={styles.statsCard}>
-                    {match.stats.map((s, i) => {
+                    {stats.map((s, i) => {
                         const total = (s.home + s.away) || 1;
-                        const homePct = Math.round((s.home / total) * 100);
+                        const homePct = clampPercent((s.home / total) * 100);
                         return (
                             <View key={i} style={styles.statBlock}>
                                 <View style={styles.statValues}>
@@ -838,7 +936,9 @@ function buildExtraRows(match: MatchViewModel, themeColors: ThemeColors, accentI
         });
     }
 
-    if (match.homeCorners !== undefined || match.awayCorners !== undefined) {
+    const homeCorners = toFiniteNumber(match.homeCorners);
+    const awayCorners = toFiniteNumber(match.awayCorners);
+    if (homeCorners !== null || awayCorners !== null) {
         rows.push({
             key: 'corners',
             name: 'analytics-outline',
@@ -846,11 +946,11 @@ function buildExtraRows(match: MatchViewModel, themeColors: ThemeColors, accentI
             content: (
                 <View style={styles.h2hRow}>
                     <View style={styles.h2hStat}>
-                        <Text style={[styles.h2hVal, { color: accentInk }]}>{match.homeCorners ?? 0}</Text>
+                        <Text style={[styles.h2hVal, { color: accentInk }]}>{homeCorners ?? 0}</Text>
                         <Text style={[styles.h2hLabel, { color: muted }]}>{match.homeTeam}</Text>
                     </View>
                     <View style={styles.h2hStat}>
-                        <Text style={[styles.h2hVal, { color: onText }]}>{match.awayCorners ?? 0}</Text>
+                        <Text style={[styles.h2hVal, { color: onText }]}>{awayCorners ?? 0}</Text>
                         <Text style={[styles.h2hLabel, { color: muted }]}>{match.awayTeam}</Text>
                     </View>
                 </View>
@@ -859,6 +959,11 @@ function buildExtraRows(match: MatchViewModel, themeColors: ThemeColors, accentI
     }
 
     return rows;
+}
+
+/** Form string for a match field — guarded, empty when missing/invalid. */
+function homeFormRaw(value: unknown): string {
+    return formString(value);
 }
 
 function FormStreak({ form }: { form: string }) {
@@ -876,28 +981,28 @@ function FormStreak({ form }: { form: string }) {
 function H2HContent({ match }: { match: MatchViewModel }) {
     const { themeColors } = useTheme();
     const styles = getStyles(themeColors);
-    const h2h = match.h2h;
-    if (!h2h) return null;
+    const { summary, history } = normalizeH2h(match.h2h);
+    if (!summary && (!history || history.length === 0)) return null;
     return (
         <Card style={styles.card}>
             <SectionTitle name="flag-outline" title={textFor('matchDetail.h2hCard', 'HEAD TO HEAD')} />
             <View style={styles.h2hRow}>
                 <View style={styles.h2hStat}>
-                    <Text style={[styles.h2hVal, { color: themeColors.onSurface }]}>{h2h.summary?.wins ?? 0}</Text>
+                    <Text style={[styles.h2hVal, { color: themeColors.onSurface }]}>{summary?.wins ?? 0}</Text>
                     <Text style={[styles.h2hLabel, { color: themeColors.textSecondary }]}>{textFor('matchDetail.homeWins', 'HOME WINS')}</Text>
                 </View>
                 <View style={styles.h2hStat}>
-                    <Text style={[styles.h2hVal, { color: themeColors.onSurface }]}>{h2h.summary?.draws ?? 0}</Text>
+                    <Text style={[styles.h2hVal, { color: themeColors.onSurface }]}>{summary?.draws ?? 0}</Text>
                     <Text style={[styles.h2hLabel, { color: themeColors.textSecondary }]}>{textFor('matchDetail.draws', 'DRAWS')}</Text>
                 </View>
                 <View style={styles.h2hStat}>
-                    <Text style={[styles.h2hVal, { color: themeColors.onSurface }]}>{h2h.summary?.losses ?? 0}</Text>
+                    <Text style={[styles.h2hVal, { color: themeColors.onSurface }]}>{summary?.losses ?? 0}</Text>
                     <Text style={[styles.h2hLabel, { color: themeColors.textSecondary }]}>{textFor('matchDetail.awayWins', 'AWAY WINS')}</Text>
                 </View>
             </View>
-            {h2h.history && h2h.history.length > 0 ? (
+            {history && history.length > 0 ? (
                 <View style={styles.h2hHistoryCard}>
-                    {h2h.history.map((h, i) => (
+                    {history.map((h, i) => (
                         <View key={i} style={[styles.h2hHistoryRow, i > 0 && { borderTopWidth: 1, borderTopColor: themeColors.border }]}>
                             <View style={styles.h2hHistoryLeft}>
                                 <Text style={[styles.h2hHistoryLeague, { color: themeColors.textSecondary }]}>{h.league}</Text>
@@ -943,7 +1048,7 @@ function FormContent({ match }: { match: MatchViewModel }) {
 function StatsContent({ match }: { match: MatchViewModel }) {
     const { themeColors } = useTheme();
     const styles = getStyles(themeColors);
-    const stats = match.stats ?? [];
+    const stats = normalizeStats(match.stats);
     if (stats.length === 0) return null;
     return (
         <Card style={styles.card}>
@@ -951,7 +1056,7 @@ function StatsContent({ match }: { match: MatchViewModel }) {
             <View style={styles.statsCard}>
                 {stats.map((s, i) => {
                     const total = (s.home + s.away) || 1;
-                    const homePct = Math.round((s.home / total) * 100);
+                    const homePct = clampPercent((s.home / total) * 100);
                     return (
                         <View key={i} style={styles.statBlock}>
                             <View style={styles.statValues}>
@@ -981,10 +1086,10 @@ function OddsContent({ match }: { match: MatchViewModel }) {
     const { themeColors } = useTheme();
     const styles = getStyles(themeColors);
     const accentInk = readableAccent(themeColors);
-    const dOdds = match.detailedOdds;
+    const dOdds = normalizeDetailedOdds(match.detailedOdds);
 
     const values1x2 = ['home', 'draw', 'away'] as const;
-    const cellValue = (val: string | undefined) => val || '—';
+    const cellValue = (val: string) => val || '—';
 
     return (
         <View style={styles.oddsTab}>
@@ -1072,9 +1177,10 @@ function getStyles(themeColors: ThemeColors) {
         // Shell
         container: { flex: 1, backgroundColor: themeColors.background },
 
-        // Unavailable state
+        // Unavailable / error state
         unavailableWrap: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12, paddingHorizontal: 32 },
         unavailableText: { fontSize: 15, textAlign: 'center' },
+        unavailableTitle: { fontSize: 17, fontWeight: '700', textAlign: 'center' },
         backCta: {
             height: 44,
             paddingHorizontal: 16,
@@ -1085,6 +1191,8 @@ function getStyles(themeColors: ThemeColors) {
             borderColor: themeColors.border,
             marginTop: 12,
         },
+        errorCtaRow: { flexDirection: 'row', gap: 10, width: '100%', marginTop: 4 },
+        cta: { flex: 1 },
 
         // Header — reference B
         headerWrap: { marginHorizontal: 14, marginTop: 10, marginBottom: 6 },
