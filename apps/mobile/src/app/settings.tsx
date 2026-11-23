@@ -4,14 +4,14 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useUser } from '../context/UserContext';
 import { useDialog } from '../context/DialogContext';
-import { Settings, Globe, LogOut, Palette, Moon, Sun, Smartphone, Send } from 'lucide-react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { accents, type AccentType } from '../theme/colors';
 import i18n, { tArray } from '../locales';
 
 const MODE_OPTIONS = [
-    { mode: 'light', Icon: Sun, labelKey: 'settings.light' as const },
-    { mode: 'dark', Icon: Moon, labelKey: 'settings.dark' as const },
-    { mode: 'system', Icon: Smartphone, labelKey: 'settings.system' as const },
+    { mode: 'light', Icon: 'sunny-outline', labelKey: 'settings.light' as const },
+    { mode: 'dark', Icon: 'moon-outline', labelKey: 'settings.dark' as const },
+    { mode: 'system', Icon: 'settings-outline', labelKey: 'settings.system' as const },
 ] as const;
 
 export default function SettingsScreen() {
@@ -19,23 +19,25 @@ export default function SettingsScreen() {
     const { locale, setLocale } = useLanguage();
     const { logout } = useUser();
     const { showSignOutConfirm, joinTelegram } = useDialog();
+    const styles = getStyles();
 
     const languages = tArray<{ code: string; name: string }>('settings.languages');
 
     return (
         <ScrollView style={[styles.container, { backgroundColor: themeColors.background }]}>
             <View style={styles.header}>
-                <Settings size={24} color={themeColors.text} />
-                <Text style={[styles.title, { color: themeColors.text }]}>{i18n.t('settings.title')}</Text>
+                <Ionicons name="settings-outline" size={24} color={themeColors.onSurface} />
+                <Text style={[styles.title, { color: themeColors.onSurface }]}>{i18n.t('settings.title')}</Text>
             </View>
 
-            <View style={[styles.section, { backgroundColor: themeColors.surfaceElevated }]}>
+            {/* Theme */}
+            <View style={[styles.section, { backgroundColor: themeColors.surfaceAlt }]}>
                 <View style={styles.sectionHeader}>
-                    <Palette size={20} color={themeColors.accent} />
-                    <Text style={[styles.sectionTitle, { color: themeColors.text }]}>{i18n.t('settings.theme')}</Text>
+                    <Ionicons name="moon-outline" size={20} color={themeColors.accent} />
+                    <Text style={[styles.sectionTitle, { color: themeColors.onSurface }]}>{i18n.t('settings.theme')}</Text>
                 </View>
 
-                <Text style={[styles.rowLabel, { color: themeColors.mutedText }]}>{i18n.t('settings.mode')}</Text>
+                <Text style={[styles.rowLabel, { color: themeColors.textSecondary }]}>{i18n.t('settings.mode')}</Text>
                 <View style={styles.themeOptions}>
                     {MODE_OPTIONS.map(({ mode, Icon, labelKey }) => {
                         const isSelected = theme === mode;
@@ -44,14 +46,15 @@ export default function SettingsScreen() {
                                 key={mode}
                                 style={[
                                     styles.themeBtn,
-                                    { borderColor: themeColors.border },
-                                    isSelected && { borderColor: themeColors.accent, backgroundColor: themeColors.accent + '20' },
+                                    { borderColor: isSelected ? themeColors.accent : themeColors.border },
+                                    isSelected && { backgroundColor: themeColors.accent },
                                 ]}
                                 onPress={() => setTheme(mode)}
                                 accessibilityRole="button"
+                                accessibilityState={{ selected: isSelected }}
                             >
-                                <Icon size={20} color={isSelected ? themeColors.accent : themeColors.mutedText} />
-                                <Text style={[styles.themeBtnText, { color: isSelected ? themeColors.accent : themeColors.mutedText }]}>
+                                <Ionicons name={Icon} size={20} color={isSelected ? themeColors.onAccent : themeColors.textSecondary} />
+                                <Text style={[styles.themeBtnText, { color: isSelected ? themeColors.onAccent : themeColors.textSecondary }]}>
                                     {i18n.t(labelKey)}
                                 </Text>
                             </TouchableOpacity>
@@ -59,17 +62,18 @@ export default function SettingsScreen() {
                     })}
                 </View>
 
-                <Text style={[styles.rowLabel, { color: themeColors.mutedText, marginTop: 18 }]}>{i18n.t('settings.accent')}</Text>
+                <Text style={[styles.rowLabel, { color: themeColors.textSecondary, marginTop: 18 }]}>{i18n.t('settings.accent')}</Text>
                 <View style={styles.accentDots}>
                     {(Object.keys(accents) as AccentType[]).map((key) => (
                         <TouchableOpacity
                             key={key}
                             accessibilityLabel={accents[key].label}
                             accessibilityRole="button"
+                            accessibilityState={{ selected: accent === key }}
                             style={[
                                 styles.accentDot,
                                 { backgroundColor: accents[key].accent },
-                                accent === key && { borderColor: themeColors.text, borderWidth: 2 },
+                                accent === key && { borderColor: themeColors.onSurface, borderWidth: 2 },
                             ]}
                             onPress={() => setAccent(key)}
                         />
@@ -77,35 +81,42 @@ export default function SettingsScreen() {
                 </View>
             </View>
 
-            <View style={[styles.section, { backgroundColor: themeColors.surfaceElevated }]}>
+            {/* Language */}
+            <View style={[styles.section, { backgroundColor: themeColors.surfaceAlt }]}>
                 <View style={styles.sectionHeader}>
-                    <Globe size={20} color={themeColors.accent} />
-                    <Text style={[styles.sectionTitle, { color: themeColors.text }]}>{i18n.t('settings.language')}</Text>
+                    <Ionicons name="globe-outline" size={20} color={themeColors.accent} />
+                    <Text style={[styles.sectionTitle, { color: themeColors.onSurface }]}>{i18n.t('settings.language')}</Text>
                 </View>
                 <View style={styles.langList}>
-                    {languages.map((lang) => (
-                        <TouchableOpacity
-                            key={lang.code}
-                            style={[
-                                styles.langOption,
-                                { borderColor: locale === lang.code ? themeColors.accent : themeColors.border },
-                                locale === lang.code && { shadowColor: themeColors.accent, shadowRadius: 4, shadowOpacity: 0.4, elevation: 2 },
-                            ]}
-                            onPress={() => {
-                                setLocale(lang.code);
-                            }}
-                            accessibilityRole="button"
-                        >
-                            <Text
+                    {languages.map((lang) => {
+                        const isSelected = locale === lang.code;
+                        return (
+                            <TouchableOpacity
+                                key={lang.code}
                                 style={[
-                                    styles.langText,
-                                    { color: locale === lang.code ? themeColors.accent : themeColors.mutedText },
+                                    styles.langOption,
+                                    {
+                                        borderColor: isSelected ? themeColors.accent : themeColors.border,
+                                        backgroundColor: isSelected ? themeColors.accent : themeColors.surfaceAlt,
+                                    },
                                 ]}
+                                onPress={() => {
+                                    setLocale(lang.code);
+                                }}
+                                accessibilityRole="button"
+                                accessibilityState={{ selected: isSelected }}
                             >
-                                {lang.name}
-                            </Text>
-                        </TouchableOpacity>
-                    ))}
+                                <Text
+                                    style={[
+                                        styles.langText,
+                                        { color: isSelected ? themeColors.onAccent : themeColors.textSecondary },
+                                    ]}
+                                >
+                                    {lang.name}
+                                </Text>
+                            </TouchableOpacity>
+                        );
+                    })}
                 </View>
             </View>
 
@@ -114,37 +125,36 @@ export default function SettingsScreen() {
                 style={[
                     styles.section,
                     styles.telegramBtn,
-                    { backgroundColor: themeColors.surfaceElevated, borderColor: themeColors.border },
+                    { backgroundColor: themeColors.surfaceAlt, borderColor: themeColors.border },
                 ]}
                 onPress={() => void joinTelegram()}
                 accessibilityRole="link"
                 accessibilityLabel={i18n.t('settings.telegram')}
                 activeOpacity={0.7}
             >
-                <Send size={20} color={themeColors.accent} />
-                <Text style={[styles.btnText, { color: themeColors.text }]}>{i18n.t('settings.telegram')}</Text>
+                <Ionicons name="send-outline" size={20} color={themeColors.accent} />
+                <Text style={[styles.btnText, { color: themeColors.onSurface }]}>{i18n.t('settings.telegram')}</Text>
             </TouchableOpacity>
 
             {/* Sign out — outlined so it looks tappable */}
             <TouchableOpacity
                 style={[
                     styles.signOutBtn,
-                    { borderColor: themeColors.accent, backgroundColor: 'transparent' },
+                    { borderColor: themeColors.accent, backgroundColor: themeColors.surfaceAlt },
                 ]}
                 onPress={() => showSignOutConfirm(() => void logout())}
                 accessibilityRole="button"
                 accessibilityLabel={i18n.t('settings.signOut')}
                 activeOpacity={0.7}
             >
-                <LogOut size={20} color={themeColors.accent} />
+                <Ionicons name="log-out-outline" size={20} color={themeColors.accent} />
                 <Text style={[styles.btnText, { color: themeColors.accent }]}>{i18n.t('settings.signOut')}</Text>
             </TouchableOpacity>
-
         </ScrollView>
     );
 }
 
-const styles = StyleSheet.create({
+const getStyles = () => StyleSheet.create({
     container: {
         flex: 1,
         padding: 20,

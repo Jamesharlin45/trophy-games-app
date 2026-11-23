@@ -25,7 +25,7 @@ import Animated, {
 import { X } from 'lucide-react-native';
 import { useTheme } from '../context/ThemeContext';
 import type { ThemeColors } from '../theme/colors';
-import { neonBorder, neonShadow } from './neon/tokens';
+import { neonBorder, neonShadow, withAlpha } from './neon/tokens';
 import { typography } from '../theme/typography';
 import i18n from '../locales';
 
@@ -62,8 +62,8 @@ export function AppDialog({
     testID,
 }: AppDialogProps) {
     const { themeColors, isDark } = useTheme();
-    const styles = getStyles(themeColors);
-    const cardGlow = neonShadow(themeColors.accent, isDark);
+    const styles = getStyles(themeColors, isDark);
+    const cardGlow = neonShadow(themeColors, isDark);
     const reducedMotion = useReducedMotion();
     const progress = useSharedValue(0);
 
@@ -109,7 +109,7 @@ export function AppDialog({
                     style={[
                         styles.card,
                         {
-                            borderColor: neonBorder(themeColors.accent),
+                            borderColor: neonBorder(themeColors),
                             ...cardGlow,
                         },
                         cardStyle,
@@ -141,11 +141,11 @@ export function AppDialog({
     );
 }
 
-function getStyles(themeColors: ThemeColors) {
+function getStyles(themeColors: ThemeColors, isDark: boolean) {
     return StyleSheet.create({
         backdrop: {
             flex: 1,
-            backgroundColor: 'rgba(0,0,0,0.62)',
+            backgroundColor: withAlpha(themeColors.shadow, 0.62),
             alignItems: 'center',
             justifyContent: 'center',
             padding: 20,
@@ -162,11 +162,11 @@ function getStyles(themeColors: ThemeColors) {
             paddingTop: 22,
             paddingBottom: 20,
             gap: 12,
-            shadowColor: themeColors.shadow,
-            shadowOpacity: 0.4,
-            shadowRadius: 18,
-            shadowOffset: { width: 0, height: 10 },
-            elevation: 12,
+            shadowColor: isDark ? themeColors.shadow : themeColors.text,
+            shadowOpacity: isDark ? 0.45 : 0.28,
+            shadowRadius: isDark ? 18 : 8,
+            shadowOffset: { width: 0, height: 6 },
+            elevation: isDark ? 8 : 0,
             overflow: 'hidden',
         },
         closeBtn: {

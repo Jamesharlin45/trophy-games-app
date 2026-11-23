@@ -8,7 +8,8 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useFonts } from 'expo-font';
 import { Stack, useRouter } from 'expo-router';
 import { Sun, Moon, Bell, Settings } from 'lucide-react-native';
-import SplashLogo from '../../assets/images/logo.png';
+import { Ionicons } from '@expo/vector-icons';
+import AppIconAsset from '../../assets/images/logo.png';
 import i18n from '../locales';
 import { ThemeProvider as AppThemeProvider, useTheme } from '../context/ThemeContext';
 import type { ThemeColors } from '../theme/colors';
@@ -129,7 +130,7 @@ function AppContent() {
                     },
                     headerLeft: () => (
                         <View style={styles.headerLeft}>
-                            <Image source={SplashLogo} style={styles.headerLogo} />
+                            <AppIcon size={32} />
                             <Text style={{ fontWeight: '700', fontSize: 17, color: themeColors.text }}>
                                 Trophy Games
                             </Text>
@@ -174,6 +175,30 @@ function AppContent() {
     );
 }
 
+/**
+ * The header logo: the app's own icon asset (assets/images/logo.png) at
+ * 32px with an 8px radius. When it fails to load (missing/blank
+ * placeholder), fall back to an Ionicons trophy in the accent colour.
+ */
+function AppIcon({ size }: { size: number }) {
+    const { themeColors } = useTheme();
+    const styles = getStyles(themeColors);
+    const [failed, setFailed] = useState(false);
+
+    if (failed) {
+        return <Ionicons name="trophy" size={size * 0.6} color={themeColors.accent} style={styles.appIconFallback} />;
+    }
+
+    return (
+        <Image
+            source={AppIconAsset}
+            style={[styles.headerLogo, { width: size, height: size }]}
+            resizeMode="contain"
+            onError={() => setFailed(true)}
+        />
+    );
+}
+
 const ThemeToggle = ({ onToggle, currentTheme, themeColors }: { onToggle: () => void; currentTheme: string; themeColors: ThemeColors }) => {
     const styles = getStyles(themeColors);
     return (
@@ -202,10 +227,12 @@ function getStyles(themeColors: ThemeColors) {
             padding: 4,
         },
         headerLogo: {
-            width: 22,
-            height: 22,
-            borderRadius: 5,
-            tintColor: themeColors.text,
+            width: 32,
+            height: 32,
+            borderRadius: 8,
+        },
+        appIconFallback: {
+            alignSelf: 'center',
         },
         headerRight: {
             flexDirection: 'row',

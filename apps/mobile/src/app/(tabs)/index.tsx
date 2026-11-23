@@ -47,8 +47,8 @@ export default function FreeTipsScreen() {
 
     const [refreshing, setRefreshing] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
-    const { themeColors, isDark } = useTheme();
-    const accent = readableAccent(themeColors, isDark);
+    const { themeColors } = useTheme();
+    const accent = readableAccent(themeColors);
     const styles = getStyles(themeColors);
 
     const leagues = useMemo(() => {
@@ -109,7 +109,7 @@ export default function FreeTipsScreen() {
                             ]}
                             onPress={() => setSelectedLeague(i18n.t('common.all'))}
                         >
-                            <Text style={[styles.leagueChipText, selectedLeague === i18n.t('common.all') ? { color: themeColors.accentText } : { color: themeColors.mutedText }]}>
+                            <Text style={[styles.leagueChipText, selectedLeague === i18n.t('common.all') ? { color: themeColors.onAccent } : { color: themeColors.textSecondary }]}>
                                 {i18n.t('common.all')}
                             </Text>
                         </TouchableOpacity>
@@ -129,7 +129,7 @@ export default function FreeTipsScreen() {
                                 ]}
                                 onPress={() => setSelectedLeague(league.name)}
                             >
-                                <Text style={[styles.leagueChipText, selectedLeague === league.name ? { color: themeColors.accentText } : { color: themeColors.mutedText }]}>
+                                <Text style={[styles.leagueChipText, selectedLeague === league.name ? { color: themeColors.onAccent } : { color: themeColors.textSecondary }]}>
                                     {toTitleCase(league.name)}
                                 </Text>
                             </TouchableOpacity>
@@ -221,14 +221,14 @@ function getStyles(themeColors: ThemeColors) {
         paddingHorizontal: 18,
         paddingVertical: 9,
         borderRadius: 22,
-        backgroundColor: themeColors.glass,
+        backgroundColor: themeColors.surfaceAlt,
         borderWidth: 1,
     },
     leagueChipActiveShadow: {
-        shadowOpacity: 0.35,
-        shadowRadius: 10,
-        shadowOffset: { width: 0, height: 4 },
-        elevation: 4,
+        shadowOpacity: 0,
+        shadowRadius: 0,
+        shadowOffset: { width: 0, height: 0 },
+        elevation: 0,
     },
     leagueChipText: {
         ...typography.chipText,

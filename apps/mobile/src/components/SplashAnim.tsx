@@ -38,12 +38,12 @@ export default function SplashAnim({ onDone }: { onDone: () => void }) {
             return undefined;
         }
 
-        iconScale.value = withTiming(1, { duration: 200 });
-        glow.value = withDelay(100, withTiming(0.85, { duration: 240 }));
-        brandOpacity.value = withDelay(140, withTiming(1, { duration: 200 }));
+        iconScale.value = withTiming(1, { duration: 180 });
+        glow.value = withDelay(80, withTiming(0.85, { duration: 180 }));
+        brandOpacity.value = withDelay(100, withTiming(1, { duration: 180 }));
         const timer = setTimeout(() => {
-            exit.value = withTiming(0, { duration: 220 }, () => runOnJS(onDone)());
-        }, 650);
+            exit.value = withTiming(0, { duration: 180 }, () => runOnJS(onDone)());
+        }, 500);
         return () => clearTimeout(timer);
     }, [onDone, reduceMotion, iconScale, glow, brandOpacity, exit]);
 

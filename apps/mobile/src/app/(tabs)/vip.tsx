@@ -23,9 +23,9 @@ const toTitleCase = (str: string) =>
     str.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
 
 export default function VIPTipsScreen() {
-    const { themeColors, isDark } = useTheme();
+    const { themeColors } = useTheme();
     const styles = getStyles(themeColors);
-    const accent = readableAccent(themeColors, isDark);
+    const accent = readableAccent(themeColors);
     const router = useRouter();
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
     const [selectedLeague, setSelectedLeague] = useState('All');
@@ -312,7 +312,7 @@ export default function VIPTipsScreen() {
             </View>
 
             {/* VIP active badge */}
-            <View style={[styles.activeBanner, { backgroundColor: `${themeColors.accent}15`, borderColor: `${themeColors.accent}30` }]}>
+            <View style={[styles.activeBanner, { backgroundColor: themeColors.glass, borderColor: themeColors.accent }]}>
                 <Crown size={14} color={accent} />
                 <Text style={[styles.activeBannerText, { color: accent }]}>{i18n.t('vip.activeBanner')}</Text>
             </View>

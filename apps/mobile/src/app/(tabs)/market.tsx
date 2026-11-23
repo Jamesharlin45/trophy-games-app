@@ -17,7 +17,7 @@ import * as Application from 'expo-application';
 import { api } from '../../api/client';
 import { useScreenQuery } from '../../hooks/useLiveQuery';
 import { NeonButton } from '../../components/neon/NeonButton';
-import { readableAccent, readableOnSurface } from '../../components/neon/tokens';
+import { onColor, readableAccent } from '../../components/neon/tokens';
 import { EmailTokenModal } from '../../components/EmailTokenModal';
 import i18n, { tArray } from '../../locales';
 
@@ -25,8 +25,8 @@ type MemberStatus = 'none' | 'pending' | 'approved' | 'active' | 'loading';
 
 export default function MembershipStoreScreen() {
     const { themeColors, isDark } = useTheme();
-    const styles = getStyles(themeColors);
-    const accent = readableAccent(themeColors, isDark);
+    const styles = getStyles(themeColors, isDark);
+    const accent = readableAccent(themeColors);
     const [refreshing, setRefreshing] = useState(false);
     const [deviceId, setDeviceId] = useState('');
     const [tokenInput, setTokenInput] = useState('');
@@ -307,10 +307,10 @@ export default function MembershipStoreScreen() {
             }[status as 'pending' | 'approved' | 'active'];
 
         if (!config) return null;
-        const displayColor = readableOnSurface(config.color, themeColors, isDark);
+        const displayColor = onColor(config.color);
 
         return (
-            <View style={[styles.statusPill, { backgroundColor: config.color + '20', borderColor: config.color + '40' }]}>
+            <View style={[styles.statusPill, { backgroundColor: themeColors.glass, borderColor: themeColors.accent }]}>
                 <config.icon size={10} color={displayColor} />
                 <Text style={[styles.statusText, { color: displayColor }]}>{config.label}</Text>
             </View>
@@ -372,7 +372,7 @@ export default function MembershipStoreScreen() {
         }
         // active / approved
         return (
-            <View style={[styles.activeInfo, { backgroundColor: themeColors.accent + '15' }]}>
+            <View style={[styles.activeInfo, { backgroundColor: themeColors.glass }]}>
                 <CheckCircle2 size={16} color={accent} />
                 <Text style={[styles.activeInfoText, { color: accent }]}>
                     {activeProductId === productId && iapActiveSub?.expiresAt
@@ -405,7 +405,7 @@ export default function MembershipStoreScreen() {
                 {/* Hero section */}
                 <View style={[styles.hero, { backgroundColor: themeColors.surface, borderColor: themeColors.border, borderWidth: 1 }]}>
                     <View style={styles.heroContent}>
-                        <View style={[styles.heroBadge, { backgroundColor: themeColors.accent + '20' }]}>
+                        <View style={[styles.heroBadge, { backgroundColor: themeColors.glass }]}>
                             <Sparkles size={14} color={accent} />
                             <Text style={[styles.heroBadgeText, { color: accent }]}>{i18n.t('market.heroBadge')}</Text>
                         </View>
@@ -464,7 +464,7 @@ export default function MembershipStoreScreen() {
                     <View
                         style={[
                             styles.card,
-                            { borderColor: activeProductId === SUBSCRIPTION_PRODUCTS.VIP_WEEKLY.productId ? themeColors.accent + '60' : themeColors.border },
+                            { borderColor: activeProductId === SUBSCRIPTION_PRODUCTS.VIP_WEEKLY.productId ? themeColors.accent : themeColors.border },
                             highlightPlan === SUBSCRIPTION_PRODUCTS.VIP_WEEKLY.productId && styles.highlightedCard,
                         ]}
                         onLayout={(event) => {
@@ -505,7 +505,7 @@ export default function MembershipStoreScreen() {
                     <View
                         style={[
                             styles.card,
-                            { borderColor: activeProductId === SUBSCRIPTION_PRODUCTS.VIP_MONTHLY.productId ? themeColors.accent + '60' : themeColors.border },
+                            { borderColor: activeProductId === SUBSCRIPTION_PRODUCTS.VIP_MONTHLY.productId ? themeColors.accent : themeColors.border },
                             highlightPlan === SUBSCRIPTION_PRODUCTS.VIP_MONTHLY.productId && styles.highlightedCard,
                         ]}
                         onLayout={(event) => {
@@ -534,7 +534,7 @@ export default function MembershipStoreScreen() {
                             ))}
                         </View>
                         {/* Best value badge */}
-                        <View style={[styles.savingsBadge, { backgroundColor: themeColors.accent + '15', borderColor: themeColors.accent + '30' }]}>
+                        <View style={[styles.savingsBadge, { backgroundColor: themeColors.glass, borderColor: themeColors.border }]}>
                             <Zap size={11} color={accent} />
                             <Text style={[styles.savingsText, { color: accent }]}>{i18n.t('market.bestValue')}</Text>
                         </View>
@@ -551,7 +551,7 @@ export default function MembershipStoreScreen() {
                     <View
                         style={[
                             styles.card,
-                            { borderColor: activeProductId === SUBSCRIPTION_PRODUCTS.PAID_MONTHLY.productId ? themeColors.accent + '60' : themeColors.border },
+                            { borderColor: activeProductId === SUBSCRIPTION_PRODUCTS.PAID_MONTHLY.productId ? themeColors.accent : themeColors.border },
                             highlightPlan === SUBSCRIPTION_PRODUCTS.PAID_MONTHLY.productId && styles.highlightedCard,
                         ]}
                         onLayout={(event) => {
@@ -628,12 +628,12 @@ export default function MembershipStoreScreen() {
 }
 
 function InfoSection({ icon: Icon, title, desc }: { icon: LucideIcon, title: string, desc: string }) {
-    const { themeColors, isDark } = useTheme();
+    const { themeColors } = useTheme();
     const styles = getStyles(themeColors);
     return (
         <View style={styles.infoSection}>
             <View style={[styles.infoIcon, { backgroundColor: themeColors.background }]}>
-                <Icon size={16} color={readableAccent(themeColors, isDark)} />
+                <Icon size={16} color={readableAccent(themeColors)} />
             </View>
             <View style={styles.infoContent}>
                 <Text style={[styles.infoTitle, { color: themeColors.text }]}>{title}</Text>
@@ -643,7 +643,7 @@ function InfoSection({ icon: Icon, title, desc }: { icon: LucideIcon, title: str
     );
 }
 
-function getStyles(themeColors: ThemeColors) {
+function getStyles(themeColors: ThemeColors, isDark = false) {
     return StyleSheet.create({
     container: { flex: 1 },
     hero: {
@@ -651,11 +651,14 @@ function getStyles(themeColors: ThemeColors) {
         paddingTop: 40,
         borderRadius: 24,
         marginBottom: 20,
-        shadowColor: themeColors.shadow,
-        shadowOpacity: 0.3,
-        shadowRadius: 12,
-        shadowOffset: { width: 0, height: 4 },
-        elevation: 4,
+        shadowColor: isDark ? themeColors.shadow : themeColors.text,
+        shadowOpacity: isDark ? 0.35 : 0,
+        shadowRadius: isDark ? 14 : 0,
+        shadowOffset: { width: 0, height: 6 },
+        elevation: isDark ? 4 : 0,
+        backgroundColor: themeColors.surface,
+        borderWidth: 1,
+        borderColor: themeColors.border,
     },
     heroContent: { alignItems: 'flex-start' },
     heroBadge: {
@@ -666,6 +669,7 @@ function getStyles(themeColors: ThemeColors) {
         paddingVertical: 5,
         borderRadius: 20,
         marginBottom: 12,
+        backgroundColor: themeColors.glass,
     },
     heroBadgeText: { ...typography.gateBadge },
     heroTitle: { ...typography.gateTitle, marginBottom: 8, lineHeight: 32 },
@@ -687,8 +691,8 @@ function getStyles(themeColors: ThemeColors) {
         borderColor: themeColors.accent,
         borderWidth: 2,
         shadowColor: themeColors.accent,
-        shadowOpacity: 0.35,
-        elevation: 6,
+        shadowOpacity: isDark ? 0.35 : 0,
+        elevation: isDark ? 6 : 0,
     },
     telegramRow: {
         flexDirection: 'row',

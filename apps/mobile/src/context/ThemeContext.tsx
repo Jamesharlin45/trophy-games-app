@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useColorScheme } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { accents, dark, light, type AccentType, type ThemeColors } from '../theme/colors';
+import { accentTokens, dark, light, type AccentType, type ThemeColors } from '../theme/colors';
 
 type ThemeType = 'light' | 'dark' | 'system';
 
@@ -64,11 +64,15 @@ export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const isDark = theme === 'system' ? systemColorScheme === 'dark' : theme === 'dark';
-    const accentTokens = accents[accent];
+    const selected = accentTokens[accent];
     const themeColors: ThemeColors = {
         ...(isDark ? dark : light),
-        accent: accentTokens.accent,
-        accentText: accentTokens.accentText,
+        accent: selected.accent,
+        onAccent: selected.onAccent,
+        accentText: selected.onAccent,
+        surfaceAlt: (isDark ? dark : light).surfaceAlt,
+        textSecondary: (isDark ? dark : light).textSecondary,
+        onSurface: (isDark ? dark : light).onSurface,
     };
 
     if (!isLoaded) return null;

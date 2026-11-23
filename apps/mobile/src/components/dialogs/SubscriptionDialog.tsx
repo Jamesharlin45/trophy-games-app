@@ -67,9 +67,9 @@ export function SubscriptionDialog({
     greeting?: string;
     onClose: () => void;
 }) {
-    const { themeColors, isDark } = useTheme();
+    const { themeColors } = useTheme();
     const styles = getStyles();
-    const accent = readableAccent(themeColors, isDark);
+    const accent = readableAccent(themeColors);
     const router = useRouter();
     const { prices, refresh } = usePlanPrices();
     const [selectedProductId, setSelectedProductId] = useState(PLANS[0].productId);
