@@ -3,7 +3,7 @@
     "name": "Trophy Games",
     "slug": "trophy-games",
     "owner": "khanblair",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/logo.png",
     "scheme": "trophy-games",
@@ -43,7 +43,8 @@
             "usesCleartextTraffic": true
           }
         }
-      ]
+      ],
+      "expo-localization"
     ],
     "newArchEnabled": true,
     "experiments": {

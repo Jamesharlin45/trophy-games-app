@@ -1,31 +1,42 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useColorScheme } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { colors } from '../theme/colors';
+import { accentTokens, dark, light, type AccentType, type ThemeColors } from '../theme/colors';
 
 type ThemeType = 'light' | 'dark' | 'system';
 
 interface ThemeContextType {
     theme: ThemeType;
+    accent: AccentType;
     isDark: boolean;
-    themeColors: typeof colors.dark;
+    themeColors: ThemeColors;
     toggleTheme: () => void;
     setTheme: (theme: ThemeType) => void;
+    setAccent: (accent: AccentType) => void;
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
+const VALID_THEMES: readonly ThemeType[] = ['light', 'dark', 'system'];
+const VALID_ACCENTS: readonly AccentType[] = ['pitchGreen', 'gold', 'oceanBlue', 'royalPurple'];
+
 export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
     const systemColorScheme = useColorScheme();
-    const [theme, setThemeState] = useState<ThemeType>('system');
+    // Defaults keep today's look: Dark mode + Pitch Green.
+    const [theme, setThemeState] = useState<ThemeType>('dark');
+    const [accent, setAccentState] = useState<AccentType>('pitchGreen');
     const [isLoaded, setIsLoaded] = useState(false);
 
     useEffect(() => {
         const loadTheme = async () => {
             try {
-                const savedTheme = await AsyncStorage.getItem('user-theme') as ThemeType | null;
-                if (savedTheme && ['light', 'dark', 'system'].includes(savedTheme)) {
-                    setThemeState(savedTheme);
+                const savedTheme = await AsyncStorage.getItem('user-theme');
+                if (savedTheme && VALID_THEMES.includes(savedTheme as ThemeType)) {
+                    setThemeState(savedTheme as ThemeType);
+                }
+                const savedAccent = await AsyncStorage.getItem('user-accent');
+                if (savedAccent && VALID_ACCENTS.includes(savedAccent as AccentType)) {
+                    setAccentState(savedAccent as AccentType);
                 }
             } catch (e) {
                 console.warn(e);
@@ -47,13 +58,27 @@ export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
         await AsyncStorage.setItem('user-theme', newTheme);
     };
 
+    const setAccent = async (newAccent: AccentType) => {
+        setAccentState(newAccent);
+        await AsyncStorage.setItem('user-accent', newAccent);
+    };
+
     const isDark = theme === 'system' ? systemColorScheme === 'dark' : theme === 'dark';
-    const themeColors = isDark ? colors.dark : colors.light;
+    const selected = accentTokens[accent];
+    const themeColors: ThemeColors = {
+        ...(isDark ? dark : light),
+        accent: selected.accent,
+        onAccent: selected.onAccent,
+        accentText: selected.onAccent,
+        surfaceAlt: (isDark ? dark : light).surfaceAlt,
+        textSecondary: (isDark ? dark : light).textSecondary,
+        onSurface: (isDark ? dark : light).onSurface,
+    };
 
     if (!isLoaded) return null;
 
     return (
-        <ThemeContext.Provider value={{ theme, isDark, themeColors, toggleTheme, setTheme }}>
+        <ThemeContext.Provider value={{ theme, accent, isDark, themeColors, toggleTheme, setTheme, setAccent }}>
             {children}
         </ThemeContext.Provider>
     );

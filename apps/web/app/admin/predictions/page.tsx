@@ -155,9 +155,9 @@ export default function AdminPredictionsPage() {
             // Clear local form state so it re-reads from match
             setForms(prev => { const n = { ...prev }; delete n[match._id]; return n; });
             setExpanded(null);
-        } catch (e: any) {
+        } catch (e) {
             console.error(e);
-            toast.error(e.message || 'Failed to save prediction');
+            toast.error(e instanceof Error ? e.message : 'Failed to save prediction');
         }
         setSaving(null);
     };
@@ -242,7 +242,7 @@ export default function AdminPredictionsPage() {
                 </select>
                 <select
                     value={filterHasPrediction}
-                    onChange={e => setFilterHasPrediction(e.target.value as any)}
+                    onChange={e => setFilterHasPrediction(e.target.value as 'all' | 'yes' | 'no')}
                     className="px-3 py-2 text-sm bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-zinc-700 dark:text-zinc-300"
                 >
                     <option value="all">All Predictions</option>

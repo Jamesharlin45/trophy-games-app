@@ -1,107 +1,212 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
-import { useRouter } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { typography } from '../theme/typography';
-import { Settings, Globe, LogOut, ShieldAlert, Palette, Moon, Sun, Smartphone } from 'lucide-react-native';
-import i18n from '../locales';
+import { useUser } from '../context/UserContext';
+import { useDialog } from '../context/DialogContext';
+import { Ionicons } from '@expo/vector-icons';
+import { accents, type AccentType } from '../theme/colors';
+import i18n, { tArray } from '../locales';
+import { AppButton } from '../components/design/AppButton';
+import { clearLastError, copyLastError, readLastError, formatLastErrorDetails, type LastError } from '../lib/errorDiagnostics';
+
+const MODE_OPTIONS = [
+    { mode: 'light', Icon: 'sunny-outline', labelKey: 'settings.light' as const },
+    { mode: 'dark', Icon: 'moon-outline', labelKey: 'settings.dark' as const },
+    { mode: 'system', Icon: 'settings-outline', labelKey: 'settings.system' as const },
+] as const;
 
 export default function SettingsScreen() {
-    const { themeColors, theme, setTheme } = useTheme();
+    const { themeColors, theme, accent, setTheme, setAccent } = useTheme();
     const { locale, setLocale } = useLanguage();
-    const router = useRouter();
+    const { logout } = useUser();
+    const { showSignOutConfirm, joinTelegram } = useDialog();
+    const styles = getStyles();
 
-    const languages = [
-        { code: 'en', name: 'English' },
-        { code: 'fr', name: 'Français' },
-        { code: 'es', name: 'Español' },
-    ];
+    // Diagnostics → "Last error": read the stored crash record on mount.
+    const [lastError, setLastError] = useState<LastError | null>(null);
+    useEffect(() => {
+        void readLastError().then((err) => setLastError(err));
+    }, []);
+
+    const handleClearError = () => {
+        void clearLastError().then(() => setLastError(null));
+    };
+    const handleCopyError = () => {
+        void copyLastError(lastError);
+    };
+
+    const languages = tArray<{ code: string; name: string }>('settings.languages');
 
     return (
         <ScrollView style={[styles.container, { backgroundColor: themeColors.background }]}>
             <View style={styles.header}>
-                <Settings size={24} color={themeColors.text} />
-                <Text style={[styles.title, { color: themeColors.text }]}>{i18n.t('settings.title')}</Text>
+                <Ionicons name="settings-outline" size={24} color={themeColors.onSurface} />
+                <Text style={[styles.title, { color: themeColors.onSurface }]}>{i18n.t('settings.title')}</Text>
             </View>
 
-            <View style={[styles.section, { backgroundColor: themeColors.cardBgSecondary }]}>
+            {/* Theme */}
+            <View style={[styles.section, { backgroundColor: themeColors.surfaceAlt }]}>
                 <View style={styles.sectionHeader}>
-                    <Palette size={20} color={themeColors.primary} />
-                    <Text style={[styles.sectionTitle, { color: themeColors.text }]}>{i18n.t('settings.theme')}</Text>
+                    <Ionicons name="moon-outline" size={20} color={themeColors.accent} />
+                    <Text style={[styles.sectionTitle, { color: themeColors.onSurface }]}>{i18n.t('settings.theme')}</Text>
                 </View>
+
+                <Text style={[styles.rowLabel, { color: themeColors.textSecondary }]}>{i18n.t('settings.mode')}</Text>
                 <View style={styles.themeOptions}>
-                    <TouchableOpacity 
-                        style={[styles.themeBtn, theme === 'light' && { borderColor: themeColors.primary, backgroundColor: themeColors.primary + '20' }, { borderColor: themeColors.border }]}
-                        onPress={() => setTheme('light')}
-                    >
-                        <Sun size={20} color={theme === 'light' ? themeColors.primary : themeColors.textMuted} />
-                        <Text style={[styles.themeBtnText, { color: theme === 'light' ? themeColors.primary : themeColors.textMuted }]}>Light</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity 
-                        style={[styles.themeBtn, theme === 'dark' && { borderColor: themeColors.primary, backgroundColor: themeColors.primary + '20' }, { borderColor: themeColors.border }]}
-                        onPress={() => setTheme('dark')}
-                    >
-                        <Moon size={20} color={theme === 'dark' ? themeColors.primary : themeColors.textMuted} />
-                        <Text style={[styles.themeBtnText, { color: theme === 'dark' ? themeColors.primary : themeColors.textMuted }]}>Dark</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity 
-                        style={[styles.themeBtn, theme === 'system' && { borderColor: themeColors.primary, backgroundColor: themeColors.primary + '20' }, { borderColor: themeColors.border }]}
-                        onPress={() => setTheme('system')}
-                    >
-                        <Smartphone size={20} color={theme === 'system' ? themeColors.primary : themeColors.textMuted} />
-                        <Text style={[styles.themeBtnText, { color: theme === 'system' ? themeColors.primary : themeColors.textMuted }]}>System</Text>
-                    </TouchableOpacity>
+                    {MODE_OPTIONS.map(({ mode, Icon, labelKey }) => {
+                        const isSelected = theme === mode;
+                        return (
+                            <TouchableOpacity
+                                key={mode}
+                                style={[
+                                    styles.themeBtn,
+                                    { borderColor: isSelected ? themeColors.accent : themeColors.border },
+                                    isSelected && { backgroundColor: themeColors.accent },
+                                ]}
+                                onPress={() => setTheme(mode)}
+                                accessibilityRole="button"
+                                accessibilityState={{ selected: isSelected }}
+                            >
+                                <Ionicons name={Icon} size={20} color={isSelected ? themeColors.onAccent : themeColors.textSecondary} />
+                                <Text style={[styles.themeBtnText, { color: isSelected ? themeColors.onAccent : themeColors.textSecondary }]}>
+                                    {i18n.t(labelKey)}
+                                </Text>
+                            </TouchableOpacity>
+                        );
+                    })}
                 </View>
-            </View>
 
-            <View style={[styles.section, { backgroundColor: themeColors.cardBgSecondary }]}>
-                <View style={styles.sectionHeader}>
-                    <Globe size={20} color={themeColors.primary} />
-                    <Text style={[styles.sectionTitle, { color: themeColors.text }]}>{i18n.t('settings.language')}</Text>
-                </View>
-                <View style={styles.langList}>
-                    {languages.map((lang) => (
+                <Text style={[styles.rowLabel, { color: themeColors.textSecondary, marginTop: 18 }]}>{i18n.t('settings.accent')}</Text>
+                <View style={styles.accentDots}>
+                    {(Object.keys(accents) as AccentType[]).map((key) => (
                         <TouchableOpacity
-                            key={lang.code}
+                            key={key}
+                            accessibilityLabel={accents[key].label}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected: accent === key }}
                             style={[
-                                styles.langOption,
-                                { borderColor: locale === lang.code ? themeColors.primary : themeColors.border }
+                                styles.accentDot,
+                                { backgroundColor: accents[key].accent },
+                                accent === key && { borderColor: themeColors.onSurface, borderWidth: 2 },
                             ]}
-                            onPress={() => {
-                                setLocale(lang.code);
-                            }}
-                        >
-                            <Text style={[
-                                styles.langText,
-                                { color: locale === lang.code ? themeColors.primary : themeColors.textMuted }
-                            ]}>
-                                {lang.name}
-                            </Text>
-                        </TouchableOpacity>
+                            onPress={() => setAccent(key)}
+                        />
                     ))}
                 </View>
             </View>
 
-            <TouchableOpacity 
-                style={[styles.btn, { backgroundColor: themeColors.cardBgSecondary }]}
-                onPress={() => {
-                    // Logic to clear user token / username would go here
-                    // Then redirect to onboarding
-                    // router.replace('/onboarding');
-                }}
+            {/* Language */}
+            <View style={[styles.section, { backgroundColor: themeColors.surfaceAlt }]}>
+                <View style={styles.sectionHeader}>
+                    <Ionicons name="globe-outline" size={20} color={themeColors.accent} />
+                    <Text style={[styles.sectionTitle, { color: themeColors.onSurface }]}>{i18n.t('settings.language')}</Text>
+                </View>
+                <View style={styles.langList}>
+                    {languages.map((lang) => {
+                        const isSelected = locale === lang.code;
+                        return (
+                            <TouchableOpacity
+                                key={lang.code}
+                                style={[
+                                    styles.langOption,
+                                    {
+                                        borderColor: isSelected ? themeColors.accent : themeColors.border,
+                                        backgroundColor: isSelected ? themeColors.accent : themeColors.surfaceAlt,
+                                    },
+                                ]}
+                                onPress={() => {
+                                    setLocale(lang.code);
+                                }}
+                                accessibilityRole="button"
+                                accessibilityState={{ selected: isSelected }}
+                            >
+                                <Text
+                                    style={[
+                                        styles.langText,
+                                        { color: isSelected ? themeColors.onAccent : themeColors.textSecondary },
+                                    ]}
+                                >
+                                    {lang.name}
+                                </Text>
+                            </TouchableOpacity>
+                        );
+                    })}
+                </View>
+            </View>
+
+            {/* Telegram invite */}
+            <TouchableOpacity
+                style={[
+                    styles.section,
+                    styles.telegramBtn,
+                    { backgroundColor: themeColors.surfaceAlt, borderColor: themeColors.border },
+                ]}
+                onPress={() => void joinTelegram()}
+                accessibilityRole="link"
+                accessibilityLabel={i18n.t('settings.telegram')}
+                activeOpacity={0.7}
             >
-                <LogOut size={20} color={themeColors.textMuted} />
-                <Text style={[styles.btnText, { color: themeColors.textMuted }]}>Sign Out / Change Username</Text>
+                <Ionicons name="send-outline" size={20} color={themeColors.accent} />
+                <Text style={[styles.btnText, { color: themeColors.onSurface }]}>{i18n.t('settings.telegram')}</Text>
             </TouchableOpacity>
 
+            {/* Diagnostics — last uncaught error (message, stack, route, timestamp).
+                Stored in AsyncStorage, never sent anywhere. */}
+            <View style={[styles.section, { backgroundColor: themeColors.surfaceAlt }]}>
+                <View style={styles.sectionHeader}>
+                    <Ionicons name="construct-outline" size={20} color={themeColors.accent} />
+                    <Text style={[styles.sectionTitle, { color: themeColors.onSurface }]}>
+                        {i18n.t('settings.diagnostics')}
+                    </Text>
+                </View>
+                <Text style={[styles.rowLabel, { color: themeColors.textSecondary }]}>
+                    {i18n.t('settings.lastError')}
+                </Text>
+                <Text style={[styles.diagText, { color: themeColors.onSurface }]} numberOfLines={8}>
+                    {lastError
+                        ? `${lastError.route}\n${lastError.message}\n${formatLastErrorDetails(lastError).split('\n').slice(1).join('\n')}`
+                        : i18n.t('settings.noError')}
+                </Text>
+                <View style={styles.diagActions}>
+                    <AppButton
+                        variant="outline"
+                        onPress={handleCopyError}
+                        style={styles.diagBtn}
+                        disabled={lastError == null}
+                    >
+                        {i18n.t('settings.copyLastError')}
+                    </AppButton>
+                    <AppButton
+                        variant="outline"
+                        onPress={handleClearError}
+                        style={styles.diagBtn}
+                        disabled={lastError == null}
+                    >
+                        {i18n.t('settings.clearError')}
+                    </AppButton>
+                </View>
+            </View>
+
+            {/* Sign out — outlined so it looks tappable */}
+            <TouchableOpacity
+                style={[
+                    styles.signOutBtn,
+                    { borderColor: themeColors.accent, backgroundColor: themeColors.surfaceAlt },
+                ]}
+                onPress={() => showSignOutConfirm(() => void logout())}
+                accessibilityRole="button"
+                accessibilityLabel={i18n.t('settings.signOut')}
+                activeOpacity={0.7}
+            >
+                <Ionicons name="log-out-outline" size={20} color={themeColors.accent} />
+                <Text style={[styles.btnText, { color: themeColors.accent }]}>{i18n.t('settings.signOut')}</Text>
+            </TouchableOpacity>
         </ScrollView>
     );
 }
 
-const styles = StyleSheet.create({
+const getStyles = () => StyleSheet.create({
     container: {
         flex: 1,
         padding: 20,
@@ -132,6 +237,11 @@ const styles = StyleSheet.create({
         fontSize: 18,
         fontWeight: '600',
     },
+    rowLabel: {
+        fontSize: 12,
+        fontWeight: '600',
+        marginBottom: 10,
+    },
     themeOptions: {
         flexDirection: 'row',
         gap: 12,
@@ -149,6 +259,17 @@ const styles = StyleSheet.create({
         fontSize: 14,
         fontWeight: '600',
     },
+    accentDots: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    accentDot: {
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
     langList: {
         gap: 10,
     },
@@ -162,14 +283,39 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: '500',
     },
-    btn: {
+    telegramBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 10,
+        borderWidth: 1,
+        marginBottom: 0,
+    },
+    signOutBtn: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
         gap: 10,
         padding: 16,
         borderRadius: 16,
+        borderWidth: 2,
         marginTop: 20,
+        minHeight: 48,
+    },
+    diagText: {
+        fontSize: 11,
+        fontWeight: '500',
+        fontFamily: 'monospace',
+        lineHeight: 16,
+        paddingVertical: 10,
+    },
+    diagActions: {
+        flexDirection: 'row',
+        gap: 8,
+        marginTop: 10,
+    },
+    diagBtn: {
+        flex: 1,
     },
     btnText: {
         fontSize: 16,

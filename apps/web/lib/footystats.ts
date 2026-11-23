@@ -145,6 +145,47 @@ export function deriveLeaguesFromMatches(matches: MatchData[]): DerivedLeague[] 
   return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
+// --- Typed views of the dynamic proxy payload (no implicit any) ---
+
+interface FootyStatsRow {
+  winningTeam?: number;
+  date_unix?: number;
+  home_name?: string;
+  away_name?: string;
+  homeGoalCount?: number;
+  awayGoalCount?: number;
+}
+
+interface GoalEvent {
+  time?: number | string;
+  extra?: number;
+  known_as?: string;
+  teamIS?: string;
+  assist_known_as?: string | null;
+  type?: string;
+}
+
+interface LineupPlayer {
+  known_as?: string;
+  shirt_number?: number;
+  player_events?: unknown[];
+}
+
+interface LineupPlayerEvent {
+  event_type?: unknown;
+  event_time?: unknown;
+}
+
+function asRows(value: unknown): FootyStatsRow[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((row): row is FootyStatsRow => typeof row === 'object' && row !== null);
+}
+
+function asGoals(value: unknown): GoalEvent[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((row): row is GoalEvent => typeof row === 'object' && row !== null);
+}
+
 export async function fetchFootyStatsMatchStats(matchId: string): Promise<Partial<MatchData>> {
   const res = await fetch(`${FOOTYSTATS_BASE_URL}/match-stats?match_id=${matchId}`);
   if (!res.ok) throw new Error(`FootyStats API HTTP ${res.status}`);
@@ -163,8 +204,8 @@ export async function fetchFootyStatsMatchStats(matchId: string): Promise<Partia
   const rawH2h = (d.h2h ?? {}) as Record<string, unknown>;
   const h2hSummary = (rawH2h.previous_matches_results ?? {}) as Record<string, unknown>;
 
-  const teamAResults = (d.teamAResults ?? []) as any[];
-  const teamBResults = (d.teamBResults ?? []) as any[];
+  const teamAResults = asRows(d.teamAResults);
+  const teamBResults = asRows(d.teamBResults);
 
   const timestamp = typeof d.date_unix === 'number'
     ? new Date((d.date_unix as number) * 1000).toISOString()
@@ -173,8 +214,8 @@ export async function fetchFootyStatsMatchStats(matchId: string): Promise<Partia
   const scoresAvailable = d.status !== 'incomplete' && d.status !== '';
 
   // Derive form from last 5 results
-  const deriveForm = (results: any[], teamId: number): string => {
-    return results.slice(0, 5).map((r: any) => {
+  const deriveForm = (results: FootyStatsRow[], teamId: number): string => {
+    return results.slice(0, 5).map((r) => {
       if (r.winningTeam === 0) return 'D';
       return r.winningTeam === teamId ? 'W' : 'L';
     }).join('');
@@ -186,9 +227,9 @@ export async function fetchFootyStatsMatchStats(matchId: string): Promise<Partia
   const awayForm = deriveForm(teamBResults, awayId);
 
   // H2H history from last results
-  const h2hHistory = teamAResults.slice(0, 5).map((r: any) => ({
-    date: new Date((r.date_unix as number) * 1000).toISOString().split('T')[0],
-    league: `${r.home_name} vs ${r.away_name}`,
+  const h2hHistory = teamAResults.slice(0, 5).map((r) => ({
+    date: new Date((r.date_unix ?? 0) * 1000).toISOString().split('T')[0],
+    league: `${r.home_name ?? ''} vs ${r.away_name ?? ''}`,
     home: String(r.home_name ?? ''),
     away: String(r.away_name ?? ''),
     score: `${r.homeGoalCount ?? 0}-${r.awayGoalCount ?? 0}`,
@@ -282,10 +323,10 @@ export async function fetchFootyStatsMatchStats(matchId: string): Promise<Partia
   }
 
   // --- Goal timeline ---
-  const rawGoals = (d.goal_events ?? []) as any[];
+  const rawGoals = asGoals(d.goal_events);
   const goals = rawGoals
-    .filter(g => g && g.known_as)
-    .map(g => ({
+    .filter((g) => g.known_as)
+    .map((g) => ({
       time: String(g.time ?? '') + (g.extra ? `+${g.extra}` : ''),
       team: g.teamIS === 'b' ? 'away' as const : 'home' as const,
       scorer: String(g.known_as),
@@ -295,17 +336,22 @@ export async function fetchFootyStatsMatchStats(matchId: string): Promise<Partia
 
   // --- Lineups ---
   const rawLineups = (d.lineups ?? {}) as Record<string, unknown>;
-  const mapLineup = (arr: unknown) =>
-    (Array.isArray(arr) ? arr : [])
-      .filter((p: any) => p && p.known_as)
-      .map((p: any) => ({
+  const mapLineup = (arr: unknown): { name: string; number: number | undefined; events: { type: string; time: string }[] }[] => {
+    const players = Array.isArray(arr)
+      ? arr.filter((row): row is LineupPlayer => typeof row === 'object' && row !== null)
+      : [];
+    return players
+      .filter((p) => p.known_as)
+      .map((p) => ({
         name: String(p.known_as),
         number: Number(p.shirt_number ?? 0) || undefined,
-        events: (Array.isArray(p.player_events) ? p.player_events : []).map((e: any) => ({
-          type: String(e.event_type ?? ''),
-          time: String(e.event_time ?? ''),
-        })),
+        events: (Array.isArray(p.player_events) ? p.player_events : [])
+          .map((e) => {
+            const ev = e as LineupPlayerEvent;
+            return { type: String(ev.event_type ?? ''), time: String(ev.event_time ?? '') };
+          }),
       }));
+  };
   const homeLineup = mapLineup(rawLineups.team_a);
   const awayLineup = mapLineup(rawLineups.team_b);
 
@@ -326,7 +372,8 @@ export async function fetchFootyStatsMatchStats(matchId: string): Promise<Partia
   const htAway = Number(d.ht_goals_team_b ?? -1);
 
   // --- Venue / broadcast / preview ---
-  const competitionName = String((d.competition_stats as any)?.english_name ?? (d.competition_stats as any)?.name ?? '');
+  const competitionStats = (d.competition_stats ?? {}) as Record<string, unknown>;
+  const competitionName = String(competitionStats.english_name ?? competitionStats.name ?? '');
   const stadium = String(d.stadium_name ?? '').trim();
   const stadiumLoc = String(d.stadium_location ?? '').trim();
   const attendance = Number(d.attendance ?? -1);

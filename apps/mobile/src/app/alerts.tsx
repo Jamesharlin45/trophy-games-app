@@ -1,14 +1,17 @@
 import { View, Text, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
-import { useQuery, useMutation } from 'convex/react';
-import { api } from '@trophy-games/backend';
 import { useTheme } from '../context/ThemeContext';
+import type { ThemeColors } from '../theme/colors';
 import { Stack, useRouter } from 'expo-router';
 import { Bell, ArrowLeft } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useState, useEffect } from 'react';
+import { api } from '../api/client';
+import { useScreenQuery } from '../hooks/useLiveQuery';
+import i18n from '../locales';
 
 export default function AlertsScreen() {
     const { themeColors } = useTheme();
+    const styles = getStyles(themeColors);
     const router = useRouter();
     const [deviceId, setDeviceId] = useState<string | null>(null);
 
@@ -25,19 +28,23 @@ export default function AlertsScreen() {
         getDeviceId();
     }, []);
 
-    const alerts = useQuery(api.alerts.getAlerts, { deviceId: deviceId || "unknown" });
-    const markRead = useMutation(api.alerts.markRead);
-    const markAllRead = useMutation(api.alerts.markAllRead);
+    const { data: alerts, refetch } = useScreenQuery(
+        () => api.alerts.getAlerts(deviceId || 'unknown'),
+        [deviceId],
+        { pollMs: 60000 },
+    );
 
-    const handleMarkRead = async (id: any) => {
+    const handleMarkRead = async (id: string) => {
         if (deviceId) {
-            await markRead({ alertId: id, deviceId });
+            await api.alerts.markRead(id, deviceId);
+            await refetch();
         }
     };
 
     const handleMarkAllRead = async () => {
         if (deviceId) {
-            await markAllRead({ deviceId });
+            await api.alerts.markAllRead(deviceId);
+            await refetch();
         }
     };
 
@@ -52,10 +59,10 @@ export default function AlertsScreen() {
                 <View style={styles.headerIcon}>
                     <Bell size={20} color={themeColors.text} />
                 </View>
-                <Text style={[styles.headerTitle, { color: themeColors.text }]}>ALERTS</Text>
+                <Text style={[styles.headerTitle, { color: themeColors.text }]}>{i18n.t('alerts.title')}</Text>
                 {alerts && alerts.some(a => !(a.readBy ?? []).includes(deviceId || "unknown")) && (
-                    <TouchableOpacity onPress={handleMarkAllRead} style={styles.markReadText}>
-                        <Text style={{ color: themeColors.primary, fontSize: 12, fontWeight: '700' }}>Mark all read</Text>
+                    <TouchableOpacity onPress={handleMarkAllRead} style={styles.markReadText} accessibilityRole="button">
+                        <Text style={{ color: themeColors.accent, fontSize: 12, fontWeight: '700' }}>{i18n.t('alerts.markAllRead')}</Text>
                     </TouchableOpacity>
                 )}
             </View>
@@ -74,19 +81,19 @@ export default function AlertsScreen() {
                                     style={[
                                         styles.alertCard,
                                         {
-                                            backgroundColor: themeColors.cardBg,
-                                            borderColor: isRead ? themeColors.border : themeColors.primary + '40',
-                                            borderLeftColor: isRead ? themeColors.border : themeColors.primary,
+                                            backgroundColor: themeColors.surface,
+                                            borderColor: isRead ? themeColors.border : themeColors.accent + '40',
+                                            borderLeftColor: isRead ? themeColors.border : themeColors.accent,
                                             borderLeftWidth: 4
                                         }
                                     ]}
                                 >
                                     <View style={styles.alertHeader}>
                                         <Text style={[styles.alertTitle, { color: themeColors.text }]}>{item.title}</Text>
-                                        {!isRead && <View style={[styles.unreadDot, { backgroundColor: themeColors.primary }]} />}
+                                        {!isRead && <View style={[styles.unreadDot, { backgroundColor: themeColors.accent }]} />}
                                     </View>
-                                    <Text style={[styles.alertBody, { color: themeColors.textMuted }]}>{item.body}</Text>
-                                    <Text style={[styles.alertTime, { color: themeColors.textMuted }]}>
+                                    <Text style={[styles.alertBody, { color: themeColors.mutedText }]}>{item.body}</Text>
+                                    <Text style={[styles.alertTime, { color: themeColors.mutedText }]}>
                                         {new Date(item.createdAt).toLocaleDateString()}
                                     </Text>
                                 </TouchableOpacity>
@@ -96,10 +103,10 @@ export default function AlertsScreen() {
                     />
                 ) : (
                     <View style={styles.emptyState}>
-                        <Bell size={48} color={themeColors.textMuted} style={styles.emptyIcon} />
-                        <Text style={[styles.emptyTitle, { color: themeColors.text }]}>No Alerts</Text>
-                        <Text style={[styles.emptySubtitle, { color: themeColors.textMuted }]}>
-                            You don't have any notifications right now.
+                        <Bell size={48} color={themeColors.mutedText} style={styles.emptyIcon} />
+                        <Text style={[styles.emptyTitle, { color: themeColors.text }]}>{i18n.t('alerts.emptyTitle')}</Text>
+                        <Text style={[styles.emptySubtitle, { color: themeColors.mutedText }]}>
+                            {i18n.t('alerts.emptySub')}
                         </Text>
                     </View>
                 )}
@@ -108,7 +115,8 @@ export default function AlertsScreen() {
     );
 }
 
-const styles = StyleSheet.create({
+function getStyles(themeColors: ThemeColors) {
+    return StyleSheet.create({
     safeArea: {
         flex: 1,
     },
@@ -129,7 +137,7 @@ const styles = StyleSheet.create({
         borderRadius: 16,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: 'rgba(150, 150, 150, 0.1)',
+        backgroundColor: themeColors.glass,
     },
     headerTitle: {
         fontSize: 18,
@@ -194,4 +202,5 @@ const styles = StyleSheet.create({
     markReadText: {
         marginLeft: 'auto',
     }
-});
+    });
+}

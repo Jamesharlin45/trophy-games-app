@@ -1,35 +1,55 @@
-import { View, Text, ScrollView, ActivityIndicator, TouchableOpacity, StyleSheet, RefreshControl, TextInput } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, TextInput } from 'react-native';
 import { Zap, Search } from 'lucide-react-native';
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useQuery } from "convex/react";
-import { api } from '@trophy-games/backend';
-import { MatchCard } from '../../components/MatchCard';
+import { useState, useCallback, useMemo } from 'react';
+import { MatchSectionList } from '../../components/neon/MatchSectionList';
 import { DatePickerStrip } from '../../components/DatePickerStrip';
+import { SkeletonList } from '../../components/Skeleton';
+import { readableAccent } from '../../components/neon/tokens';
 import { useTheme } from '../../context/ThemeContext';
+import type { ThemeColors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import i18n from '../../locales';
-// Mobile reads ONLY from Convex — the background cron sync fetches FootyStats
-// data every 5 minutes and upserts it into Convex. No direct API calls from mobile.
-
+import { api } from '../../api/client';
+import { useScreenQuery } from '../../hooks/useLiveQuery';
+import { useNoConnectionDialog } from '../../hooks/useNoConnectionDialog';
+import { useMembershipAccess } from '../../hooks/useMembershipAccess';
 
 const toTitleCase = (str: string) =>
     str.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
 
 export default function FreeTipsScreen() {
-    const [selectedLeague, setSelectedLeague] = useState('All');
+    const [selectedLeague, setSelectedLeague] = useState(i18n.t('common.all'));
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
-    const matchesQuery = useQuery(api.matches.getByTypeAndDate, {
-        matchType: 'free',
-        date: selectedDate,
-        limit: 100
-    });
-    
-    const matches = matchesQuery || [];
-    const loading = matchesQuery === undefined;
+    const access = useMembershipAccess();
+    const {
+        data: matchesData,
+        error,
+        loading,
+        refetch,
+    } = useScreenQuery(
+        () => api.matches.byTypeAndDate('free', selectedDate, 100),
+        [selectedDate],
+        { pollMs: 60000 },
+    );
+
+    const retryConnection = useCallback(async (): Promise<boolean> => {
+        try {
+            await api.matches.byTypeAndDate('free', selectedDate, 100);
+            await refetch();
+            return true;
+        } catch {
+            return false;
+        }
+    }, [selectedDate, refetch]);
+    const connection = useNoConnectionDialog(error, retryConnection);
+
+    const matches = useMemo(() => matchesData ?? [], [matchesData]);
 
     const [refreshing, setRefreshing] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const { themeColors } = useTheme();
+    const accent = readableAccent(themeColors);
+    const styles = getStyles(themeColors);
 
     const leagues = useMemo(() => {
         const counts = new Map<string, number>();
@@ -39,21 +59,22 @@ export default function FreeTipsScreen() {
             .map(([name]) => ({ name, id: name }));
     }, [matches]);
 
-    const filteredMatches = matches.filter(m => {
-        const leagueMatch = selectedLeague === 'All' || m.league === selectedLeague;
-        const searchMatch = !searchQuery || 
-            m.homeTeam.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    const filteredMatches = matches.filter((m) => {
+        const leagueMatch = selectedLeague === i18n.t('common.all') || m.league === selectedLeague;
+        const searchMatch =
+            !searchQuery ||
+            m.homeTeam.toLowerCase().includes(searchQuery.toLowerCase()) ||
             m.awayTeam.toLowerCase().includes(searchQuery.toLowerCase()) ||
             m.league.toLowerCase().includes(searchQuery.toLowerCase());
         return leagueMatch && searchMatch;
     });
 
     const onRefresh = useCallback(async () => {
+        connection.arm();
         setRefreshing(true);
-        // Convex queries auto-update, but we add a small delay for UX
-        await new Promise(r => setTimeout(r, 500));
+        await refetch();
         setRefreshing(false);
-    }, []);
+    }, [connection, refetch]);
 
     const dates = useMemo(() => {
         const d: string[] = [];
@@ -79,17 +100,17 @@ export default function FreeTipsScreen() {
                             style={[
                                 styles.leagueChip,
                                 { borderColor: themeColors.border },
-                                selectedLeague === 'All' && {
-                                    backgroundColor: themeColors.primary,
-                                    borderColor: themeColors.primary,
-                                    shadowColor: themeColors.primary,
+                                selectedLeague === i18n.t('common.all') && {
+                                    backgroundColor: themeColors.accent,
+                                    borderColor: themeColors.accent,
+                                    shadowColor: themeColors.accent,
                                     ...styles.leagueChipActiveShadow,
-                                }
+                                },
                             ]}
-                            onPress={() => setSelectedLeague('All')}
+                            onPress={() => setSelectedLeague(i18n.t('common.all'))}
                         >
-                            <Text style={[styles.leagueChipText, selectedLeague === 'All' ? { color: '#0B0E12' } : { color: themeColors.textMuted }]}>
-                                All
+                            <Text style={[styles.leagueChipText, selectedLeague === i18n.t('common.all') ? { color: themeColors.onAccent } : { color: themeColors.textSecondary }]}>
+                                {i18n.t('common.all')}
                             </Text>
                         </TouchableOpacity>
                         {leagues.map((league) => (
@@ -100,15 +121,15 @@ export default function FreeTipsScreen() {
                                     styles.leagueChip,
                                     { borderColor: themeColors.border },
                                     selectedLeague === league.name && {
-                                        backgroundColor: themeColors.primary,
-                                        borderColor: themeColors.primary,
-                                        shadowColor: themeColors.primary,
+                                        backgroundColor: themeColors.accent,
+                                        borderColor: themeColors.accent,
+                                        shadowColor: themeColors.accent,
                                         ...styles.leagueChipActiveShadow,
-                                    }
+                                    },
                                 ]}
                                 onPress={() => setSelectedLeague(league.name)}
                             >
-                                <Text style={[styles.leagueChipText, selectedLeague === league.name ? { color: '#0B0E12' } : { color: themeColors.textMuted }]}>
+                                <Text style={[styles.leagueChipText, selectedLeague === league.name ? { color: themeColors.onAccent } : { color: themeColors.textSecondary }]}>
                                     {toTitleCase(league.name)}
                                 </Text>
                             </TouchableOpacity>
@@ -117,12 +138,12 @@ export default function FreeTipsScreen() {
                 </View>
 
                 <View style={styles.searchSection}>
-                    <View style={[styles.searchBar, { backgroundColor: themeColors.cardBgSecondary, borderColor: themeColors.border }]}>
-                        <Search size={18} color={themeColors.textMuted} />
+                    <View style={[styles.searchBar, { backgroundColor: themeColors.surfaceElevated, borderColor: themeColors.border }]}>
+                        <Search size={18} color={themeColors.mutedText} />
                         <TextInput
                             style={[styles.searchInput, { color: themeColors.text }]}
-                            placeholder="Search teams or leagues..."
-                            placeholderTextColor={themeColors.textMuted}
+                            placeholder={i18n.t('home.searchPlaceholder')}
+                            placeholderTextColor={themeColors.mutedText}
                             value={searchQuery}
                             onChangeText={setSearchQuery}
                         />
@@ -133,76 +154,52 @@ export default function FreeTipsScreen() {
                     <DatePickerStrip
                         dates={dates}
                         selectedDate={selectedDate}
-                        onSelectDate={setSelectedDate}
+                        onSelectDate={(date) => setSelectedDate(date)}
                     />
                 </View>
             </View>
 
-            <ScrollView
-                style={styles.fixtureList}
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={styles.scrollContent}
-                refreshControl={
-                    <RefreshControl
-                        refreshing={refreshing}
-                        onRefresh={onRefresh}
-                        tintColor={themeColors.primary}
-                        colors={[themeColors.primary]}
-                    />
-                }
-            >
-                {loading ? (
-                    <View style={styles.loadingContainer}>
-                        <ActivityIndicator size="large" color={themeColors.primary} />
-                        <Text style={[styles.loadingLabel, { color: themeColors.textMuted }]}>
-                            Loading today's fixtures…
+            {loading ? (
+                <SkeletonList style={styles.scrollContent} />
+            ) : filteredMatches.length > 0 ? (
+                <MatchSectionList
+                    matches={filteredMatches}
+                    access={{ paid: access.paid, vip: access.vip }}
+                    style={styles.fixtureList}
+                    contentContainerStyle={styles.scrollContent}
+                    refreshControl={
+                        <RefreshControl
+                            refreshing={refreshing}
+                            onRefresh={onRefresh}
+                            tintColor={accent}
+                            colors={[accent]}
+                        />
+                    }
+                />
+            ) : (
+                <ScrollView contentContainerStyle={styles.emptyContainer}>
+                    <View
+                        style={[
+                            styles.emptyIconWrapper,
+                            { backgroundColor: themeColors.surfaceElevated, borderColor: themeColors.accent },
+                        ]}
+                    >
+                        <Zap size={36} color={accent} />
+                    </View>
+                    <View style={styles.emptyTextGroup}>
+                        <Text style={[styles.emptyTitle, { color: themeColors.text }]}>{i18n.t('home.noMatches')}</Text>
+                        <Text style={[styles.emptySubtitle, { color: themeColors.mutedText }]}>
+                            {i18n.t('home.noResultsSub')}
                         </Text>
                     </View>
-                ) : filteredMatches.length > 0 ? (
-                    <View style={styles.fixtureGrid}>
-                        {filteredMatches.map((match: any) => (
-                            <MatchCard
-                                key={match.id}
-                                matchId={match.id}
-                                matchData={match}
-                                leagueName={match.league}
-                                leagueLogo={match.leagueLogo}
-                                countryFlag={match.countryFlag}
-                                time={new Date(match.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                homeTeam={match.homeTeam}
-                                homeTeamLogo={match.homeTeamLogo}
-                                awayTeam={match.awayTeam}
-                                awayTeamLogo={match.awayTeamLogo}
-                                prediction={match.aiPrediction?.prediction || "TIPS"}
-                                odds={match.odds?.home || "1.85"}
-                                homeScore={match.homeScore}
-                                awayScore={match.awayScore}
-                                aiInsight={match.aiPrediction}
-                            />
-                        ))}
-                    </View>
-                ) : (
-                    <View style={styles.emptyContainer}>
-                        <View style={[
-                            styles.emptyIconWrapper,
-                            { backgroundColor: themeColors.cardBgSecondary, borderColor: themeColors.border }
-                        ]}>
-                            <Zap size={36} color={themeColors.primary} />
-                        </View>
-                        <View style={styles.emptyTextGroup}>
-                            <Text style={[styles.emptyTitle, { color: themeColors.text }]}>{i18n.t('home.noMatches')}</Text>
-                            <Text style={[styles.emptySubtitle, { color: themeColors.textMuted }]}>
-                                Our AI is still processing the matches or your search didn't match any.{'\n'}Pull down to check for updates.
-                            </Text>
-                        </View>
-                    </View>
-                )}
-            </ScrollView>
+                </ScrollView>
+            )}
         </View>
     );
 }
 
-const styles = StyleSheet.create({
+function getStyles(themeColors: ThemeColors) {
+    return StyleSheet.create({
     container: {
         flex: 1,
     },
@@ -224,14 +221,14 @@ const styles = StyleSheet.create({
         paddingHorizontal: 18,
         paddingVertical: 9,
         borderRadius: 22,
-        backgroundColor: 'rgba(255,255,255,0.05)',
+        backgroundColor: themeColors.surfaceAlt,
         borderWidth: 1,
     },
     leagueChipActiveShadow: {
-        shadowOpacity: 0.35,
-        shadowRadius: 10,
-        shadowOffset: { width: 0, height: 4 },
-        elevation: 4,
+        shadowOpacity: 0,
+        shadowRadius: 0,
+        shadowOffset: { width: 0, height: 0 },
+        elevation: 0,
     },
     leagueChipText: {
         ...typography.chipText,
@@ -266,13 +263,9 @@ const styles = StyleSheet.create({
         paddingBottom: 48,
     },
     loadingContainer: {
-        paddingVertical: 72,
+        paddingVertical: 8,
         alignItems: 'center',
-        gap: 14,
-    },
-    loadingLabel: {
-        fontSize: 13,
-        letterSpacing: 0.2,
+        gap: 12,
     },
     fixtureGrid: {
         gap: 12,
@@ -304,4 +297,5 @@ const styles = StyleSheet.create({
         paddingHorizontal: 32,
         lineHeight: 20,
     },
-});
+    });
+}

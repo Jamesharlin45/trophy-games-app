@@ -1,25 +1,52 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
-import { useMutation, useQuery } from 'convex/react';
-import { api } from '@trophy-games/backend/convex/_generated/api';
 import { router } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Application from 'expo-application';
 import { User } from 'lucide-react-native';
 import { useTheme } from '../context/ThemeContext';
+import { useUser } from '../context/UserContext';
+import { useDialog } from '../context/DialogContext';
+import { api } from '../api/client';
+import i18n from '../locales';
 
 type ThemeColors = ReturnType<typeof useTheme>['themeColors'];
 
 export default function OnboardingScreen() {
   const { themeColors } = useTheme();
+  const { setUsername: setContextUsername } = useUser();
+  const { requestSubscription } = useDialog();
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
 
   const [username, setUsername] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [availability, setAvailability] = useState<{ available: boolean } | undefined>(undefined);
 
-  const registerUser = useMutation(api.users.registerUser);
-  const checkUsername = useQuery(api.users.checkUsername, { username: username.trim() });
+  // Debounced username availability lookup (was a live Convex query).
+  useEffect(() => {
+    const trimmed = username.trim();
+    if (trimmed.length < 3) {
+      setAvailability(undefined);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      api.users
+        .checkUsername(trimmed)
+        .then((result) => {
+          if (!cancelled) setAvailability(result);
+        })
+        .catch(() => {
+          if (!cancelled) setAvailability(undefined);
+        });
+    }, 400);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [username]);
 
   const getDeviceId = () => {
     return `${Application.applicationId}-${Application.nativeApplicationVersion}`;
@@ -28,12 +55,12 @@ export default function OnboardingScreen() {
   const handleContinue = async () => {
     const trimmed = username.trim();
     if (trimmed.length < 3) {
-      setError('Username must be at least 3 characters');
+      setError(i18n.t('onboarding.errorMinLength'));
       return;
     }
 
-    if (checkUsername?.available === false) {
-      setError('Username is already taken');
+    if (availability?.available === false) {
+      setError(i18n.t('onboarding.errorTaken'));
       return;
     }
 
@@ -42,16 +69,19 @@ export default function OnboardingScreen() {
       setError('');
 
       const deviceId = getDeviceId();
-      const result = await registerUser({ username: trimmed, deviceId });
+      const result = await api.users.register(trimmed, deviceId);
 
       if (result.success) {
-        await AsyncStorage.setItem('@trophy_games_username', trimmed);
+        // Keep the context in sync (the old code only wrote AsyncStorage, so
+        // the app never knew the username had been chosen).
+        setContextUsername(trimmed);
         router.replace('/(tabs)');
+        requestSubscription(trimmed);
       } else {
-        setError(result.reason || 'Failed to register username');
+        setError(result.reason || i18n.t('onboarding.errorTaken'));
       }
     } catch {
-      setError('Network error. Please try again.');
+      setError(i18n.t('onboarding.errorNetwork'));
     } finally {
       setLoading(false);
     }
@@ -64,26 +94,26 @@ export default function OnboardingScreen() {
     >
       <View style={styles.content}>
         <View style={styles.iconContainer}>
-          <User size={48} color={themeColors.primary} />
+          <User size={48} color={themeColors.accent} />
         </View>
 
-        <Text style={styles.title}>Welcome to Trophy Games</Text>
-        <Text style={styles.subtitle}>Choose a unique username to secure your account and manage your VIP access tokens.</Text>
+        <Text style={styles.title}>{i18n.t('onboarding.title')}</Text>
+        <Text style={styles.subtitle}>{i18n.t('onboarding.subtitle')}</Text>
 
         <View style={styles.inputContainer}>
           <TextInput
             style={styles.input}
-            placeholder="Choose a username..."
-            placeholderTextColor={themeColors.textMuted}
+            placeholder={i18n.t('onboarding.usernamePlaceholder')}
+            placeholderTextColor={themeColors.mutedText}
             value={username}
             onChangeText={(t) => { setUsername(t); setError(''); }}
             autoCapitalize="none"
             autoCorrect={false}
             maxLength={20}
           />
-          {username.length >= 3 && checkUsername !== undefined && (
-            <Text style={[styles.availability, { color: checkUsername.available ? themeColors.primary : themeColors.error }]}>
-              {checkUsername.available ? '✓ Available' : '✗ Taken'}
+          {username.length >= 3 && availability !== undefined && (
+            <Text style={[styles.availability, { color: availability.available ? themeColors.accent : themeColors.danger }]}>
+              {availability.available ? i18n.t('onboarding.available') : i18n.t('onboarding.taken')}
             </Text>
           )}
         </View>
@@ -93,15 +123,15 @@ export default function OnboardingScreen() {
         <TouchableOpacity
           style={[
             styles.button,
-            (username.trim().length < 3 || checkUsername?.available === false) && styles.buttonDisabled
+            (username.trim().length < 3 || availability?.available === false) && styles.buttonDisabled
           ]}
           onPress={handleContinue}
-          disabled={loading || username.trim().length < 3 || checkUsername?.available === false}
+          disabled={loading || username.trim().length < 3 || availability?.available === false}
         >
           {loading ? (
             <ActivityIndicator color={themeColors.background} />
           ) : (
-            <Text style={styles.buttonText}>Continue</Text>
+            <Text style={styles.buttonText}>{i18n.t('onboarding.continue')}</Text>
           )}
         </TouchableOpacity>
       </View>
@@ -124,7 +154,7 @@ function createStyles(themeColors: ThemeColors) {
       width: 80,
       height: 80,
       borderRadius: 40,
-      backgroundColor: themeColors.cardBgSecondary,
+      backgroundColor: themeColors.surfaceElevated,
       justifyContent: 'center',
       alignItems: 'center',
       alignSelf: 'center',
@@ -141,7 +171,7 @@ function createStyles(themeColors: ThemeColors) {
     },
     subtitle: {
       fontSize: 15,
-      color: themeColors.textMuted,
+      color: themeColors.mutedText,
       textAlign: 'center',
       marginBottom: 48,
       lineHeight: 22,
@@ -150,7 +180,7 @@ function createStyles(themeColors: ThemeColors) {
       marginBottom: 24,
     },
     input: {
-      backgroundColor: themeColors.cardBg,
+      backgroundColor: themeColors.surface,
       borderWidth: 1,
       borderColor: themeColors.border,
       borderRadius: 16,
@@ -166,24 +196,24 @@ function createStyles(themeColors: ThemeColors) {
       fontWeight: '600',
     },
     errorText: {
-      color: themeColors.error,
+      color: themeColors.danger,
       textAlign: 'center',
       marginBottom: 16,
       fontSize: 14,
     },
     button: {
-      backgroundColor: themeColors.primary,
+      backgroundColor: themeColors.accent,
       padding: 16,
       borderRadius: 16,
       alignItems: 'center',
-      shadowColor: themeColors.primary,
+      shadowColor: themeColors.accent,
       shadowOffset: { width: 0, height: 4 },
       shadowOpacity: 0.3,
       shadowRadius: 12,
       elevation: 4,
     },
     buttonDisabled: {
-      backgroundColor: themeColors.cardBgSecondary,
+      backgroundColor: themeColors.surfaceElevated,
       shadowOpacity: 0,
       elevation: 0,
     },

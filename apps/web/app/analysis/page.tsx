@@ -17,6 +17,7 @@ import {
   ChevronUp,
   Clock,
   Zap,
+  RefreshCw,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -31,7 +32,18 @@ interface MatchRecommendation {
   reasoning: string[];
   suggestedBet: string;
   keyStats: string[];
-  riskLevel: 'low' | 'medium' | 'high';
+  riskLevel?: 'low' | 'medium' | 'high';
+  risk?: 'low' | 'medium' | 'high';
+  sources?: string[];
+  pick?: string;
+}
+
+type Tier = 'free' | 'vip' | 'paid';
+
+interface TierSplit {
+  free: string[];
+  vip: string[];
+  paid: string[];
 }
 
 interface AnalysisResult {
@@ -49,6 +61,102 @@ interface AnalysisResult {
   approvedAt?: string;
   approvedBy?: string;
   model: string;
+}
+
+interface RunProgress {
+  total: number;
+  analysed: number;
+}
+
+interface RunReport {
+  state: 'running' | 'complete';
+  total: number;
+  analysed: number;
+  errors: string[];
+  /** Candidates excluded because they had already started. */
+  excludedStarted: number;
+  /** Candidates skipped because they already had stored proposals (no rerun). */
+  skipped: number;
+  /** DeepSeek API calls made across the run. */
+  deepseekCalls: number;
+  complete?: { ranked: TierSplit; analysed: number };
+}
+
+interface ProposedPick {
+  externalId: string;
+  fixtureId: string;
+  homeTeam: string;
+  awayTeam: string;
+  league: string;
+  tier: 'vip' | 'paid' | 'free';
+  confidence: number;
+  suggestedBet: string;
+}
+
+interface RunAnalysisResponse {
+  state: 'running' | 'complete';
+  total: number;
+  analysed: number;
+  errors: string[];
+  excludedStarted?: number;
+  skipped?: number;
+  deepseekCalls?: number;
+  complete?: { ranked: TierSplit; analysed: number };
+  error?: string;
+}
+
+class RunApiError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+  }
+}
+
+/** Clear user-facing messages for DeepSeek API errors (401 invalid key,
+ * 402 insufficient balance, timeouts). Never includes the API key. */
+function describeApiError(error: RunApiError): string {
+  switch (error.status) {
+    case 401:
+      return 'DeepSeek API key is invalid (401). Check DEEPSEEK_API_KEY.';
+    case 402:
+      return 'DeepSeek account balance is insufficient (402). Top up your DeepSeek account and try again.';
+    case 408:
+    case 504:
+      return 'DeepSeek request timed out. Please try again.';
+    case 429:
+      return 'DeepSeek rate limit reached (429). Please wait a moment and try again.';
+    default:
+      return error.message || `Analysis failed (HTTP ${error.status}).`;
+  }
+}
+
+function httpSources(urls?: string[]): string[] {
+  return (urls ?? []).filter((u) => {
+    try {
+      const parsed = new URL(u);
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  });
+}
+
+function sourceHost(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+}
+
+interface SettleReport {
+  candidates: number;
+  fetched: number;
+  settled: number;
+  won: number;
+  lost: number;
+  void: number;
+  skipped: number;
+  errors: string[];
 }
 
 const typeConfig = {
@@ -72,7 +180,8 @@ interface RecommendationCardProps {
 function RecommendationCard({ rec, isSelected, onToggle }: RecommendationCardProps) {
   const [expanded, setExpanded] = useState(false);
   const config = typeConfig[rec.recommendedType];
-  const RiskIcon = rec.riskLevel === 'low' ? Shield : rec.riskLevel === 'medium' ? AlertTriangle : Zap;
+  const riskLevel = rec.risk ?? rec.riskLevel ?? 'medium';
+  const RiskIcon = riskLevel === 'low' ? Shield : riskLevel === 'medium' ? AlertTriangle : Zap;
 
   return (
     <div className={cn(
@@ -116,17 +225,17 @@ function RecommendationCard({ rec, isSelected, onToggle }: RecommendationCardPro
           </div>
           <span className={cn(
             "px-2 py-0.5 rounded text-[10px] font-medium border",
-            riskConfig[rec.riskLevel].color
+            riskConfig[riskLevel].color
           )}>
             <RiskIcon size={10} className="inline mr-1" />
-            {rec.riskLevel}
+            {riskLevel}
           </span>
         </div>
       </div>
 
-      <div className="mt-3 flex items-center gap-2">
+      <div className="mt-3 flex items-center gap-2 flex-wrap">
         <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-800 px-2 py-1 rounded">
-          {rec.suggestedBet}
+          {rec.pick ?? rec.suggestedBet}
         </span>
         <button
           onClick={() => setExpanded(!expanded)}
@@ -150,18 +259,52 @@ function RecommendationCard({ rec, isSelected, onToggle }: RecommendationCardPro
               ))}
             </ul>
           </div>
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 mb-1">Key Stats</p>
-            <div className="flex flex-wrap gap-1.5">
-              {rec.keyStats.map((s, i) => (
-                <span key={i} className="text-[10px] bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 px-2 py-0.5 rounded">
-                  {s}
-                </span>
-              ))}
+          {(rec.keyStats ?? []).length > 0 && (
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 mb-1">Key Stats</p>
+              <div className="flex flex-wrap gap-1.5">
+                {(rec.keyStats ?? []).map((s, i) => (
+                  <span key={i} className="text-[10px] bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 px-2 py-0.5 rounded">
+                    {s}
+                  </span>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
+          {httpSources(rec.sources).length > 0 && (
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 mb-1">Sources</p>
+              <div className="flex flex-wrap gap-1.5">
+                {httpSources(rec.sources).map((url, i) => (
+                  <a
+                    key={i}
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[10px] text-indigo-500 hover:underline"
+                  >
+                    {sourceHost(url)}
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
+    </div>
+  );
+}
+
+interface RunStatProps {
+  label: string;
+  value: string | number;
+}
+
+function RunStat({ label, value }: RunStatProps) {
+  return (
+    <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-3 text-center">
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">{label}</p>
+      <p className="text-lg font-bold text-zinc-900 dark:text-zinc-50">{value}</p>
     </div>
   );
 }
@@ -169,6 +312,7 @@ function RecommendationCard({ rec, isSelected, onToggle }: RecommendationCardPro
 export default function AnalysisPage() {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [analysisType, setAnalysisType] = useState<'daily' | 'weekly'>('daily');
+  const [matchesToAnalyse, setMatchesToAnalyse] = useState(10);
   const [loading, setLoading] = useState(false);
   const [approving, setApproving] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
@@ -177,6 +321,14 @@ export default function AnalysisPage() {
   const [success, setSuccess] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'free' | 'paid' | 'vip'>('free');
   const [selectedMatches, setSelectedMatches] = useState<Set<string>>(new Set());
+  const [runReport, setRunReport] = useState<RunReport | null>(null);
+  const [runProgress, setRunProgress] = useState<RunProgress | null>(null);
+  const [runErrors, setRunErrors] = useState<string[]>([]);
+  const [rerun, setRerun] = useState(false);
+  const [proposedPicks, setProposedPicks] = useState<ProposedPick[]>([]);
+  const [publishing, setPublishing] = useState(false);
+  const [settling, setSettling] = useState(false);
+  const [settleReport, setSettleReport] = useState<SettleReport | null>(null);
 
   const fetchHistory = useCallback(async () => {
     try {
@@ -221,24 +373,117 @@ export default function AnalysisPage() {
     setError(null);
     setSuccess(null);
     setResult(null);
+    setRunReport(null);
+    setRunProgress(null);
+    setRunErrors([]);
+    setProposedPicks([]);
+
+    const progress: RunProgress = { total: 0, analysed: 0 };
+    let callsMade = 0;
+    let excludedStarted = 0;
+    let skipped = 0;
 
     try {
-      const res = await fetch('/api/analysis/run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date: selectedDate, analysisType }),
-      });
+      // The endpoint processes at most CHUNK_SIZE matches per request; call
+      // it repeatedly and show progress ("Analysing X/Y") until complete.
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        const res = await fetch('/api/analysis/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ date: selectedDate, analysisType, rerun, maxMatches: matchesToAnalyse }),
+        });
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Analysis failed');
+        const data = (await res.json()) as RunAnalysisResponse;
+        if (!res.ok) throw new RunApiError(res.status, data.error || 'Analysis failed');
 
-      setSuccess(`Analysis complete! Free: ${data.freeCount}, Paid: ${data.paidCount}, VIP: ${data.vipCount}. Removed: ${data.removedCount}`);
+        progress.total = Math.max(progress.total, data.total ?? 0);
+        progress.analysed = data.analysed ?? progress.analysed;
+        callsMade += data.deepseekCalls ?? 0;
+        excludedStarted = Math.max(excludedStarted, data.excludedStarted ?? 0);
+        skipped = data.skipped ?? skipped;
+        setRunProgress(progress);
+        setRunErrors(data.errors ?? []);
+
+        if (data.state === 'complete') {
+          setRunReport({
+            state: 'complete',
+            total: progress.total,
+            analysed: progress.analysed,
+            errors: data.errors ?? [],
+            excludedStarted,
+            skipped,
+            deepseekCalls: callsMade,
+            complete: data.complete,
+          });
+          break;
+        }
+
+        await new Promise((r) => setTimeout(r, 1200));
+      }
+
+      const split = result
+        ? `Free: ${result.freeRecommendations.length}, VIP: ${result.vipRecommendations.length}, Paid: ${result.paidRecommendations.length}`
+        : `analysed ${progress.analysed} matches`;
+      setSuccess(`Done — ${split}. Review the proposed split below and approve manually (nothing is published automatically).`);
       await fetchResultForDate();
       await fetchHistory();
-    } catch (e: any) {
-      setError(e.message || 'Failed to run analysis');
+    } catch (e) {
+      setError(e instanceof RunApiError ? describeApiError(e) : e instanceof Error ? e.message : 'Failed to run analysis');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const settleResults = async () => {
+    setSettling(true);
+    setError(null);
+    setSuccess(null);
+    setSettleReport(null);
+
+    try {
+      const res = await fetch('/api/admin/settle', { method: 'POST' });
+      const data = await res.json() as Partial<SettleReport> & { error?: string };
+      if (!res.ok) throw new Error(data.error || 'Settlement failed');
+
+      const report: SettleReport = {
+        candidates: data.candidates ?? 0,
+        fetched: data.fetched ?? 0,
+        settled: data.settled ?? 0,
+        won: data.won ?? 0,
+        lost: data.lost ?? 0,
+        void: data.void ?? 0,
+        skipped: data.skipped ?? 0,
+        errors: Array.isArray(data.errors) ? data.errors : [],
+      };
+      setSettleReport(report);
+      setSuccess(`Settled ${report.settled} picks — Won: ${report.won}, Lost: ${report.lost}, Void: ${report.void}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to settle results');
+    } finally {
+      setSettling(false);
+    }
+  };
+
+  const publishAll = async () => {
+    setPublishing(true);
+    setError(null);
+
+    try {
+      const res = await fetch('/api/analysis/publish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ picks: proposedPicks.map((p) => ({ externalId: p.externalId, tier: p.tier })) }),
+      });
+
+      const data = await res.json() as { applied?: number; error?: string };
+      if (!res.ok) throw new Error(data.error || 'Publish failed');
+
+      setSuccess(`Published ${data.applied ?? 0} picks!`);
+      setProposedPicks([]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to publish picks');
+    } finally {
+      setPublishing(false);
     }
   };
 
@@ -259,14 +504,15 @@ export default function AnalysisPage() {
         }),
       });
 
-      const data = await res.json();
+      const data = await res.json() as { applied?: number; skipped?: { matchId: string; reason: string }[]; error?: string };
       if (!res.ok) throw new Error(data.error || 'Approval failed');
 
-      setSuccess(`Approved! ${data.applied} matches tagged.`);
+      const skippedCount = Array.isArray(data.skipped) ? data.skipped.length : 0;
+      setSuccess(`Approved! ${data.applied ?? 0} matches tagged.${skippedCount > 0 ? ` Skipped ${skippedCount} (already kicked off or have results).` : ''}`);
       setSelectedMatches(new Set());
       await fetchResultForDate();
-    } catch (e: any) {
-      setError(e.message || 'Failed to approve');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to approve');
     } finally {
       setApproving(false);
     }
@@ -287,14 +533,15 @@ export default function AnalysisPage() {
         }),
       });
 
-      const data = await res.json();
+      const data = await res.json() as { applied?: number; skipped?: { matchId: string; reason: string }[]; error?: string };
       if (!res.ok) throw new Error(data.error || 'Approval failed');
 
-      setSuccess(`Approved! ${data.applied} selected matches tagged.`);
+      const skippedCount = Array.isArray(data.skipped) ? data.skipped.length : 0;
+      setSuccess(`Approved! ${data.applied ?? 0} selected matches tagged.${skippedCount > 0 ? ` Skipped ${skippedCount} (already kicked off or have results).` : ''}`);
       setSelectedMatches(new Set());
       await fetchResultForDate();
-    } catch (e: any) {
-      setError(e.message || 'Failed to approve');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to approve');
     } finally {
       setApproving(false);
     }
@@ -388,6 +635,22 @@ export default function AnalysisPage() {
             </div>
           </div>
 
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Matches to analyse</label>
+            <input
+              type="number"
+              min={1}
+              max={30}
+              step={1}
+              value={matchesToAnalyse}
+              onChange={(e) => {
+                const n = e.target.valueAsNumber;
+                setMatchesToAnalyse(Number.isFinite(n) ? Math.min(30, Math.max(1, Math.floor(n))) : 10);
+              }}
+              className="w-28 px-3 py-2.5 rounded-xl border border-zinc-200 bg-zinc-50 focus:ring-2 focus:ring-indigo-500 outline-none dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-100 text-sm"
+            />
+          </div>
+
           <button
             onClick={runAnalysis}
             disabled={loading}
@@ -402,6 +665,34 @@ export default function AnalysisPage() {
               <>
                 <Sparkles size={18} />
                 Run Analysis
+              </>
+            )}
+          </button>
+
+          <label className="flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={rerun}
+              onChange={(e) => setRerun(e.target.checked)}
+              className="w-4 h-4 accent-indigo-600"
+            />
+            Re-run (include already-analysed matches)
+          </label>
+
+          <button
+            onClick={settleResults}
+            disabled={settling}
+            className="flex items-center gap-2 px-6 py-2.5 bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:hover:bg-white text-white dark:text-zinc-900 font-bold rounded-xl transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {settling ? (
+              <>
+                <Loader2 size={18} className="animate-spin" />
+                Settling...
+              </>
+            ) : (
+              <>
+                <RefreshCw size={18} />
+                Settle results now
               </>
             )}
           </button>
@@ -421,6 +712,157 @@ export default function AnalysisPage() {
           </div>
         )}
       </div>
+
+      {/* Run Progress */}
+      {runProgress && runProgress.total > 0 && (loading || runReport) && (
+        <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-3 flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400">
+          <Loader2 className="animate-spin" size={16} />
+          {loading ? `Analysing ${runProgress.analysed}/${runProgress.total}` : `Analysed ${runProgress.analysed}/${runProgress.total}`}
+          {runReport?.state === 'complete' ? ' — complete' : ''}
+        </div>
+      )}
+
+      {/* Run Report */}
+      {runReport && (
+        <div className="bg-white dark:bg-zinc-900/50 rounded-2xl border border-zinc-200 dark:border-zinc-800 p-6 space-y-4">
+          <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-50">Run Report</h3>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <RunStat label="Total candidates" value={runReport.total} />
+            <RunStat label="Analysed" value={runReport.analysed} />
+            <RunStat label="DeepSeek calls" value={runReport.deepseekCalls} />
+            <RunStat label="Skipped" value={runReport.skipped} />
+            {runReport.complete && (
+              <>
+                <RunStat label="Excluded (started)" value={runReport.excludedStarted} />
+                <RunStat label="Free" value={runReport.complete.ranked.free.length} />
+                <RunStat label="VIP" value={runReport.complete.ranked.vip.length} />
+                <RunStat label="Paid" value={runReport.complete.ranked.paid.length} />
+              </>
+            )}
+          </div>
+          {runReport.errors.length > 0 && (
+            <ul className="space-y-1">
+              {runReport.errors.map((error, i) => (
+                <li key={i} className="text-xs text-red-600 dark:text-red-400 flex items-start gap-2">
+                  <AlertTriangle size={12} className="shrink-0 mt-0.5" />
+                  {error}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {/* Proposed Split (Free / VIP / Paid) */}
+      {result &&
+        result.status === 'verified' &&
+        (result.freeRecommendations.length + result.vipRecommendations.length + result.paidRecommendations.length) > 0 && (
+          <div className="space-y-4">
+            <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-50">Proposed Split</h3>
+            {(['free', 'vip', 'paid'] as const).map((tier) => {
+              const recs = result[`${tier}Recommendations`];
+              if (recs.length === 0) return null;
+              const cfg = typeConfig[tier];
+              return (
+                <div key={tier} className="bg-white dark:bg-zinc-900/50 rounded-2xl border border-zinc-200 dark:border-zinc-800 p-5 space-y-3">
+                  <h4 className="flex items-center gap-2 text-base font-bold text-zinc-900 dark:text-zinc-50">
+                    <cfg.icon size={18} className={cfg.textColor} />
+                    {cfg.label} ({recs.length})
+                  </h4>
+                  <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                    {recs.map((rec) => (
+                      <div
+                        key={rec.matchId}
+                        className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-3 bg-white dark:bg-zinc-900/50"
+                      >
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <span className="text-xs font-semibold text-zinc-600 dark:text-zinc-400">{rec.pick ?? rec.suggestedBet}</span>
+                          <span className={cn(
+                            "px-2 py-0.5 rounded text-[10px] font-medium border",
+                            riskConfig[rec.risk ?? rec.riskLevel ?? 'medium'].color
+                          )}>
+                            {rec.risk ?? rec.riskLevel ?? 'medium'}
+                          </span>
+                        </div>
+                        <h5 className="text-sm font-bold text-zinc-900 dark:text-zinc-50">{rec.homeTeam} vs {rec.awayTeam}</h5>
+                        <p className="text-xs text-zinc-400 mt-0.5">{rec.league} · {new Date(rec.timestamp).toLocaleString()}</p>
+                        <p className="text-xs font-bold text-zinc-700 dark:text-zinc-300 mt-2">{rec.confidence}% confidence</p>
+                        {rec.reasoning.length > 0 && (
+                          <ul className="mt-2 space-y-1">
+                            {rec.reasoning.map((r, i) => (
+                              <li key={i} className="text-xs text-zinc-500 dark:text-zinc-400 flex items-start gap-2">
+                                <CheckCircle2 size={10} className="shrink-0 mt-0.5" />
+                                {r}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        {httpSources(rec.sources).length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {httpSources(rec.sources).map((url, i) => (
+                              <a
+                                key={i}
+                                href={url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[10px] text-indigo-500 hover:underline"
+                              >
+                                {sourceHost(url)}
+                              </a>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+      {/* Settlement Report */}
+      {settleReport && (
+        <div className="bg-white dark:bg-zinc-900/50 rounded-2xl border border-zinc-200 dark:border-zinc-800 p-6 space-y-4">
+          <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-50">Settlement Report</h3>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <RunStat label="Candidates" value={settleReport.candidates} />
+            <RunStat label="Settled" value={settleReport.settled} />
+            <RunStat label="Won" value={settleReport.won} />
+            <RunStat label="Lost" value={settleReport.lost} />
+            <RunStat label="Void" value={settleReport.void} />
+            <RunStat label="Left for next run" value={settleReport.skipped} />
+          </div>
+          {settleReport.errors.length > 0 && (
+            <ul className="space-y-1">
+              {settleReport.errors.map((error, i) => (
+                <li key={i} className="text-xs text-red-600 dark:text-red-400 flex items-start gap-2">
+                  <AlertTriangle size={12} className="shrink-0 mt-0.5" />
+                  {error}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {/* Proposed picks (AUTO_PUBLISH = "false") */}
+      {proposedPicks.length > 0 && (
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-indigo-50 dark:bg-indigo-500/10 rounded-2xl border border-indigo-200 dark:border-indigo-700 p-5">
+          <div className="flex items-center gap-2 text-sm text-indigo-900 dark:text-indigo-100">
+            <Sparkles size={16} />
+            {proposedPicks.length} picks proposed — VIP: {proposedPicks.filter((p) => p.tier === 'vip').length}, Paid: {proposedPicks.filter((p) => p.tier === 'paid').length}, Free: {proposedPicks.filter((p) => p.tier === 'free').length} (unpublished)
+          </div>
+          <button
+            onClick={publishAll}
+            disabled={publishing}
+            className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all disabled:opacity-50"
+          >
+            {publishing ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+            Publish all
+          </button>
+        </div>
+      )}
 
       {/* Results */}
       {result && (

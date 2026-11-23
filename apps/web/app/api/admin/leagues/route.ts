@@ -1,21 +1,19 @@
 import { NextResponse } from 'next/server';
-import { ConvexHttpClient } from "convex/browser";
-import { api } from "@trophy-games/backend";
 import { MatchData } from '@trophy-games/shared';
 import { deriveLeaguesFromMatches } from '@/lib/footystats';
+import { createDb } from '@/lib/db/client';
+import { getAll } from '@/lib/db/matches';
 
-const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
-const convex = convexUrl ? new ConvexHttpClient(convexUrl) : null;
-
-// GET - Leagues are derived from the Convex matches (kept in sync with the
-// proxy), so web and mobile always show the same competitions.
+// GET - Leagues are derived from the matches (kept in sync with the data
+// sync jobs), so web and mobile always show the same competitions.
 export async function GET() {
-    if (!convex) {
-        return NextResponse.json({ error: 'Convex not configured' }, { status: 500 });
+    const db = createDb();
+    if (!db) {
+        return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
     }
 
     try {
-        const matches = await convex.query(api.matches.getAll, { limit: 1000 });
+        const matches = await getAll(db, 1000);
         const leagues = deriveLeaguesFromMatches(matches as MatchData[]);
         return NextResponse.json(leagues);
     } catch (error) {

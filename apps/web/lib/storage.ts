@@ -1,9 +1,7 @@
 import { MatchData, LeagueInfo } from '@trophy-games/shared';
-import { ConvexHttpClient } from "convex/browser";
-import { api } from "@trophy-games/backend";
-
-const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
-const convex = convexUrl ? new ConvexHttpClient(convexUrl) : null;
+import { createDb } from './db/client';
+import { getAll, saveAll } from './db/matches';
+import { getAllLeagues } from './db/leagues';
 
 export interface ScrapedData {
     leagues: LeagueInfo[];
@@ -12,33 +10,32 @@ export interface ScrapedData {
 }
 
 export async function saveMatches(matches: MatchData[], leagues: LeagueInfo[] = []) {
-    if (!convex || !matches.length) return;
+    const db = createDb();
+    if (!db || !matches.length) return;
 
-    console.log(`[Storage] Saving ${matches.length} matches to Convex...`);
+    console.log(`[Storage] Saving ${matches.length} matches to Supabase...`);
     try {
-        await convex.mutation(api.matches.saveAll, {
-            matches: matches,
-            leagues: leagues,
-        });
+        await saveAll(db, matches, leagues);
     } catch (error) {
         console.error('[Storage] Save matches failed:', error);
     }
 }
 
 export async function loadData(): Promise<ScrapedData> {
-    if (!convex) {
-        console.warn('[Storage] Convex not configured. Using empty data.');
+    const db = createDb();
+    if (!db) {
+        console.warn('[Storage] Database not configured. Using empty data.');
         return { leagues: [], matches: [], lastUpdated: '' };
     }
 
     try {
         const [rawMatches, rawLeagues] = await Promise.all([
-            convex.query(api.matches.getAll, { limit: 500 }),
-            convex.query(api.matches.getAllLeagues)
+            getAll(db, 500),
+            getAllLeagues(db),
         ]);
 
-        const matches = (rawMatches as MatchData[] || []);
-        const leagues = (rawLeagues as LeagueInfo[] || []);
+        const matches = rawMatches as MatchData[];
+        const leagues = rawLeagues as LeagueInfo[];
 
         console.log(`[Storage] Loaded ${matches.length} matches and ${leagues.length} leagues.`);
 
@@ -48,25 +45,26 @@ export async function loadData(): Promise<ScrapedData> {
             lastUpdated: new Date().toISOString(),
         };
     } catch (error) {
-        console.error('[Storage] Load from Convex failed:', error);
+        console.error('[Storage] Load from database failed:', error);
         return { leagues: [], matches: [], lastUpdated: '' };
     }
 }
 
 export async function getMatchCount(): Promise<{ totalMatches: number }> {
-    if (!convex) {
+    const db = createDb();
+    if (!db) {
         return { totalMatches: 0 };
     }
 
     try {
-        const allMatches = await convex.query(api.matches.getAll, { limit: 1000 });
-        const matches = allMatches as MatchData[] || [];
-        
+        const { data } = await db.from('matches').select('id', { count: 'exact' });
+        const count = (data as { count: number | null } | null)?.count ?? 0;
         return {
-            totalMatches: matches.length,
+            totalMatches: count,
         };
     } catch (error) {
         console.error('[Storage] Get match count failed:', error);
         return { totalMatches: 0 };
     }
 }
+

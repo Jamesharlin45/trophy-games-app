@@ -33,9 +33,20 @@ const proxyMatchInput = v.object({
     })),
 });
 
+/** Derive the matchDate range-filter value (YYYY-MM-DD, UTC) from a kickoff
+ * timestamp — the same format the Daily/Weekly range filter reads. Offset-less
+ * kickoffs are treated as UTC. */
+function utcMatchDate(timestamp: string): string {
+    const t = timestamp.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+    const parsed = /[Zz]$|[+-]\d{2}:?\d{2}$/.test(t) ? new Date(t) : new Date(`${t}Z`);
+    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+    return t.split('T')[0];
+}
+
 // Insert a proxy match into the matches table, returning the new doc.
 async function insertProxyMatch(ctx: any, match: any) {
-    const matchDate = match.timestamp ? match.timestamp.split('T')[0] : new Date().toISOString().split('T')[0];
+    const matchDate = match.timestamp ? utcMatchDate(match.timestamp) : new Date().toISOString().slice(0, 10);
     const now = new Date().toISOString();
     const _id = await ctx.db.insert("matches", {
         ...match,
@@ -228,12 +239,12 @@ export const create = mutation({
                 confidence: v.number(),
                 reasoning: v.array(v.string()),
                 suggestedBet: v.optional(v.string()),
-                generatedAt: v.optional(v.string()),
+                generatedAt: v.string(),
             })),
         }),
     },
     handler: async (ctx, args) => {
-        const matchDate = args.match.timestamp ? args.match.timestamp.split('T')[0] : new Date().toISOString().split('T')[0];
+        const matchDate = args.match.timestamp ? utcMatchDate(args.match.timestamp) : new Date().toISOString().slice(0, 10);
         const now = new Date().toISOString();
 
         const newMatch = {
@@ -269,7 +280,12 @@ export const create = mutation({
     },
 });
 
-// UPDATE - Update match details
+// ADMIN — Update match details from the admin dashboard. Every editable admin
+// field is validated here (including the AI prediction and the recorded
+// result). `null` is accepted for numeric scores and odds that can be cleared:
+// Convex removes a field when it is patched with `undefined`, so an explicit
+// null is translated into a removal below. `aiPrediction` is never null — omit
+// the key to leave a stored prediction untouched.
 export const update = mutation({
     args: {
         matchId: v.string(),
@@ -285,22 +301,30 @@ export const update = mutation({
             timestamp: v.optional(v.string()),
             status: v.optional(v.string()),
             score: v.optional(v.string()),
-            homeScore: v.optional(v.number()),
-            awayScore: v.optional(v.number()),
+            homeScore: v.optional(v.union(v.number(), v.null())),
+            awayScore: v.optional(v.union(v.number(), v.null())),
             matchType: v.optional(v.union(v.literal('free'), v.literal('paid'), v.literal('vip'), v.literal('unassigned'))),
             isTrending: v.optional(v.boolean()),
-            odds: v.optional(v.object({
-                home: v.string(),
-                away: v.string(),
-                draw: v.optional(v.string()),
-            })),
+            odds: v.optional(v.union(
+                v.object({
+                    home: v.string(),
+                    away: v.string(),
+                    draw: v.optional(v.string()),
+                }),
+                v.null(),
+            )),
+            // Optional but never null: omit the key to leave a stored
+            // prediction untouched. Sending null is rejected by the validator.
             aiPrediction: v.optional(v.object({
                 prediction: v.string(),
                 confidence: v.number(),
                 reasoning: v.array(v.string()),
                 suggestedBet: v.optional(v.string()),
-                generatedAt: v.optional(v.string()),
+                generatedAt: v.string(),
             })),
+            result: v.optional(v.union(v.literal('pending'), v.literal('win'), v.literal('lose'), v.literal('draw'))),
+            isHistory: v.optional(v.boolean()),
+            matchDate: v.optional(v.string()),
         }),
     },
     handler: async (ctx, args) => {
@@ -313,17 +337,104 @@ export const update = mutation({
             throw new Error(`Match with id ${args.matchId} not found`);
         }
 
-        const updates: any = {
-            ...args.updates,
+        const edits = args.updates;
+        const patch: Partial<Doc<"matches">> = {
             updatedAt: new Date().toISOString(),
         };
 
-        // Update matchDate if timestamp changed
-        if (args.updates.timestamp) {
-            updates.matchDate = args.updates.timestamp.split('T')[0];
+        // An empty string clears an optional text field (patching `undefined`
+        // removes the key from the stored document).
+        type EditableStringKey =
+            | 'league' | 'leagueLogo' | 'homeTeam' | 'homeTeamLogo'
+            | 'awayTeam' | 'awayTeamLogo' | 'country' | 'countryFlag'
+            | 'timestamp' | 'status' | 'score' | 'matchDate';
+        const setString = (key: EditableStringKey, value: string | undefined): void => {
+            if (value === undefined) return;
+            const trimmed = value.trim();
+            Object.assign(patch, { [key]: trimmed === '' ? undefined : trimmed });
+        };
+
+        setString('league', edits.league);
+        setString('leagueLogo', edits.leagueLogo);
+        setString('homeTeam', edits.homeTeam);
+        setString('homeTeamLogo', edits.homeTeamLogo);
+        setString('awayTeam', edits.awayTeam);
+        setString('awayTeamLogo', edits.awayTeamLogo);
+        setString('country', edits.country);
+        setString('countryFlag', edits.countryFlag);
+        setString('timestamp', edits.timestamp);
+        setString('status', edits.status);
+        setString('score', edits.score);
+        setString('matchDate', edits.matchDate);
+
+        // Numeric scores: `null` clears the field.
+        for (const key of ['homeScore', 'awayScore'] as const) {
+            const value = edits[key];
+            if (value !== undefined) {
+                Object.assign(patch, { [key]: value === null ? undefined : value });
+            }
         }
 
-        await ctx.db.patch(existing._id, updates);
+        if (edits.matchType !== undefined) patch.matchType = edits.matchType;
+        if (edits.isTrending !== undefined) patch.isTrending = edits.isTrending;
+        if (edits.isHistory !== undefined) patch.isHistory = edits.isHistory;
+
+        if (edits.odds !== undefined) {
+            if (edits.odds === null) {
+                patch.odds = undefined;
+            } else {
+                const home = edits.odds.home.trim();
+                const away = edits.odds.away.trim();
+                const draw = edits.odds.draw?.trim() || undefined;
+                patch.odds = (home || away || draw)
+                    ? { home, away, ...(draw ? { draw } : {}) }
+                    : undefined;
+            }
+        }
+
+        // Only touch the prediction when it was actually included in the edit.
+        // A partial edit that omits `aiPrediction` leaves the stored object
+        // (and all of its fields) untouched.
+        if (edits.aiPrediction !== undefined) {
+            const ai = edits.aiPrediction;
+            const prediction = ai.prediction.trim();
+            const reasoning = ai.reasoning
+                .map((line: string) => line.trim())
+                .filter((line: string) => line.length > 0);
+            const suggestedBet = ai.suggestedBet?.trim() || undefined;
+            patch.aiPrediction = {
+                prediction,
+                confidence: ai.confidence,
+                reasoning,
+                generatedAt: ai.generatedAt || new Date().toISOString(),
+                ...(suggestedBet ? { suggestedBet } : {}),
+            };
+        }
+
+        // Keep the derived date in sync with an edited kickoff.
+        if (edits.timestamp && edits.timestamp.trim() !== '') {
+            patch.matchDate = edits.timestamp.trim().split('T')[0];
+        }
+
+        // Auto-history rule shared with the History page and the mobile Wins
+        // tab: a decisive result puts the match in the history feed (on its
+        // match date), while reverting to pending takes it back out.
+        if (edits.result !== undefined) {
+            patch.result = edits.result;
+            if (edits.result === 'win' || edits.result === 'lose' || edits.result === 'draw') {
+                patch.isHistory = true;
+                if (!existing.matchDate) {
+                    const dateSource = (edits.timestamp && edits.timestamp.trim())
+                        || existing.timestamp
+                        || new Date().toISOString();
+                    patch.matchDate = dateSource.split('T')[0];
+                }
+            } else {
+                patch.isHistory = false;
+            }
+        }
+
+        await ctx.db.patch(existing._id, patch);
         return existing._id;
     },
 });
@@ -561,7 +672,7 @@ export const saveAll = mutation({
 
         for (const match of args.matches) {
             // Derive matchDate from timestamp if not set
-            const matchDate = match.matchDate || (match.timestamp ? match.timestamp.split('T')[0] : now.split('T')[0]);
+            const matchDate = match.matchDate || (match.timestamp ? utcMatchDate(match.timestamp) : now.slice(0, 10));
             const matchWithDate = {
                 ...match,
                 matchDate,
@@ -622,7 +733,7 @@ export const bulkUpsert = mutation({
         let updated = 0;
 
         for (const m of args.matches) {
-            const matchDate = m.timestamp ? m.timestamp.split('T')[0] : new Date().toISOString().split('T')[0];
+            const matchDate = m.timestamp ? utcMatchDate(m.timestamp) : new Date().toISOString().slice(0, 10);
             const score = m.score || (m.homeScore != null && m.awayScore != null ? `${m.homeScore}-${m.awayScore}` : '0-0');
             // Per-id index lookup (not a whole-table scan). `.first()` tolerates
             // any legacy duplicates; OCC ensures concurrent syncs don't double-insert.

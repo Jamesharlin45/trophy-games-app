@@ -1,0 +1,20 @@
+name: Cron — fixtures sync
+
+on:
+  schedule:
+    - cron: '17 */3 * * *'
+  workflow_dispatch:
+
+jobs:
+  sync-and-settle:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync fixtures
+        run: |
+          curl -fsS -X GET "${{ vars.SITE_URL }}/api/cron/sync" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+
+      - name: Settle picks
+        run: |
+          curl -fsS -X GET "${{ vars.SITE_URL }}/api/cron/settle" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
