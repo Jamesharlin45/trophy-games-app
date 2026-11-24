@@ -10,10 +10,15 @@ import { useIap, ProductSubscription } from '../../hooks/useIap';
 import * as Application from 'expo-application';
 import { api } from '../../api/client';
 import { useScreenQuery } from '../../hooks/useLiveQuery';
+import { safeString, safeDateTime } from '../../utils/safeData';
+import { withErrorBoundary } from '../../components/ScreenErrorBoundary';
 
 type MemberStatus = 'none' | 'pending' | 'approved' | 'active' | 'loading';
 
-export default function MembershipStoreScreen() {
+const isAlreadyPendingReason = (reason: string | undefined): boolean =>
+    typeof reason === 'string' && reason.toLowerCase().includes('already pending');
+
+function MembershipStoreScreen() {
     const { themeColors } = useTheme();
     const [refreshing, setRefreshing] = useState(false);
     const [deviceId, setDeviceId] = useState('');
@@ -126,11 +131,14 @@ export default function MembershipStoreScreen() {
             );
             if (result.success) {
                 Alert.alert('Success!', `Your ${type.toUpperCase()} request has been sent to admin.`);
+            } else if (isAlreadyPendingReason(safeString(result.reason) || undefined)) {
+                Alert.alert('Already Pending', `You already have a ${type.toUpperCase()} request pending. Check your request status in the store.`);
             } else {
-                Alert.alert('Notice', result.reason || 'Request could not be processed.');
+                Alert.alert('Notice', safeString(result.reason) || 'Request could not be processed.');
             }
         } catch (e) {
-            Alert.alert('Error', 'Failed to send request. Please try again.');
+            const message = e instanceof Error && e.message ? e.message : 'Failed to send request. Please try again.';
+            Alert.alert('Error', message);
         }
         setRequesting(null);
     };
@@ -283,7 +291,7 @@ export default function MembershipStoreScreen() {
                 <CheckCircle2 size={16} color={themeColors.primary} />
                 <Text style={[styles.activeInfoText, { color: themeColors.primary }]}>
                     {activeProductId === productId && iapActiveSub?.expiresAt
-                        ? `Subscribed — expires ${new Date(iapActiveSub.expiresAt).toLocaleDateString()}`
+                        ? `Subscribed — expires ${safeDateTime(iapActiveSub.expiresAt, 'an unknown date')}`
                         : 'Access Active'}
                 </Text>
             </View>
@@ -625,3 +633,5 @@ const styles = StyleSheet.create({
     infoDesc: { ...typography.caption, lineHeight: 16 },
     divider: { height: 1, backgroundColor: 'rgba(255,255,255,0.05)' },
 });
+
+export default withErrorBoundary(MembershipStoreScreen);

@@ -6,10 +6,16 @@ import { useTheme } from '../context/ThemeContext';
 import { typography } from '../theme/typography';
 import { useRouter } from 'expo-router';
 import type { ApiMatch } from '../api/client';
+import { safeString, safeScore, safePercent } from '../utils/safeData';
+
+const parseOdds = (value: unknown): number => {
+    const parsed = parseFloat(safeString(value));
+    return Number.isNaN(parsed) ? NaN : parsed;
+};
 
 const TeamBadge = ({ uri, name }: { uri?: string; name: string }) => {
     const [failed, setFailed] = useState(false);
-    const safeName = String(name || '');
+    const safeName = safeString(name);
     const initials = safeName.split(' ').slice(0, 2).map((w: string) => w[0]).join('').toUpperCase();
     const flagUri = !uri || failed ? getCountryFlagUrl(name) : undefined;
 
@@ -85,7 +91,8 @@ export const MatchCard = ({
     const { themeColors } = useTheme();
 
     const getFlagUrl = (countryName?: string) => {
-        if (!countryName) return null;
+        const name = safeString(countryName);
+        if (!name) return null;
         const codeMap: Record<string, string> = {
             'England': 'gb-eng', 'Spain': 'es', 'Germany': 'de', 'Italy': 'it',
             'France': 'fr', 'Netherlands': 'nl', 'Portugal': 'pt', 'Brazil': 'br',
@@ -96,13 +103,14 @@ export const MatchCard = ({
             'South Korea': 'kr', 'Mexico': 'mx', 'Saudi Arabia': 'sa',
             'Morocco': 'ma', 'Egypt': 'eg', 'Nigeria': 'ng', 'Senegal': 'sn',
         };
-        const code = codeMap[countryName] || countryName.toLowerCase().split(' ')[0].substring(0, 2);
+        const code = codeMap[name] || name.toLowerCase().split(' ')[0].substring(0, 2);
         return `https://flagcdn.com/w80/${code}.png`;
     };
 
     const handleCardPress = () => {
-        if (matchId) {
-            const params: Record<string, string> = { id: matchId };
+        const safeMatchId = safeString(matchId);
+        if (safeMatchId) {
+            const params: Record<string, string> = { id: safeMatchId };
             if (matchData) {
                 params.matchData = encodeURIComponent(JSON.stringify(matchData));
             }
@@ -112,12 +120,13 @@ export const MatchCard = ({
 
     // Win rate: AI confidence > implied probability from bookmaker odds > dash
     const computeWinRate = (): string => {
-        if (aiInsight?.confidence) return `${aiInsight.confidence}%`;
+        const confidence = safePercent(aiInsight?.confidence);
+        if (aiInsight && confidence > 0) return `${confidence}%`;
 
         // Derive implied home-win probability from decimal odds (normalised)
-        const h = parseFloat(matchData?.odds?.home ?? odds ?? '');
-        const d = parseFloat(matchData?.odds?.draw ?? '');
-        const a = parseFloat(matchData?.odds?.away ?? '');
+        const h = parseOdds(matchData?.odds?.home ?? odds);
+        const d = parseOdds(matchData?.odds?.draw);
+        const a = parseOdds(matchData?.odds?.away);
 
         if (!isNaN(h) && h > 1) {
             if (!isNaN(d) && d > 1 && !isNaN(a) && a > 1) {
@@ -131,9 +140,15 @@ export const MatchCard = ({
         return '—';
     };
     const winRate = computeWinRate();
-    const safePrediction = typeof prediction === 'string' ? prediction : undefined;
+    const safePrediction = safeString(prediction) || undefined;
     const displayPrediction = safePrediction || winRate;
     const predictionLabel = safePrediction ? 'PREDICTION' : 'WIN RATE';
+    const safeHomeScore = safeScore(homeScore);
+    const safeAwayScore = safeScore(awayScore);
+    const safeLeagueName = safeString(leagueName);
+    const safeHomeTeam = safeString(homeTeam);
+    const safeAwayTeam = safeString(awayTeam);
+    const safeOdds = safeString(odds) || '—';
 
     return (
         <TouchableOpacity
@@ -153,20 +168,20 @@ export const MatchCard = ({
                             <View style={[styles.leagueLogoPlaceholder, { backgroundColor: themeColors.gray5 }]} />
                         )}
                     </View>
-                    <Text style={[styles.leagueName, { color: themeColors.textMuted }]}>{leagueName}</Text>
+                    <Text style={[styles.leagueName, { color: themeColors.textMuted }]}>{safeLeagueName}</Text>
                 </View>
-                <Text style={[styles.time, { color: themeColors.textMuted }]}>{time}</Text>
+                <Text style={[styles.time, { color: themeColors.textMuted }]}>{safeString(time)}</Text>
             </View>
 
             {/* Teams */}
             <View style={styles.teamsContainer}>
                 <View style={styles.teamRow}>
                     <View style={styles.teamNameContainer}>
-                        <TeamBadge uri={homeTeamLogo} name={homeTeam} />
-                        <Text style={[styles.teamName, { color: themeColors.text }]} numberOfLines={1}>{homeTeam}</Text>
+                        <TeamBadge uri={safeString(homeTeamLogo)} name={safeHomeTeam} />
+                        <Text style={[styles.teamName, { color: themeColors.text }]} numberOfLines={1}>{safeHomeTeam}</Text>
                     </View>
                     <View style={styles.teamRightSection}>
-                        {homeScore !== undefined && <Text style={[styles.score, { color: themeColors.text }]}>{homeScore}</Text>}
+                        {safeHomeScore !== undefined && <Text style={[styles.score, { color: themeColors.text }]}>{safeHomeScore}</Text>}
                         {homeOdds && (
                             <View style={[styles.teamOddsBox, { backgroundColor: themeColors.cardBgSecondary }]}>
                                 <Text style={[styles.teamOddsLabel, { color: themeColors.textMuted }]}>1</Text>
@@ -178,11 +193,11 @@ export const MatchCard = ({
 
                 <View style={styles.teamRow}>
                     <View style={styles.teamNameContainer}>
-                        <TeamBadge uri={awayTeamLogo} name={awayTeam} />
-                        <Text style={[styles.teamName, { color: themeColors.text }]} numberOfLines={1}>{awayTeam}</Text>
+                        <TeamBadge uri={safeString(awayTeamLogo)} name={safeAwayTeam} />
+                        <Text style={[styles.teamName, { color: themeColors.text }]} numberOfLines={1}>{safeAwayTeam}</Text>
                     </View>
                     <View style={styles.teamRightSection}>
-                        {awayScore !== undefined && <Text style={[styles.score, { color: themeColors.text }]}>{awayScore}</Text>}
+                        {safeAwayScore !== undefined && <Text style={[styles.score, { color: themeColors.text }]}>{safeAwayScore}</Text>}
                         {awayOdds && (
                             <View style={[styles.teamOddsBox, { backgroundColor: themeColors.cardBgSecondary }]}>
                                 <Text style={[styles.teamOddsLabel, { color: themeColors.textMuted }]}>2</Text>
@@ -226,7 +241,7 @@ export const MatchCard = ({
 
                         <View style={styles.oddsWrap}>
                             <Text style={[styles.oddsLabel, { color: themeColors.textMuted }]}>ODDS</Text>
-                            <Text style={[styles.oddsValue, { color: themeColors.text }]}>{String(odds || '—')}</Text>
+                            <Text style={[styles.oddsValue, { color: themeColors.text }]}>{safeOdds}</Text>
                         </View>
                     </View>
                 )}

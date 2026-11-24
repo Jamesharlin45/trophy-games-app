@@ -1,5 +1,7 @@
 // Country name / national team name → flag CDN code
 // Used as fallback when team logos aren't available from the API
+import { safeString } from '../utils/safeData';
+
 export const COUNTRY_FLAG_MAP: Record<string, string> = {
     'france': 'fr',
     'germany': 'de',
@@ -225,8 +227,9 @@ export const COUNTRY_FLAG_MAP: Record<string, string> = {
 };
 
 export function getCountryFlagUrl(teamName: string): string | undefined {
-    if (!teamName) return undefined;
-    const code = COUNTRY_FLAG_MAP[teamName.toLowerCase().trim()];
+    const name = safeString(teamName);
+    if (!name) return undefined;
+    const code = COUNTRY_FLAG_MAP[name.toLowerCase().trim()];
     if (!code) return undefined;
     return `https://flagcdn.com/w80/${code}.png`;
 }

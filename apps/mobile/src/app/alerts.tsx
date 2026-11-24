@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useState, useEffect } from 'react';
 import { api } from '../api/client';
 import { useScreenQuery } from '../hooks/useLiveQuery';
+import { safeString, safeDateTime } from '../utils/safeData';
 
 export default function AlertsScreen() {
     const { themeColors } = useTheme();
@@ -68,12 +69,13 @@ export default function AlertsScreen() {
                 {alerts && alerts.length > 0 ? (
                     <FlatList
                         data={alerts}
-                        keyExtractor={item => item._id}
+                        keyExtractor={item => safeString(item._id) || safeString(item.createdAt) || 'alert'}
                         renderItem={({ item }) => {
+                            const alertId = safeString(item._id);
                             const isRead = (item.readBy ?? []).includes(deviceId || "unknown");
                             return (
                                 <TouchableOpacity
-                                    onPress={() => handleMarkRead(item._id)}
+                                    onPress={() => alertId && handleMarkRead(alertId)}
                                     activeOpacity={0.7}
                                     style={[
                                         styles.alertCard,
@@ -86,12 +88,12 @@ export default function AlertsScreen() {
                                     ]}
                                 >
                                     <View style={styles.alertHeader}>
-                                        <Text style={[styles.alertTitle, { color: themeColors.text }]}>{item.title}</Text>
+                                        <Text style={[styles.alertTitle, { color: themeColors.text }]}>{safeString(item.title)}</Text>
                                         {!isRead && <View style={[styles.unreadDot, { backgroundColor: themeColors.primary }]} />}
                                     </View>
-                                    <Text style={[styles.alertBody, { color: themeColors.textMuted }]}>{item.body}</Text>
+                                    <Text style={[styles.alertBody, { color: themeColors.textMuted }]}>{safeString(item.body)}</Text>
                                     <Text style={[styles.alertTime, { color: themeColors.textMuted }]}>
-                                        {new Date(item.createdAt).toLocaleDateString()}
+                                        {safeDateTime(item.createdAt, '')}
                                     </Text>
                                 </TouchableOpacity>
                             );

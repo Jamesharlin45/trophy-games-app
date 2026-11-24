@@ -8,6 +8,8 @@ import { useUser } from '../../context/UserContext';
 import { typography } from '../../theme/typography';
 import { api } from '../../api/client';
 import { useScreenQuery } from '../../hooks/useLiveQuery';
+import { safeString, safeTime, safeScore } from '../../utils/safeData';
+import { withErrorBoundary } from '../../components/ScreenErrorBoundary';
 import { useRouter } from 'expo-router';
 import * as Application from 'expo-application';
 
@@ -17,7 +19,10 @@ type MemberStatus = 'none' | 'pending' | 'approved' | 'rejected' | 'active' | 'l
 const toTitleCase = (str: string) =>
     str.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
 
-export default function VIPTipsScreen() {
+const isAlreadyPendingReason = (reason: string | undefined): boolean =>
+    typeof reason === 'string' && reason.toLowerCase().includes('already pending');
+
+function VIPTipsScreen() {
     const { themeColors } = useTheme();
     const router = useRouter();
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
@@ -73,13 +78,14 @@ export default function VIPTipsScreen() {
     }, []);
 
     const uniqueLeagues = useMemo(() => {
-        const leagues = Array.from(new Set(matches.map(m => m.league))).sort();
+        const leagues = Array.from(new Set(matches.map(m => safeString(m.league)))).sort();
         return ['All', ...leagues];
     }, [matches]);
 
     const filteredMatches = useMemo(() => {
         return matches.filter(match => {
-            const leagueMatch = selectedLeague === 'All' || match.league === selectedLeague;
+            const league = safeString(match.league);
+            const leagueMatch = selectedLeague === 'All' || league === selectedLeague;
             return leagueMatch;
         });
     }, [matches, selectedLeague]);
@@ -94,11 +100,18 @@ export default function VIPTipsScreen() {
         if (!deviceId) return;
         setRequesting(true);
         try {
-            await api.tokens.createMembershipRequest(deviceId, 'vip', username || undefined);
-            Alert.alert('Request Sent!', 'Your VIP membership request has been submitted. You will receive a token once approved by admin.');
-            await refetchMembership();
-        } catch {
-            Alert.alert('Error', 'Failed to send request. Please try again.');
+            const result = await api.tokens.createMembershipRequest(deviceId, 'vip', username || undefined);
+            if (result.success) {
+                Alert.alert('Request Sent!', 'Your VIP membership request has been submitted. You will receive a token once approved by admin.');
+                await refetchMembership();
+            } else if (isAlreadyPendingReason(safeString(result.reason) || undefined)) {
+                Alert.alert('Already Pending', 'You already have a VIP request pending. Check your request status in the VIP screen.');
+            } else {
+                Alert.alert('Error', safeString(result.reason) || 'Failed to send request. Please try again.');
+            }
+        } catch (e) {
+            const message = e instanceof Error && e.message ? e.message : 'Failed to send request. Please try again.';
+            Alert.alert('Error', message);
         }
         setRequesting(false);
     };
@@ -118,7 +131,7 @@ export default function VIPTipsScreen() {
                 Alert.alert('Access Granted!', 'Welcome to VIP! You now have access to elite predictions.');
                 await refetchMembership();
             } else {
-                Alert.alert('Invalid Token', result.reason || 'This token is not valid for your account.');
+                Alert.alert('Invalid Token', safeString(result.reason) || 'This token is not valid for your account.');
             }
         } catch {
             Alert.alert('Error', 'Failed to verify token. Please try again.');
@@ -311,20 +324,20 @@ export default function VIPTipsScreen() {
                     <View style={styles.fixtureGrid}>
                         {filteredMatches.map((match) => (
                             <MatchCard
-                                key={match.id}
-                                matchId={match.id}
+                                key={safeString(match.id)}
+                                matchId={safeString(match.id)}
                                 matchData={match}
-                                leagueName={match.league}
-                                leagueLogo={match.leagueLogo}
-                                time={new Date(match.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                homeTeam={match.homeTeam}
-                                homeTeamLogo={match.homeTeamLogo}
-                                awayTeam={match.awayTeam}
-                                awayTeamLogo={match.awayTeamLogo}
+                                leagueName={safeString(match.league)}
+                                leagueLogo={safeString(match.leagueLogo)}
+                                time={safeTime(match.timestamp)}
+                                homeTeam={safeString(match.homeTeam)}
+                                homeTeamLogo={safeString(match.homeTeamLogo)}
+                                awayTeam={safeString(match.awayTeam)}
+                                awayTeamLogo={safeString(match.awayTeamLogo)}
                                 isLocked={false}
                                 aiInsight={match.aiPrediction}
-                                prediction={match.aiPrediction?.prediction}
-                                odds={match.odds?.home}
+                                prediction={safeString(match.aiPrediction?.prediction)}
+                                odds={safeString(match.odds?.home)}
                             />
                         ))}
                     </View>
@@ -449,3 +462,5 @@ const styles = StyleSheet.create({
     emptyText: { ...typography.emptyText },
     emptySubtext: { ...typography.emptySubtext, textAlign: 'center', paddingHorizontal: 36 },
 });
+
+export default withErrorBoundary(VIPTipsScreen);

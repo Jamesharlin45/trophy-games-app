@@ -8,6 +8,8 @@ import { typography } from '../../theme/typography';
 import { api } from '../../api/client';
 import type { ApiMatch } from '../../api/client';
 import { useScreenQuery } from '../../hooks/useLiveQuery';
+import { safeString, safeTime, safeScore, safeDateKey } from '../../utils/safeData';
+import { withErrorBoundary } from '../../components/ScreenErrorBoundary';
 
 const toTitleCase = (str: string) =>
     str.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
@@ -22,7 +24,7 @@ function getDateRange() {
     return dates;
 }
 
-export default function WinsScreen() {
+function WinsScreen() {
     const { themeColors } = useTheme();
     const [refreshing, setRefreshing] = useState(false);
     const [selectedLeague, setSelectedLeague] = useState('All');
@@ -41,20 +43,23 @@ export default function WinsScreen() {
     // Finished matches for the selected date only.
     const dayMatches = useMemo(() => {
         return matches.filter(match => {
-            const matchDate = match.matchDate || match.timestamp?.split('T')[0];
+            const matchDate = safeDateKey(match.matchDate) || safeDateKey(match.timestamp);
             return matchDate === selectedDate;
         });
     }, [matches, selectedDate]);
 
     const uniqueLeagues = useMemo(() => {
         const counts = new Map<string, number>();
-        for (const m of dayMatches) counts.set(m.league, (counts.get(m.league) || 0) + 1);
+        for (const m of dayMatches) {
+            const leagueName = safeString(m.league);
+            counts.set(leagueName, (counts.get(leagueName) || 0) + 1);
+        }
         const leagues = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([name]) => name);
         return ['All', ...leagues];
     }, [dayMatches]);
 
     const filteredMatches = useMemo(() => {
-        return dayMatches.filter(match => selectedLeague === 'All' || match.league === selectedLeague);
+        return dayMatches.filter(match => selectedLeague === 'All' || safeString(match.league) === selectedLeague);
     }, [dayMatches, selectedLeague]);
 
     const onRefresh = useCallback(async () => {
@@ -64,7 +69,11 @@ export default function WinsScreen() {
     }, [refetch]);
 
     // "Win" = home side won (final score), matching the web History strike rate.
-    const isWin = (m: ApiMatch) => m.homeScore !== undefined && m.awayScore !== undefined && m.homeScore > m.awayScore;
+    const isWin = (m: ApiMatch) => {
+        const home = safeScore(m.homeScore);
+        const away = safeScore(m.awayScore);
+        return home !== undefined && away !== undefined && home > away;
+    };
     const winCount = dayMatches.filter(isWin).length;
     const winRate = dayMatches.length > 0 ? Math.round((winCount / dayMatches.length) * 100) : 0;
 
@@ -151,20 +160,20 @@ export default function WinsScreen() {
                     <View style={styles.fixtureGrid}>
                         {filteredMatches.map((match) => (
                             <MatchCard
-                                key={match._id || match.id}
-                                matchId={match.id}
+                                key={safeString(match._id) || safeString(match.id)}
+                                matchId={safeString(match.id)}
                                 matchData={match}
-                                leagueName={match.league}
-                                leagueLogo={match.leagueLogo}
+                                leagueName={safeString(match.league)}
+                                leagueLogo={safeString(match.leagueLogo)}
                                 time="FT"
-                                homeTeam={match.homeTeam}
-                                homeTeamLogo={match.homeTeamLogo}
-                                awayTeam={match.awayTeam}
-                                awayTeamLogo={match.awayTeamLogo}
-                                prediction={match.result ? match.result.toUpperCase() : (match.aiPrediction?.prediction || 'FT')}
-                                odds={match.odds?.home || '—'}
-                                homeScore={match.homeScore}
-                                awayScore={match.awayScore}
+                                homeTeam={safeString(match.homeTeam)}
+                                homeTeamLogo={safeString(match.homeTeamLogo)}
+                                awayTeam={safeString(match.awayTeam)}
+                                awayTeamLogo={safeString(match.awayTeamLogo)}
+                                prediction={safeString(match.result).toUpperCase() || safeString(match.aiPrediction?.prediction, 'FT')}
+                                odds={safeString(match.odds?.home, '—')}
+                                homeScore={safeScore(match.homeScore)}
+                                awayScore={safeScore(match.awayScore)}
                                 aiInsight={match.aiPrediction}
                             />
                         ))}
@@ -236,3 +245,5 @@ const styles = StyleSheet.create({
     emptyText: { ...typography.emptyText },
     emptySubtext: { ...typography.emptySubtext, textAlign: 'center', paddingHorizontal: 36 },
 });
+
+export default withErrorBoundary(WinsScreen);

@@ -1,3 +1,4 @@
+import '../lib/crashReporter';
 import { useEffect, useState } from 'react';
 import { View, TouchableOpacity, StyleSheet, Text, Platform } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
