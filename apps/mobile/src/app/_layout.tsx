@@ -26,7 +26,10 @@ import SplashAnim from '../components/SplashAnim';
 import { AppErrorBoundary } from '../components/AppErrorBoundary';
 import { installGlobalErrorHandler, setCurrentRoute } from '../lib/errorDiagnostics';
 
-SplashScreen.preventAutoHideAsync();
+SplashScreen.preventAutoHideAsync().catch(() => {
+    // Splash prevention is best-effort — a failure only means the splash may
+    // auto-hide later; the app must not crash on startup because of it.
+});
 
 // Global JS error handler: stores the last uncaught error (message, stack,
 // route, timestamp — no personal data) in AsyncStorage for the Settings
