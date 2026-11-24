@@ -32,7 +32,6 @@ export async function POST(request: Request) {
 
     const deviceId = readString(body?.deviceId);
     const username = readString(body?.username);
-    const email = readString(body?.email);
     const type = readString(body?.type);
     const email = readString(body?.email);
     if (!deviceId || !isTokenType(type) || !isValidDeviceId(deviceId)) {

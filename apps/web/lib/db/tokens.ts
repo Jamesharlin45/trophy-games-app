@@ -34,7 +34,6 @@ export interface DbMembershipRequest {
     /** Where the approved token will be emailed. */
     email?: string;
     type: TokenType;
-    email?: string;
     status: RequestStatus;
     requestedAt: string;
     resolvedAt?: string;
@@ -67,7 +66,6 @@ interface MembershipRequestRow {
     username: string | null;
     email: string | null;
     type: TokenType;
-    email: string | null;
     status: RequestStatus;
     requested_at: string;
     resolved_at: string | null;
@@ -100,7 +98,6 @@ function mapRequest(row: MembershipRequestRow): DbMembershipRequest {
         username: row.username ?? undefined,
         email: row.email ?? undefined,
         type: row.type,
-        email: row.email ?? undefined,
         status: row.status,
         requestedAt: row.requested_at,
         resolvedAt: row.resolved_at ?? undefined,
@@ -686,11 +683,7 @@ export async function claimToken(
  * same device+type blocks new ones. */
 export async function requestMembership(
     db: SupabaseClient,
-<<<<<<< HEAD
-    input: { deviceId: string; username?: string; type: TokenType; email?: string },
-=======
     input: { deviceId: string; username?: string; type: TokenType; email: string },
->>>>>>> origin/main
 ): Promise<MembershipRequestResult> {
     const email = normalizeEmail(input.email);
     if (!isValidDeviceId(input.deviceId)) {
@@ -734,7 +727,6 @@ export async function requestMembership(
             username: input.username ?? null,
             email,
             type: input.type,
-            email: input.email ?? null,
             status: 'pending',
             requested_at: now,
         })
