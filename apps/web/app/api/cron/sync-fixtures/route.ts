@@ -16,5 +16,5 @@ export async function GET(req: Request) {
     }
 
     const summary = await syncFixtures();
-    return NextResponse.json({ date: new Date().toISOString().slice(0, 10), ...summary });
+    return NextResponse.json(summary);
 }

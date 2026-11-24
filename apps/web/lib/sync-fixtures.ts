@@ -217,7 +217,7 @@ export async function syncFixtures(
 
     errors.push(...(await stampLastSyncedAt(db)));
     return {
-        date: null,
+        date: utcDate(0),
         fetched,
         inserted,
         updated,

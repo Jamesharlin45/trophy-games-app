@@ -150,7 +150,7 @@ export default function MatchesPage() {
 
     // "Refresh fixtures" — runs the same syncFixtures server function as the
     // cron and the auto-sync path, then refreshes the list from the database.
-    const runFixturesSync = async () => {
+    const runFixturesSync = useCallback(async () => {
         if (syncing) return;
         setSyncing(true);
         try {
@@ -167,7 +167,7 @@ export default function MatchesPage() {
         } finally {
             setSyncing(false);
         }
-    };
+    }, [syncing]);
 
     // Load the last fixture sync time; when the Matches page opens and the
     // last sync is older than 3 hours (or never ran), run syncFixtures in the
@@ -192,7 +192,7 @@ export default function MatchesPage() {
         }
         void loadLastSynced();
         return () => { cancelled = true; };
-    }, []);
+    }, [runFixturesSync]);
 
     const handleDeleteMatch = async (matchId: string) => {
         if (!confirm('Are you sure you want to delete this match?')) return;
@@ -578,7 +578,6 @@ export default function MatchesPage() {
                     <h1 className="text-3xl font-bold text-zinc-900 dark:text-zinc-50 tracking-tight">Matches</h1>
                     <p className="text-zinc-500 dark:text-zinc-400">Manage every match — edit teams, scores, status, result and AI predictions. Changes sync to mobile.</p>
                 </div>
-<<<<<<< HEAD
                 <div className="flex flex-wrap gap-2 items-center">
                     {resultsMessage && !syncingResults && (
                         <span className="text-xs text-emerald-600 dark:text-emerald-400">{resultsMessage}</span>
@@ -591,44 +590,38 @@ export default function MatchesPage() {
                         <RefreshCw size={16} className={syncingResults ? 'animate-spin' : undefined} />
                         {syncingResults ? 'Syncing...' : 'Refresh results'}
                     </button>
-=======
-                <div className="flex gap-2 items-center">
->>>>>>> 8aa101d (Automatic fixtures sync)
-                    <button
-                        onClick={() => setIsManualModalOpen(true)}
-                        className="flex items-center justify-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-colors text-sm shadow-sm"
-                    >
-                        <PlusCircle size={16} />
-                        Manual Match
-                    </button>
-                    <button
-<<<<<<< HEAD
-                        onClick={() => {
-                            setManualModalOpenPicker(true);
-                            setIsManualModalOpen(true);
-                        }}
-                        className="flex items-center justify-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition-colors text-sm shadow-sm"
-                    >
-                        <Flag size={16} />
-                        Add from fixtures
-                    </button>
-                    <button
-                        onClick={handleRefresh}
-                        className="flex items-center justify-center gap-1 px-4 py-2 bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 font-bold rounded-xl transition-colors text-sm"
-=======
-                        onClick={() => void runFixturesSync()}
-                        disabled={syncing}
-                        className="flex items-center justify-center gap-1 px-4 py-2 bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 font-bold rounded-xl transition-colors text-sm disabled:opacity-50"
->>>>>>> 8aa101d (Automatic fixtures sync)
-                    >
-                        <RefreshCw size={16} />
-                        {syncing ? 'Syncing…' : 'Refresh fixtures'}
-                    </button>
-                    {lastSynced && (
-                        <span className="text-xs text-zinc-500 dark:text-zinc-400 whitespace-nowrap">
-                            Last synced {new Date(lastSynced).toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                    )}
+                    <div className="flex gap-2 items-center">
+                        <button
+                            onClick={() => setIsManualModalOpen(true)}
+                            className="flex items-center justify-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-colors text-sm shadow-sm"
+                        >
+                            <PlusCircle size={16} />
+                            Manual Match
+                        </button>
+                        <button
+                            onClick={() => {
+                                setManualModalOpenPicker(true);
+                                setIsManualModalOpen(true);
+                            }}
+                            className="flex items-center justify-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition-colors text-sm shadow-sm"
+                        >
+                            <Flag size={16} />
+                            Add from fixtures
+                        </button>
+                        <button
+                            onClick={() => void runFixturesSync()}
+                            disabled={syncing}
+                            className="flex items-center justify-center gap-1 px-4 py-2 bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 font-bold rounded-xl transition-colors text-sm disabled:opacity-50"
+                        >
+                            <RefreshCw size={16} />
+                            {syncing ? 'Syncing…' : 'Refresh fixtures'}
+                        </button>
+                        {lastSynced && (
+                            <span className="text-xs text-zinc-500 dark:text-zinc-400 whitespace-nowrap">
+                                Last synced {new Date(lastSynced).toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                        )}
+                    </div>
                 </div>
             </div>
 
