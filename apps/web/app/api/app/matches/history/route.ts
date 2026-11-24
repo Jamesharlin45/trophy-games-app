@@ -1,22 +1,17 @@
 import { NextResponse, after } from 'next/server';
 import { triggerDueEmailsIfDue } from '@/lib/email-opportunistic';
 import { createDb } from '@/lib/db/client';
-import { getPublishedFinishedMatches } from '@/lib/db/matches';
-import type { DbMatch, MatchResult } from '@/lib/db/types';
+import { getPublishedFinishedMatches, toAppResult } from '@/lib/db/matches';
+import type { DbMatch } from '@/lib/db/types';
 import { syncResults } from '@/lib/sync-results';
 
 export const dynamic = 'force-dynamic';
 
-/** Response vocabulary of this endpoint: 'won' | 'lost' | 'void' | 'pending'.
- * The stored vocabulary is 'win' | 'lose' | 'void' | null | 'pending' (the DB
- * check constraint only allows win/lose/draw/pending + void). */
-type HistoryResult = 'won' | 'lost' | 'void' | 'pending';
-
-function toHistoryResult(result: MatchResult | null | undefined): HistoryResult {
-    if (result === 'win') return 'won';
-    if (result === 'lose') return 'lost';
-    if (result === 'void') return 'void';
-    return 'pending';
+/** Response vocabulary of this endpoint — the app vocabulary
+ * ('pending' | 'win' | 'lose' | 'draw'); void outcomes are excluded via
+ * excludeVoid, so they never appear here. */
+function historyResult(match: DbMatch) {
+    return toAppResult(match.result);
 }
 
 /** Strike rate = won / (won + lost); void and pending are excluded. */
@@ -24,9 +19,9 @@ function strikeRateOf(matches: DbMatch[]): number {
     let won = 0;
     let lost = 0;
     for (const match of matches) {
-        const result = toHistoryResult(match.result);
-        if (result === 'won') won += 1;
-        else if (result === 'lost') lost += 1;
+        const result = historyResult(match);
+        if (result === 'win') won += 1;
+        else if (result === 'lose') lost += 1;
     }
     const denominator = won + lost;
     return denominator > 0 ? Math.round((won / denominator) * 100) : 0;
@@ -60,7 +55,7 @@ export async function GET(request: Request) {
     });
 
     try {
-        const all = await getPublishedFinishedMatches(db);
+        const all = await getPublishedFinishedMatches(db, { excludeVoid: true });
         const since30 = addDaysUtc(date, -30);
         const dateMatches = all.filter((m) => m.matchDate === date);
         const recentMatches = all.filter((m) => {
@@ -68,7 +63,7 @@ export async function GET(request: Request) {
             return md >= since30 && md <= date;
         });
         return NextResponse.json({
-            matches: dateMatches.map((m) => ({ ...m, result: toHistoryResult(m.result) })),
+            matches: dateMatches.map((m) => ({ ...m, result: historyResult(m) })),
             strikeRate: strikeRateOf(dateMatches),
             strikeRate30d: strikeRateOf(recentMatches),
         });

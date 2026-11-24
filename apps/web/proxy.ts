@@ -10,6 +10,9 @@ import { NextResponse } from 'next/server';
 // intentionally NOT in this list: they are called by cron jobs and are
 // authenticated by isCronRequestAuthorized (CRON_SECRET) instead of the
 // Basic Auth here.
+// Note: /api/app/* (the mobile app API, including /api/app/client-error) is
+// also intentionally NOT protected — the app calls these routes without
+// admin credentials.
 export const config = {
   matcher: [
     '/admin/:path*',

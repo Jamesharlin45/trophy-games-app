@@ -103,7 +103,7 @@ export type VerifyTokenResult =
     | { valid: true; type: MatchTier; matchId?: string };
 
 export type MembershipRequestResult =
-    | { success: true; requestId: string }
+    | { success: true; requestId: string; alreadyPending?: boolean }
     | { success: false; reason: string; requestId?: string };
 
 export type RecordPurchaseResult =

@@ -38,9 +38,9 @@ export interface MatchData {
         pick?: string;
     };
     odds?: {
-        home: string;
-        away: string;
-        draw?: string;
+        home: number;
+        away: number;
+        draw?: number;
     };
     detailedOdds?: {
         isGenerated?: boolean;

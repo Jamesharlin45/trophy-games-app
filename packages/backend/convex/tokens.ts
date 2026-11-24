@@ -218,7 +218,7 @@ export const requestMembership = mutation({
             .first();
 
         if (existing) {
-            return { success: false, reason: "Request already pending", requestId: existing._id };
+            return { success: true, requestId: existing._id, alreadyPending: true };
         }
 
         const id = await ctx.db.insert("membershipRequests", {
