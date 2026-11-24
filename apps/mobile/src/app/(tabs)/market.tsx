@@ -7,10 +7,10 @@ import { useUser } from '../../context/UserContext';
 import { typography } from '../../theme/typography';
 import { SUBSCRIPTION_PRODUCTS } from '@trophy-games/shared/subscriptions';
 import { useIap, ProductSubscription } from '../../hooks/useIap';
-import * as Application from 'expo-application';
 import { api } from '../../api/client';
 import { useScreenQuery } from '../../hooks/useLiveQuery';
 import { safeString, safeDateTime } from '../../utils/safeData';
+import { getDeviceId } from '../../utils/deviceId';
 import { withErrorBoundary } from '../../components/ScreenErrorBoundary';
 
 type MemberStatus = 'none' | 'pending' | 'approved' | 'active' | 'loading';
@@ -62,8 +62,9 @@ function MembershipStoreScreen() {
 
     // Get device ID on mount
     useEffect(() => {
-        const id = Application.applicationId + '_' + (Application.nativeApplicationVersion || 'v1');
-        setDeviceId(id);
+        let cancelled = false;
+        void getDeviceId().then((id) => { if (!cancelled) setDeviceId(id); }).catch(() => {});
+        return () => { cancelled = true; };
     }, []);
 
     // Membership status for each tier.
@@ -207,10 +208,10 @@ function MembershipStoreScreen() {
         if (status === 'none' || status === 'loading') return null;
 
         const config = iapActive
-            ? { color: '#10b981', icon: ShoppingCart, label: 'SUBSCRIBED' }
+            ? { color: themeColors.success, icon: ShoppingCart, label: 'SUBSCRIBED' }
             : {
-                pending: { color: '#f59e0b', icon: Clock, label: 'PENDING' },
-                approved: { color: '#15783a', icon: CheckCircle2, label: 'APPROVED' },
+                pending: { color: themeColors.warning, icon: Clock, label: 'PENDING' },
+                approved: { color: themeColors.success, icon: CheckCircle2, label: 'APPROVED' },
                 active: { color: themeColors.primary, icon: Crown, label: 'ACTIVE' },
             }[status as 'pending' | 'approved' | 'active'];
 

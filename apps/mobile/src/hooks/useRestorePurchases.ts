@@ -14,10 +14,10 @@
 
 import { useEffect, useRef } from 'react';
 import { Platform } from 'react-native';
-import * as Application from 'expo-application';
 import type { Purchase } from 'react-native-iap';
 import { ALL_PRODUCT_IDS } from '@trophy-games/shared/subscriptions';
 import { api } from '../api/client';
+import { getDeviceId } from '../utils/deviceId';
 
 interface BillingModule {
     initConnection: () => Promise<boolean>;
@@ -53,10 +53,8 @@ export function useRestorePurchases(): void {
         const mod = getBillingModule();
         if (!mod) return;
 
-        const deviceId =
-            Application.applicationId + '_' + (Application.nativeApplicationVersion || 'v1');
-
         const run = async () => {
+            const deviceId = await getDeviceId();
             let connected = false;
             try {
                 connected = await mod.initConnection();

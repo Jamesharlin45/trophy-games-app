@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useState, useEffect } from 'react';
 import { api } from '../api/client';
 import { useScreenQuery } from '../hooks/useLiveQuery';
+import { getDeviceId } from '../utils/deviceId';
 import { safeString, safeDateTime } from '../utils/safeData';
 
 export default function AlertsScreen() {
@@ -14,16 +15,11 @@ export default function AlertsScreen() {
     const [deviceId, setDeviceId] = useState<string | null>(null);
 
     useEffect(() => {
-        const getDeviceId = async () => {
-            try {
-                const Application = await import('expo-application');
-                const id = Application.applicationId + '_' + (Application.nativeApplicationVersion || 'v1');
-                setDeviceId(id);
-            } catch (e) {
-                console.error('Failed to get deviceId:', e);
-            }
-        };
-        getDeviceId();
+        let cancelled = false;
+        void getDeviceId()
+            .then((id) => { if (!cancelled) setDeviceId(id); })
+            .catch(() => {});
+        return () => { cancelled = true; };
     }, []);
 
     const { data: alerts, refetch } = useScreenQuery(

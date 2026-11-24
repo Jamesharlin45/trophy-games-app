@@ -18,9 +18,10 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
     const systemColorScheme = useColorScheme();
     const [theme, setThemeState] = useState<ThemeType>('system');
-    const [isLoaded, setIsLoaded] = useState(false);
 
     useEffect(() => {
+        // Apply a saved theme on start — children render immediately with the
+        // system scheme so there is no flicker while it loads.
         const loadTheme = async () => {
             try {
                 const savedTheme = await AsyncStorage.getItem('user-theme') as ThemeType | null;
@@ -29,8 +30,6 @@ export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
                 }
             } catch (e) {
                 console.warn(e);
-            } finally {
-                setIsLoaded(true);
             }
         };
         loadTheme();
@@ -49,8 +48,6 @@ export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
 
     const isDark = theme === 'system' ? systemColorScheme === 'dark' : theme === 'dark';
     const themeColors = isDark ? colors.dark : colors.light;
-
-    if (!isLoaded) return null;
 
     return (
         <ThemeContext.Provider value={{ theme, isDark, themeColors, toggleTheme, setTheme }}>

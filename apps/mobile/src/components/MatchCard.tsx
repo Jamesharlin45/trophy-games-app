@@ -6,6 +6,7 @@ import { useTheme } from '../context/ThemeContext';
 import { typography } from '../theme/typography';
 import { useRouter } from 'expo-router';
 import type { ApiMatch } from '../api/client';
+import type { ThemeColors } from '../theme/colors';
 import { safeString, safeScore, safePercent } from '../utils/safeData';
 
 const parseOdds = (value: unknown): number => {
@@ -15,6 +16,8 @@ const parseOdds = (value: unknown): number => {
 
 const TeamBadge = ({ uri, name }: { uri?: string; name: string }) => {
     const [failed, setFailed] = useState(false);
+    const { themeColors } = useTheme();
+    const badgeStyles = getBadgeStyles(themeColors);
     const safeName = safeString(name);
     const initials = safeName.split(' ').slice(0, 2).map((w: string) => w[0]).join('').toUpperCase();
     const flagUri = !uri || failed ? getCountryFlagUrl(name) : undefined;
@@ -32,13 +35,15 @@ const TeamBadge = ({ uri, name }: { uri?: string; name: string }) => {
     return <View style={badgeStyles.initialsBox}><Text style={badgeStyles.initials}>{initials}</Text></View>;
 };
 
-const badgeStyles = StyleSheet.create({
-    logo: { width: 36, height: 36, borderRadius: 18, borderWidth: 1, borderColor: 'rgba(128,128,128,0.12)' },
-    flagBox: { width: 36, height: 36, borderRadius: 18, overflow: 'hidden', backgroundColor: 'rgba(128,128,128,0.08)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(128,128,128,0.12)' },
-    flag: { width: 36, height: 24, resizeMode: 'cover' },
-    initialsBox: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(128,128,128,0.15)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(128,128,128,0.12)' },
-    initials: { fontSize: 11, fontWeight: '700', textAlign: 'center', color: '#888', letterSpacing: 0.3 },
-});
+function getBadgeStyles(themeColors: ThemeColors) {
+    return StyleSheet.create({
+        logo: { width: 36, height: 36, borderRadius: 18, borderWidth: 1, borderColor: themeColors.glass },
+        flagBox: { width: 36, height: 36, borderRadius: 18, overflow: 'hidden', backgroundColor: themeColors.glass, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: themeColors.glass },
+        flag: { width: 36, height: 24, resizeMode: 'cover' },
+        initialsBox: { width: 36, height: 36, borderRadius: 18, backgroundColor: themeColors.glass, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: themeColors.glass },
+        initials: { fontSize: 11, fontWeight: '700', textAlign: 'center', color: themeColors.textMuted, letterSpacing: 0.3 },
+    });
+}
 
 interface MatchCardProps {
     leagueName: string;
@@ -89,6 +94,7 @@ export const MatchCard = ({
 }: MatchCardProps) => {
     const router = useRouter();
     const { themeColors } = useTheme();
+    const styles = getStyles(themeColors);
 
     const getFlagUrl = (countryName?: string) => {
         const name = safeString(countryName);
@@ -229,7 +235,7 @@ export const MatchCard = ({
                             <Text style={[styles.predictionLabel, { color: themeColors.textMuted }]}>{predictionLabel}</Text>
                             <View style={[styles.predictionChip, { backgroundColor: themeColors.primary, shadowColor: themeColors.primary }]}>
                                 <Text
-                                    style={[styles.predictionValue, { color: '#090A0C' }]}
+                                    style={[styles.predictionValue, { color: themeColors.background }]}
                                     numberOfLines={1}
                                     adjustsFontSizeToFit
                                     minimumFontScale={0.7}
@@ -250,8 +256,9 @@ export const MatchCard = ({
     );
 };
 
-const styles = StyleSheet.create({
-    card: {
+function getStyles(themeColors: ThemeColors) {
+    return StyleSheet.create({
+        card: {
         borderRadius: 16,
         paddingHorizontal: 16,
         paddingTop: 16,
@@ -407,8 +414,9 @@ const styles = StyleSheet.create({
         elevation: 4,
     },
     unlockButtonText: {
-        color: '#090A0C',
+        color: themeColors.background,
         ...typography.result,
         letterSpacing: 0.3,
     },
 });
+}

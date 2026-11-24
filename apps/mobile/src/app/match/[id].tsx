@@ -151,6 +151,7 @@ export default function MatchDetailScreen() {
 
     // Null-safe locals for the scoreboard below.
     const safeLeague = safeString(match.league);
+    const safeLeagueLogo = safeString(match.leagueLogo);
     const safeHomeTeam = safeString(match.homeTeam);
     const safeAwayTeam = safeString(match.awayTeam);
     const safeCountry = safeString(match.country);
@@ -179,6 +180,9 @@ export default function MatchDetailScreen() {
                 {/* Hero Scoreboard */}
                 <View style={[styles.scoreboard, { backgroundColor: themeColors.cardBgSecondary }]}>
                     <View style={styles.leagueRow}>
+                        {safeLeagueLogo && (
+                            <Image source={{ uri: safeLeagueLogo }} style={styles.leagueLogo} />
+                        )}
                         <ShieldCheck size={11} color={themeColors.textMuted} />
                         <Text style={[styles.leagueText, { color: themeColors.textMuted }]}>
                             {safeLeague.replace(/\w\S*/g, (w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())}
@@ -192,7 +196,7 @@ export default function MatchDetailScreen() {
                     <View style={[
                         styles.statusBadge,
                         {
-                            backgroundColor: isLive ? '#ef4444' : isFinished ? themeColors.cardBg : themeColors.cardBg,
+                            backgroundColor: isLive ? themeColors.error : isFinished ? themeColors.cardBg : themeColors.cardBg,
                         }
                     ]}>
                         {isLive && <View style={styles.liveDot} />}
@@ -536,7 +540,7 @@ export default function MatchDetailScreen() {
                                     <View style={styles.formStreak}>
                                         {safeString(match.homeForm).split('').slice(0, 5).map((char: string, i: number) => (
                                             <View key={i} style={[styles.formBadge, {
-                                                backgroundColor: char === 'W' ? '#15783a' : char === 'D' ? themeColors.orange9 : '#EF4444'
+                                                backgroundColor: char === 'W' ? themeColors.success : char === 'D' ? themeColors.orange9 : themeColors.error
                                             }]}>
                                                 <Text style={styles.formBadgeText}>{char}</Text>
                                             </View>
@@ -550,7 +554,7 @@ export default function MatchDetailScreen() {
                                     <View style={styles.formStreak}>
                                         {safeString(match.awayForm).split('').slice(0, 5).map((char: string, i: number) => (
                                             <View key={i} style={[styles.formBadge, {
-                                                backgroundColor: char === 'W' ? '#15783a' : char === 'D' ? themeColors.orange9 : '#EF4444'
+                                                backgroundColor: char === 'W' ? themeColors.success : char === 'D' ? themeColors.orange9 : themeColors.error
                                             }]}>
                                                 <Text style={styles.formBadgeText}>{char}</Text>
                                             </View>
@@ -726,6 +730,11 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 5,
+    },
+    leagueLogo: {
+        width: 20,
+        height: 20,
+        borderRadius: 4,
     },
     leagueText: {
         ...typography.leagueNameDetail,

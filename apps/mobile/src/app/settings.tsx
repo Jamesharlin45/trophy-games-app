@@ -1,15 +1,18 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
+import { useUser } from '../context/UserContext';
 import { useLanguage } from '../context/LanguageContext';
 import { typography } from '../theme/typography';
-import { Settings, Globe, LogOut, ShieldAlert, Palette, Moon, Sun, Smartphone } from 'lucide-react-native';
+import { Settings, Globe, LogOut, ShieldAlert, Palette, Moon, Sun, Smartphone, MessageCircle } from 'lucide-react-native';
 import i18n from '../locales';
+import { joinTelegram } from '../lib/telegram';
 
 export default function SettingsScreen() {
     const { themeColors, theme, setTheme } = useTheme();
     const { locale, setLocale } = useLanguage();
+    const { logout } = useUser();
     const router = useRouter();
 
     const languages = [
@@ -85,12 +88,22 @@ export default function SettingsScreen() {
                 </View>
             </View>
 
-            <TouchableOpacity 
+            {/* Telegram invite */}
+            <TouchableOpacity
+                style={[styles.btn, { backgroundColor: themeColors.cardBgSecondary }]}
+                onPress={() => { void joinTelegram(); }}
+            >
+                <MessageCircle size={20} color={themeColors.textMuted} />
+                <Text style={[styles.btnText, { color: themeColors.text }]}>Join our Telegram</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
                 style={[styles.btn, { backgroundColor: themeColors.cardBgSecondary }]}
                 onPress={() => {
-                    // Logic to clear user token / username would go here
-                    // Then redirect to onboarding
-                    // router.replace('/onboarding');
+                    Alert.alert('Sign Out', 'Sign out of Trophy Games?', [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Sign Out', onPress: () => { void logout(); } },
+                    ]);
                 }}
             >
                 <LogOut size={20} color={themeColors.textMuted} />

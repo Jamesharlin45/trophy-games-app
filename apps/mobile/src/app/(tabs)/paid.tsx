@@ -1,5 +1,5 @@
 import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, StyleSheet, RefreshControl, TextInput, Alert, KeyboardAvoidingView, Platform } from 'react-native';
-import { DollarSign, Zap, CheckCircle2, Clock, Send, Key } from 'lucide-react-native';
+import { DollarSign, Zap, CheckCircle2, Clock, Send, Key, MessageCircle } from 'lucide-react-native';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { MatchCard } from '../../components/MatchCard';
 import { DatePickerStrip } from '../../components/DatePickerStrip';
@@ -9,9 +9,10 @@ import { typography } from '../../theme/typography';
 import { api } from '../../api/client';
 import { useScreenQuery } from '../../hooks/useLiveQuery';
 import { safeString, safeTime, safeScore } from '../../utils/safeData';
+import { getDeviceId } from '../../utils/deviceId';
+import { joinTelegram } from '../../lib/telegram';
 import { withErrorBoundary } from '../../components/ScreenErrorBoundary';
 import { useRouter } from 'expo-router';
-import * as Application from 'expo-application';
 
 
 type MemberStatus = 'none' | 'pending' | 'approved' | 'rejected' | 'active' | 'loading';
@@ -36,8 +37,9 @@ function PaidTipsScreen() {
     const { username } = useUser();
 
     useEffect(() => {
-        const id = Application.applicationId + '_' + (Application.nativeApplicationVersion || 'v1');
-        setDeviceId(id);
+        let cancelled = false;
+        void getDeviceId().then((id) => { if (!cancelled) setDeviceId(id); }).catch(() => {});
+        return () => { cancelled = true; };
     }, []);
 
     const {
@@ -201,8 +203,8 @@ function PaidTipsScreen() {
                     )}
 
                     {memberStatus === 'approved' && !enteringToken && (
-                        <View style={[styles.pendingCard, { backgroundColor: themeColors.cardBg, borderColor: '#15783a' }]}>
-                            <CheckCircle2 size={18} color={'#15783a'} />
+                        <View style={[styles.pendingCard, { backgroundColor: themeColors.cardBg, borderColor: themeColors.success }]}>
+                            <CheckCircle2 size={18} color={themeColors.success} />
                             <Text style={[styles.pendingTitle, { color: themeColors.text }]}>Request Approved!</Text>
                             <Text style={[styles.pendingText, { color: themeColors.textMuted }]}>
                                 Your Paid access request has been approved. Please enter your token below.
@@ -219,13 +221,22 @@ function PaidTipsScreen() {
                     </TouchableOpacity>
 
                     {!enteringToken ? (
-                        <TouchableOpacity
-                            style={[styles.secondaryBtn, { borderColor: themeColors.border }]}
-                            onPress={() => setEnteringToken(true)}
-                        >
-                            <Key size={13} color={themeColors.textMuted} />
-                            <Text style={[styles.secondaryBtnText, { color: themeColors.textMuted }]}>I HAVE A TOKEN</Text>
-                        </TouchableOpacity>
+                        <View style={styles.tokenRow}>
+                            <TouchableOpacity
+                                style={[styles.secondaryBtn, { borderColor: themeColors.border, flex: 1 }]}
+                                onPress={() => setEnteringToken(true)}
+                            >
+                                <Key size={13} color={themeColors.textMuted} />
+                                <Text style={[styles.secondaryBtnText, { color: themeColors.textMuted }]}>I HAVE A TOKEN</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.telegramBtn, { borderColor: themeColors.border }]}
+                                onPress={() => { void joinTelegram(); }}
+                            >
+                                <MessageCircle size={14} color={themeColors.textMuted} />
+                                <Text style={[styles.telegramText, { color: themeColors.textMuted }]}>TELEGRAM</Text>
+                            </TouchableOpacity>
+                        </View>
                     ) : (
                         <View style={[styles.tokenInputCard, { backgroundColor: themeColors.cardBg, borderColor: themeColors.border }]}>
                             <Text style={[styles.tokenInputLabel, { color: themeColors.textMuted }]}>ENTER YOUR ACCESS TOKEN</Text>
@@ -366,6 +377,18 @@ const styles = StyleSheet.create({
     tokenInputLabel: { ...typography.tokenLabel },
     tokenInput: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, ...typography.tokenInput },
     tokenBtnRow: { flexDirection: 'row', gap: 10 },
+    tokenRow: { flexDirection: 'row', gap: 10 },
+    telegramBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        paddingHorizontal: 12,
+        paddingVertical: 13,
+        borderRadius: 14,
+        borderWidth: 1,
+    },
+    telegramText: { ...typography.secondaryBtn },
     cancelBtn: { paddingHorizontal: 16, paddingVertical: 14, borderRadius: 12, justifyContent: 'center' },
     cancelBtnText: { ...typography.cancelBtn },
     activeBanner: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 16, paddingVertical: 8, borderBottomWidth: 1, justifyContent: 'center' },

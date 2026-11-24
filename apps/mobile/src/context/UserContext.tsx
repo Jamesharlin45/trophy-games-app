@@ -1,9 +1,10 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Application from 'expo-application';
 import { router } from 'expo-router';
 import { api } from '../api/client';
 import { useApiQuery } from '../hooks/useLiveQuery';
+import { getDeviceId } from '../utils/deviceId';
+import { CacheManager } from '../utils/cache';
 
 interface UserContextType {
   username: string | null;
@@ -22,10 +23,18 @@ const UserContext = createContext<UserContextType>({
 export function UserProvider({ children }: { children: React.ReactNode }) {
   const [username, setUsernameState] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [deviceId, setDeviceId] = useState<string | null>(null);
 
-  const deviceId = `${Application.applicationId}-${Application.nativeApplicationVersion}`;
+  useEffect(() => {
+    let cancelled = false;
+    void getDeviceId().then((id) => {
+      if (!cancelled) setDeviceId(id);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
   const { data: remoteUser, loaded } = useApiQuery(
-    () => api.users.byDevice(deviceId),
+    () => api.users.byDevice(deviceId ?? ''),
     [deviceId],
   );
 
@@ -67,6 +76,9 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   const logout = async () => {
     await setUsername(null);
+    // Clear cached data (user, match/membership caches) so nothing stale is
+    // served after signing back in. The theme choice is intentionally kept.
+    await CacheManager.clear();
     router.replace('/onboarding');
   };
 
