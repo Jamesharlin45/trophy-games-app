@@ -243,10 +243,11 @@ export const api = {
             deviceId: string,
             type: 'vip' | 'paid',
             username?: string,
+            email?: string,
         ) =>
             request<MembershipRequestResult>('/tokens/create-membership-request', {
                 method: 'POST',
-                body: { deviceId, type, username },
+                body: { deviceId, type, username, email },
             }),
         requestMembership: (deviceId: string, type: 'vip' | 'paid', username?: string) =>
             request<MembershipRequestResult>('/tokens/request-membership', {

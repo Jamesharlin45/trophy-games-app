@@ -3,6 +3,8 @@ import { Crown, Calendar, Lock, Key, CheckCircle2, Clock, Send, MessageCircle } 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { MatchCard } from '../../components/MatchCard';
 import { DatePickerStrip } from '../../components/DatePickerStrip';
+import { EmailRequestDialog, type EmailSubmitResult } from '../../components/EmailRequestDialog';
+import { RequestSentDialog } from '../../components/RequestSentDialog';
 import { useTheme } from '../../context/ThemeContext';
 import { useUser } from '../../context/UserContext';
 import { typography } from '../../theme/typography';
@@ -10,6 +12,7 @@ import { api } from '../../api/client';
 import { useScreenQuery } from '../../hooks/useLiveQuery';
 import { safeString, safeTime, safeScore } from '../../utils/safeData';
 import { getDeviceId } from '../../utils/deviceId';
+import { getRequestEmail, saveRequestEmail } from '../../utils/requestEmail';
 import { joinTelegram } from '../../lib/telegram';
 import { withErrorBoundary } from '../../components/ScreenErrorBoundary';
 import { useRouter } from 'expo-router';
@@ -31,14 +34,17 @@ function VIPTipsScreen() {
     const [tokenInput, setTokenInput] = useState('');
     const [enteringToken, setEnteringToken] = useState(false);
     const [verifyingToken, setVerifyingToken] = useState(false);
-    const [requesting, setRequesting] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
     const [deviceId, setDeviceId] = useState('');
+    const [emailDialogVisible, setEmailDialogVisible] = useState(false);
+    const [sentDialogVisible, setSentDialogVisible] = useState(false);
+    const [savedEmail, setSavedEmail] = useState('');
     const { username } = useUser();
 
     useEffect(() => {
         let cancelled = false;
         void getDeviceId().then((id) => { if (!cancelled) setDeviceId(id); }).catch(() => {});
+        void getRequestEmail().then((email) => { if (!cancelled) setSavedEmail(email); }).catch(() => {});
         return () => { cancelled = true; };
     }, []);
 
@@ -98,24 +104,32 @@ function VIPTipsScreen() {
         setRefreshing(false);
     }, [refetchMembership, refetchMatches]);
 
-    const requestMembership = async () => {
-        if (!deviceId) return;
-        setRequesting(true);
+    const requestMembership = () => {
+        setEmailDialogVisible(true);
+    };
+
+    const handleEmailSubmit = async (email: string): Promise<EmailSubmitResult> => {
+        if (!deviceId) {
+            return { ok: false, error: 'Device not ready. Please try again.' };
+        }
         try {
-            const result = await api.tokens.createMembershipRequest(deviceId, 'vip', username || undefined);
+            const result = await api.tokens.createMembershipRequest(deviceId, 'vip', username || undefined, email);
             if (result.success) {
-                Alert.alert('Request Sent!', 'Your VIP membership request has been submitted. You will receive a token once approved by admin.');
+                await saveRequestEmail(email);
+                setEmailDialogVisible(false);
+                setSentDialogVisible(true);
                 await refetchMembership();
-            } else if (isAlreadyPendingReason(safeString(result.reason) || undefined)) {
-                Alert.alert('Already Pending', 'You already have a VIP request pending. Check your request status in the VIP screen.');
-            } else {
-                Alert.alert('Error', safeString(result.reason) || 'Failed to send request. Please try again.');
+                return { ok: true };
             }
+            const reason = safeString(result.reason);
+            if (isAlreadyPendingReason(reason || undefined)) {
+                return { ok: false, error: 'You already have a VIP request pending.' };
+            }
+            return { ok: false, error: reason || 'Failed to send request. Please try again.' };
         } catch (e) {
             const message = e instanceof Error && e.message ? e.message : 'Failed to send request. Please try again.';
-            Alert.alert('Error', message);
+            return { ok: false, error: message };
         }
-        setRequesting(false);
     };
 
     const verifyToken = async () => {
@@ -153,6 +167,7 @@ function VIPTipsScreen() {
     // ---- Gate: not a member ----
     if (memberStatus === 'none' || memberStatus === 'pending' || memberStatus === 'approved' || memberStatus === 'rejected') {
         return (
+            <>
             <KeyboardAvoidingView
                 style={[styles.container, { backgroundColor: themeColors.background }]}
                 behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -185,9 +200,9 @@ function VIPTipsScreen() {
                         <TouchableOpacity
                             style={[styles.primaryBtn, { backgroundColor: themeColors.primary }]}
                             onPress={requestMembership}
-                            disabled={requesting}
+                            disabled={emailDialogVisible}
                         >
-                            {requesting ? <ActivityIndicator color="white" size="small" /> : (
+                            {emailDialogVisible ? <ActivityIndicator color="white" size="small" /> : (
                                 <>
                                     <Send size={16} color="white" />
                                     <Text style={styles.primaryBtnText}>REQUEST VIP MEMBERSHIP</Text>
@@ -278,6 +293,17 @@ function VIPTipsScreen() {
                     )}
                 </ScrollView>
             </KeyboardAvoidingView>
+            <EmailRequestDialog
+                visible={emailDialogVisible}
+                title="VIP Membership Request"
+                note="We will email your VIP code when the request is approved."
+                submitLabel="Send Request"
+                prefillEmail={savedEmail}
+                onSubmit={handleEmailSubmit}
+                onClose={() => setEmailDialogVisible(false)}
+            />
+            <RequestSentDialog visible={sentDialogVisible} onClose={() => setSentDialogVisible(false)} />
+            </>
         );
     }
 

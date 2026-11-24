@@ -23,6 +23,7 @@ export interface DbMembershipRequest {
     deviceId: string;
     username?: string;
     type: TokenType;
+    email?: string;
     status: RequestStatus;
     requestedAt: string;
     resolvedAt?: string;
@@ -49,6 +50,7 @@ interface MembershipRequestRow {
     device_id: string;
     username: string | null;
     type: TokenType;
+    email: string | null;
     status: RequestStatus;
     requested_at: string;
     resolved_at: string | null;
@@ -78,6 +80,7 @@ function mapRequest(row: MembershipRequestRow): DbMembershipRequest {
         deviceId: row.device_id,
         username: row.username ?? undefined,
         type: row.type,
+        email: row.email ?? undefined,
         status: row.status,
         requestedAt: row.requested_at,
         resolvedAt: row.resolved_at ?? undefined,
@@ -353,7 +356,7 @@ export async function claimToken(
  * same device+type blocks new ones. */
 export async function requestMembership(
     db: SupabaseClient,
-    input: { deviceId: string; username?: string; type: TokenType },
+    input: { deviceId: string; username?: string; type: TokenType; email?: string },
 ): Promise<MembershipRequestResult> {
     const { data: existingRows } = await db
         .from('membership_requests')
@@ -375,6 +378,7 @@ export async function requestMembership(
             device_id: input.deviceId,
             username: input.username ?? null,
             type: input.type,
+            email: input.email ?? null,
             status: 'pending',
             requested_at: now,
         })
