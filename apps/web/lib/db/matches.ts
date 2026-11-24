@@ -5,6 +5,8 @@ import type {
     AiPrediction,
     CreateMatchInput,
     DbMatch,
+    MatchOdds,
+    MatchResult,
     MatchRow,
     MatchUpdateFields,
     MatchTier,
@@ -36,6 +38,73 @@ function parseScore(score: string | null | undefined): { homeScore?: number; awa
     return out;
 }
 
+/** Null/missing strings become '' — the app dereferences string fields
+ * without optional chaining, so a null in the DB would crash it. */
+function strOrEmpty(value: string | number | null | undefined): string {
+    if (value == null) return '';
+    return typeof value === 'string' ? value : String(value);
+}
+
+/** App vocabulary for results: 'pending' | 'win' | 'lose' | 'draw'. Stored
+ * rows may carry other values (void is stored as result null, with the full
+ * settlement in details). */
+export function toAppResult(
+    result: MatchResult | null | undefined,
+): 'pending' | 'win' | 'lose' | 'draw' {
+    if (result === 'win' || result === 'lose' || result === 'draw') return result;
+    return 'pending';
+}
+
+/** True when the match settled on a technicality: settle.ts stores 'void'
+ * in details.settlement.outcome with result null. The web admin still sees
+ * these matches; the app endpoints (excludeVoid) hide them. */
+export function isVoidOutcome(match: { details?: Record<string, unknown> | null }): boolean {
+    const fromDetails = (match.details as { settlement?: { outcome?: unknown } } | null | undefined)?.settlement;
+    // mapMatch spreads details onto the match itself ("mirrored at the top
+    // level"), so the settlement can also live directly on the match.
+    const fromSpread = (match as { settlement?: { outcome?: unknown } }).settlement;
+    return fromDetails?.outcome === 'void' || fromSpread?.outcome === 'void';
+}
+
+/** Odds for the app: an object of numbers ('home', 'away', optional 'draw').
+ * DB rows may carry string values, so coerce; unparseable values become 0. */
+function toAppOdds(odds: MatchOdds | null | undefined): MatchOdds | undefined {
+    if (!odds || typeof odds !== 'object') return undefined;
+    const numberOrZero = (value: string | number | null | undefined): number => {
+        const parsed = typeof value === 'number' ? value : Number(value);
+        return Number.isFinite(parsed) ? parsed : 0;
+    };
+    return {
+        home: numberOrZero(odds.home),
+        away: numberOrZero(odds.away),
+        ...(odds.draw != null ? { draw: numberOrZero(odds.draw) } : {}),
+    };
+}
+
+/** aiPrediction for the app: string prediction, numeric confidence, and a
+ * reasoning array of strings — missing/malformed fields are filled in. */
+function toAppAiPrediction(ai: AiPrediction | null | undefined): AiPrediction | undefined {
+    if (!ai || typeof ai !== 'object') return undefined;
+    return {
+        ...ai,
+        prediction: strOrEmpty(ai.prediction),
+        confidence: typeof ai.confidence === 'number' && Number.isFinite(ai.confidence) ? ai.confidence : 0,
+        reasoning: Array.isArray(ai.reasoning)
+            ? ai.reasoning.map((line) => (typeof line === 'string' ? line : ''))
+            : [],
+    };
+}
+
+/** The canonical 'H-A' score string for the app; unknown sides become ''. */
+function appScore(parsed: { homeScore?: number; awayScore?: number }): string {
+    return `${parsed.homeScore ?? ''}-${parsed.awayScore ?? ''}`;
+}
+
+/** Apply the app filters (void exclusion) to a mapped match list. */
+function withoutVoid(matches: DbMatch[], excludeVoid?: boolean): DbMatch[] {
+    return excludeVoid ? matches.filter((m) => !isVoidOutcome(m)) : matches;
+}
+
 /** Derive the match_date range-filter value (YYYY-MM-DD, UTC) from a kickoff
  * timestamp — the same format the Daily/Weekly range filter reads. */
 export function utcMatchDate(timestamp: string): string {
@@ -48,28 +117,29 @@ export function utcMatchDate(timestamp: string): string {
     return t.split('T')[0];
 }
 
-function mapMatch(row: MatchRow): DbMatch {
+export function mapMatch(row: MatchRow): DbMatch {
     // Rich detail fields (homeForm, potentials, h2h, ...) live in `details`
     // (no dedicated columns) and are mirrored at the top level of the
     // returned object to match Convex doc shapes.
     const details: Record<string, unknown> = { ...(row.details ?? {}) };
+    const parsedScore = parseScore(row.score);
     return {
         id: row.external_id ?? row.id,
         _id: row.id,
-        homeTeam: row.home_team,
-        awayTeam: row.away_team,
-        league: row.league,
-        timestamp: row.kickoff,
-        status: row.status,
-        score: row.score,
+        homeTeam: strOrEmpty(row.home_team),
+        awayTeam: strOrEmpty(row.away_team),
+        league: strOrEmpty(row.league),
+        timestamp: strOrEmpty(row.kickoff),
+        status: strOrEmpty(row.status),
+        score: appScore(parsedScore),
         matchType: row.tier ?? undefined,
         isTrending: row.trending ?? undefined,
-        odds: row.odds ?? undefined,
-        aiPrediction: row.ai_prediction ?? undefined,
-        result: row.result ?? undefined,
+        odds: toAppOdds(row.odds),
+        aiPrediction: toAppAiPrediction(row.ai_prediction),
+        result: toAppResult(row.result),
         isHistory: row.is_history ?? undefined,
         matchDate: row.match_date ?? undefined,
-        ...parseScore(row.score),
+        ...parsedScore,
         ...details,
     } as DbMatch;
 }
@@ -141,6 +211,9 @@ export interface AppMatchQueryOptions {
     /** Hide AI picks that are still unpublished: rows with tier 'unassigned'
      * and an external id starting 'af-'. Every other row is unaffected. */
     excludeUnpublishedPicks?: boolean;
+    /** Hide void outcomes (stored as result null + details.settlement.outcome
+     * 'void'). The web admin does not set this, so void stays visible there. */
+    excludeVoid?: boolean;
 }
 
 /**
@@ -168,7 +241,7 @@ export async function getAll(
     const { data } = await query
         .order('kickoff', { ascending: false })
         .limit(limit);
-    return mapMatches((data ?? []) as MatchRow[]);
+    return withoutVoid(mapMatches((data ?? []) as MatchRow[]), options?.excludeVoid);
 }
 
 /** api.matches.getById — external id first, then the row id as fallback
@@ -182,13 +255,15 @@ export async function getById(
     if (data && data.length > 0) {
         const row = data[0] as MatchRow;
         if (options?.excludeUnpublishedPicks && isUnpublishedPick(row)) return null;
-        return mapMatch(row);
+        const mapped = mapMatch(row);
+        return options?.excludeVoid && isVoidOutcome(mapped) ? null : mapped;
     }
     const byRowId = await db.from('matches').select('*').eq('id', matchId).limit(1);
     if (byRowId.data && byRowId.data.length > 0) {
         const row = byRowId.data[0] as MatchRow;
         if (options?.excludeUnpublishedPicks && isUnpublishedPick(row)) return null;
-        return mapMatch(row);
+        const mapped = mapMatch(row);
+        return options?.excludeVoid && isVoidOutcome(mapped) ? null : mapped;
     }
     return null;
 }
@@ -206,7 +281,7 @@ export async function getByDate(
     const { data } = await query
         .order('kickoff', { ascending: false })
         .limit(100);
-    return mapMatches((data ?? []) as MatchRow[]);
+    return withoutVoid(mapMatches((data ?? []) as MatchRow[]), options?.excludeVoid);
 }
 
 /** api.matches.getByTypeAndDate — matches of one tier on a date, newest
@@ -225,7 +300,7 @@ export async function getByTypeAndDate(
     const { data } = await query
         .order('kickoff', { ascending: false })
         .limit(limit);
-    return mapMatches((data ?? []) as MatchRow[]);
+    return withoutVoid(mapMatches((data ?? []) as MatchRow[]), options?.excludeVoid);
 }
 
 /** Admin-only: stored unpublished fixtures for a date — rows with an
@@ -245,28 +320,38 @@ export async function getUnpublishedFixtures(db: SupabaseClient, date: string): 
 
 /** api.matches.getHistory — the mobile Wins feed: status Finished/FT or
  * flagged history, newest first. */
-export async function getHistory(db: SupabaseClient, limit = 100): Promise<DbMatch[]> {
+export async function getHistory(
+    db: SupabaseClient,
+    limit = 100,
+    options?: AppMatchQueryOptions,
+): Promise<DbMatch[]> {
     const { data } = await db
         .from('matches')
         .select('*')
         .or('status.eq.Finished,status.eq.FT,is_history.eq.true')
         .order('kickoff', { ascending: false })
         .limit(limit);
-    return mapMatches((data ?? []) as MatchRow[]);
+    return withoutVoid(mapMatches((data ?? []) as MatchRow[]), options?.excludeVoid);
 }
 
 /** Mobile history feed: finished matches that carry a published tip — tier
  * free/vip/paid with an ai_prediction; unpublished picks (tier
  * 'unassigned' or null) are excluded. Newest first. */
-export async function getPublishedFinishedMatches(db: SupabaseClient): Promise<DbMatch[]> {
+export async function getPublishedFinishedMatches(
+    db: SupabaseClient,
+    options?: AppMatchQueryOptions,
+): Promise<DbMatch[]> {
     const { data } = await db
         .from('matches')
         .select('*')
         .or('status.eq.Finished,status.eq.FT,is_history.eq.true')
         .order('match_date', { ascending: false })
         .limit(1000);
-    return mapMatches((data ?? []) as MatchRow[]).filter(
-        (m) => (m.matchType === 'free' || m.matchType === 'vip' || m.matchType === 'paid') && Boolean(m.aiPrediction),
+    return withoutVoid(
+        mapMatches((data ?? []) as MatchRow[]).filter(
+            (m) => (m.matchType === 'free' || m.matchType === 'vip' || m.matchType === 'paid') && Boolean(m.aiPrediction),
+        ),
+        options?.excludeVoid,
     );
 }
 

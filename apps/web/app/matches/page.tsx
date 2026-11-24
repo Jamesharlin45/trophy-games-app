@@ -11,11 +11,11 @@ import { leagueTier, rankOrInfinity } from '@/lib/trending';
 
 // Win probability implied by the bookmaker odds (from the API), normalised to
 // remove the margin so the three outcomes sum to ~100%.
-function impliedProbabilities(odds?: { home?: string; draw?: string; away?: string }) {
+function impliedProbabilities(odds?: { home?: number; draw?: number; away?: number }) {
     if (!odds) return null;
-    const h = parseFloat(odds.home || '');
-    const d = parseFloat(odds.draw || '');
-    const a = parseFloat(odds.away || '');
+    const h = odds.home ?? 0;
+    const d = odds.draw ?? 0;
+    const a = odds.away ?? 0;
     if (!(h > 1)) return null;
     const ih = 1 / h;
     const id = d > 1 ? 1 / d : 0;

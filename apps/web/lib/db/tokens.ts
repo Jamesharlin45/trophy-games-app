@@ -489,9 +489,12 @@ export async function rejectMembershipRequest(db: SupabaseClient, input: { reque
 
 /** api.tokens.requestMembership (aliased as api.tokens.createMembershipRequest).
  * Returns the Convex-shaped result: { success, requestId } or
- * { success: false, reason, requestId } when a request is already pending. */
+ * { success: false, reason, requestId } when a request is already pending.
+ * A repeat request from a device that already has a pending request is
+ * idempotent: success:true with the existing requestId and
+ * alreadyPending:true (no new row, no new rate-limit hit). */
 export type MembershipRequestResult =
-    | { success: true; requestId: string }
+    | { success: true; requestId: string; alreadyPending?: boolean }
     | { success: false; reason: string; requestId?: string };
 
 /** api.tokens.claimToken — mobile alias of the verification: { success, reason?, type?, matchId? }. */
@@ -680,7 +683,7 @@ export async function claimToken(
 }
 
 /** api.tokens.requestMembership — Convex rules: a pending request for the
- * same device+type blocks new ones. */
+ * same device+type blocks new ones, and repeats are idempotent. */
 export async function requestMembership(
     db: SupabaseClient,
     input: { deviceId: string; username?: string; type: TokenType; email: string },
@@ -691,6 +694,20 @@ export async function requestMembership(
     }
     if (!isValidEmail(email)) {
         return { success: false, reason: 'Invalid email address' };
+    }
+
+    // Idempotency: if a pending request already exists for this device+type,
+    // return it — success with the existing request id, not a failure.
+    const { data: existingRows } = await db
+        .from('membership_requests')
+        .select('id')
+        .eq('device_id', input.deviceId)
+        .eq('type', input.type)
+        .eq('status', 'pending')
+        .limit(1);
+    if (existingRows && existingRows.length > 0) {
+        const existing = existingRows[0] as { id: string };
+        return { success: true, requestId: existing.id, alreadyPending: true };
     }
 
     // Per-device rate limit: at most three manual requests per hour, so a
@@ -704,18 +721,6 @@ export async function requestMembership(
         .limit(3);
     if (recentRows && recentRows.length >= 3) {
         return { success: false, reason: 'Rate limited: please try again later' };
-    }
-
-    const { data: existingRows } = await db
-        .from('membership_requests')
-        .select('id')
-        .eq('device_id', input.deviceId)
-        .eq('type', input.type)
-        .eq('status', 'pending')
-        .limit(1);
-    if (existingRows && existingRows.length > 0) {
-        const existing = existingRows[0] as { id: string };
-        return { success: false, reason: 'Request already pending', requestId: existing.id };
     }
 
     const now = new Date().toISOString();

@@ -92,9 +92,9 @@ const formFromMatch = (match?: MatchData | null): FormState => ({
     homeScore: match?.homeScore !== undefined ? String(match.homeScore) : '',
     awayScore: match?.awayScore !== undefined ? String(match.awayScore) : '',
     matchType: match?.matchType ?? 'unassigned',
-    homeOdds: match?.odds?.home ?? '',
-    drawOdds: match?.odds?.draw ?? '',
-    awayOdds: match?.odds?.away ?? '',
+    homeOdds: match?.odds?.home != null ? String(match.odds.home) : '',
+    drawOdds: match?.odds?.draw != null ? String(match.odds.draw) : '',
+    awayOdds: match?.odds?.away != null ? String(match.odds.away) : '',
     prediction: match?.aiPrediction?.prediction ?? '',
     // An empty confidence keeps a match with no AI data "all empty" so the
     // prediction object is omitted instead of being sent with a dummy value.

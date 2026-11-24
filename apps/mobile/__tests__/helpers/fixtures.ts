@@ -43,18 +43,18 @@ export const FIXTURE_A_UPCOMING_FREE: MatchData = {
 export const FIXTURE_B_UPCOMING_FREE_WITH_ODDS: MatchData = {
     ...FIXTURE_A_UPCOMING_FREE,
     id: 'match-b',
-    odds: { home: '1.77', draw: '3.15', away: '2.22' },
+    odds: { home: 1.77, draw: 3.15, away: 2.22 },
     detailedOdds: {
         ft: { '1x2': { home: '1.77', draw: '3.15', away: '2.22' } },
         ht: { '1x2': { home: '1.55', draw: '3.45', away: '2.1' } },
     },
 };
 
-/** Odds with edge cases: missing draw, a 0, an empty string and a non-numeric string. */
+/** Odds with edge cases: missing draw, a 0, and non-numeric values. */
 export const FIXTURE_C_ODDS_EDGE_CASES: MatchData = {
     ...FIXTURE_A_UPCOMING_FREE,
     id: 'match-c',
-    odds: { home: '', draw: '0', away: 'abc' },
+    odds: { home: 0, draw: 0, away: 0 },
     detailedOdds: {
         ft: { '1x2': { home: '2.5', draw: '', away: 'not-a-number' } },
     },

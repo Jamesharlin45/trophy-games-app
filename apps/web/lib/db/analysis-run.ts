@@ -307,9 +307,7 @@ function oddsScoreOf(row: MatchRow): number {
     const odds = row.odds;
     if (!odds) return 0;
     const values = [odds.home, odds.away, odds.draw]
-        .filter((v): v is string => typeof v === 'string' && v.trim() !== '')
-        .map((v) => Number(v.trim()))
-        .filter((v) => Number.isFinite(v));
+        .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
     return values.length > 0 ? Math.max(...values) : 0;
 }
 

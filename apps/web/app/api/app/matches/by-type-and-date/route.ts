@@ -44,6 +44,7 @@ export async function GET(request: Request) {
     try {
         return NextResponse.json(await getByTypeAndDate(db, matchType, date, limit, {
             excludeUnpublishedPicks: matchType === 'unassigned',
+            excludeVoid: true,
         }));
     } catch (error) {
         console.error('[API App Matches ByTypeAndDate] Error:', error);
