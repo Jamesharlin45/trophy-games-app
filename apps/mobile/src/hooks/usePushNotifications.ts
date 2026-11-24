@@ -71,9 +71,11 @@ export const usePushNotifications = (): PushNotificationState => {
     };
 
     useEffect(() => {
-        registerForPushNotificationsAsync().then((token) => {
-            setExpoPushToken(token);
-        });
+        registerForPushNotificationsAsync()
+            .then((token) => { setExpoPushToken(token); })
+            .catch(() => {
+                // Push token is best-effort — never crash the app for it.
+            });
 
         notificationListener.current =
             Notifications.addNotificationReceivedListener((notification) => {

@@ -11,6 +11,8 @@ export interface ThemeColors {
     bg: string;
     /** Primary card / surface colour. */
     surface: string;
+    /** Legacy alias of surface (older callers). */
+    cardBg: string;
     /** Elevated surfaces (secondary cards, panels). */
     surfaceAlt: string;
     /** Older alias of surfaceAlt, kept for callers that have not migrated. */
@@ -19,8 +21,10 @@ export interface ThemeColors {
     text: string;
     /** Secondary text colour (muted labels, captions). */
     textSecondary: string;
-    /** Muted text, icons and labels (legacy alias). */
+    /** Muted text, icons and labels. */
     mutedText: string;
+    /** Legacy alias of mutedText (older callers). */
+    textMuted: string;
     /** 1px borders and dividers. */
     border: string;
     /** Accent (brand) colour — varies with the accent theme. */
@@ -29,8 +33,12 @@ export interface ThemeColors {
     onAccent: string;
     /** Legacy alias of onAccent. */
     accentText: string;
+    /** Legacy alias of accent (older callers). */
+    primary: string;
     success: string;
     warning: string;
+    /** Legacy alias of danger (older callers). */
+    error: string;
     danger: string;
     /** Faint fill used for quiet surfaces (chips, subtle boxes). Opaque. */
     glass: string;
@@ -150,10 +158,10 @@ export const darkBase: ThemeBase = {
 };
 
 export const lightBase: ThemeBase = {
-    background: '#F2F4F7', // Light grey background
+    background: '#F4F6F8', // Light page background (from our branch's light palette)
     surface: '#FFFFFF', // White surfaces
     surfaceAlt: '#F8FAFC', // Elevated (opaque)
-    border: 'rgba(0,0,0,0.08)', // 1px borders — very soft, no glow
+    border: 'rgba(0,0,0,0.07)', // 1px borders — very soft, no glow
     text: '#111827',
     textSecondary: '#64748B',
     success: '#16A34A',
@@ -161,7 +169,7 @@ export const lightBase: ThemeBase = {
     danger: '#EF4444',
     glass: '#F1F5F9', // Subtle neutral fill
     shadow: '#000000',
-    gray5: '#E5E7EB',
+    gray5: '#D1D5DB', // From our branch's light palette
     orange9: '#F97316',
     blue10: '#3B82F6',
 };
@@ -175,6 +183,10 @@ export const dark: ThemeColors = {
     accentText: '#090A0C',
     onSurface: '#FFFFFF',
     mutedText: '#8B949E',
+    textMuted: '#8B949E', // legacy alias of mutedText
+    primary: '#00C805', // legacy alias of accent
+    error: darkBase.danger, // legacy alias
+    cardBg: darkBase.surface, // legacy alias of surface
 };
 
 export const light: ThemeColors = {
@@ -186,4 +198,8 @@ export const light: ThemeColors = {
     accentText: '#090A0C',
     onSurface: '#111827',
     mutedText: '#64748B',
+    textMuted: '#64748B', // legacy alias of mutedText
+    primary: '#00C805', // legacy alias of accent
+    error: lightBase.danger, // legacy alias
+    cardBg: lightBase.surface, // legacy alias of surface
 };

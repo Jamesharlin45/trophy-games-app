@@ -13,13 +13,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Linking } from 'react-native';
-import * as Application from 'expo-application';
 import { usePathname } from 'expo-router';
 import { api } from '../api/client';
 import { useApiQuery } from '../hooks/useLiveQuery';
 import { useRestorePurchases } from '../hooks/useRestorePurchases';
 import { purchaseFlow } from '../utils/purchaseFlow';
 import { planTitleFor } from '../utils/planTitle';
+import { getDeviceId } from '../utils/deviceId';
 import i18n from '../locales';
 import { useUser } from './UserContext';
 import {
@@ -94,10 +94,17 @@ export function DialogProvider({ children }: { children: ReactNode }) {
     const pathname = usePathname();
     const onOnboarding = pathname === '/onboarding';
 
-    const deviceId = useMemo(
-        () => `${Application.applicationId}_${Application.nativeApplicationVersion || 'v1'}`,
-        [],
-    );
+    // Per-install device id (expo-secure-store + expo-crypto; never
+    // contains the app version). Fetched asynchronously like everywhere
+    // else — membership queries are gated on it being non-empty.
+    const [deviceId, setDeviceId] = useState<string>('');
+    useEffect(() => {
+        let cancelled = false;
+        void getDeviceId()
+            .then((id) => { if (!cancelled) setDeviceId(id); })
+            .catch(() => {});
+        return () => { cancelled = true; };
+    }, []);
 
     // Membership must be known before the subscription offer may appear.
     const { username } = useUser();

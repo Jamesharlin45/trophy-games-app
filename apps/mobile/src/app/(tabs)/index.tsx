@@ -11,13 +11,15 @@ import { typography } from '../../theme/typography';
 import i18n from '../../locales';
 import { api } from '../../api/client';
 import { useScreenQuery } from '../../hooks/useLiveQuery';
+import { safeString } from '../../utils/safeData';
+import { withErrorBoundary } from '../../components/ScreenErrorBoundary';
 import { useNoConnectionDialog } from '../../hooks/useNoConnectionDialog';
 import { useMembershipAccess } from '../../hooks/useMembershipAccess';
 
 const toTitleCase = (str: string) =>
     str.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
 
-export default function FreeTipsScreen() {
+function FreeTipsScreen() {
     const [selectedLeague, setSelectedLeague] = useState(i18n.t('common.all'));
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
     const access = useMembershipAccess();
@@ -53,19 +55,25 @@ export default function FreeTipsScreen() {
 
     const leagues = useMemo(() => {
         const counts = new Map<string, number>();
-        for (const m of matches) counts.set(m.league, (counts.get(m.league) || 0) + 1);
+        for (const m of matches) {
+            const leagueName = safeString(m.league);
+            counts.set(leagueName, (counts.get(leagueName) || 0) + 1);
+        }
         return [...counts.entries()]
             .sort((a, b) => b[1] - a[1])
             .map(([name]) => ({ name, id: name }));
     }, [matches]);
 
     const filteredMatches = matches.filter((m) => {
-        const leagueMatch = selectedLeague === i18n.t('common.all') || m.league === selectedLeague;
-        const searchMatch =
-            !searchQuery ||
-            m.homeTeam.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            m.awayTeam.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            m.league.toLowerCase().includes(searchQuery.toLowerCase());
+        const league = safeString(m.league);
+        const homeTeam = safeString(m.homeTeam).toLowerCase();
+        const awayTeam = safeString(m.awayTeam).toLowerCase();
+        const leagueName = league.toLowerCase();
+        const leagueMatch = selectedLeague === i18n.t('common.all') || league === selectedLeague;
+        const searchMatch = !searchQuery ||
+            homeTeam.includes(searchQuery.toLowerCase()) ||
+            awayTeam.includes(searchQuery.toLowerCase()) ||
+            leagueName.includes(searchQuery.toLowerCase());
         return leagueMatch && searchMatch;
     });
 
@@ -299,3 +307,5 @@ function getStyles(themeColors: ThemeColors) {
     },
     });
 }
+
+export default withErrorBoundary(FreeTipsScreen);

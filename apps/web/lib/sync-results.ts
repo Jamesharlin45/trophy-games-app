@@ -111,7 +111,7 @@ async function lastResultsSyncedAt(db: SupabaseClient): Promise<string | null> {
     const { data, error } = await db
         .from('sync_state')
         .select('results_synced_at')
-        .eq('id', 'results')
+        .eq('id', 1)
         .limit(1);
     if (error) {
         console.warn('[SyncResults] sync_state read failed:', error.message);
@@ -127,9 +127,16 @@ async function resultsRecentlySynced(db: SupabaseClient): Promise<boolean> {
 }
 
 async function recordResultsSynced(db: SupabaseClient): Promise<void> {
+    // Production schema: sync_state is the singleton row with id = 1 and a
+    // NOT NULL last_synced_at; results_synced_at is the nullable column used
+    // as the results-sync throttle marker.
+    const now = new Date();
     const { error } = await db
         .from('sync_state')
-        .upsert({ id: 'results', results_synced_at: new Date() }, { onConflict: 'id' });
+        .upsert(
+            { id: 1, last_synced_at: now, results_synced_at: now },
+            { onConflict: 'id' },
+        );
     if (error) console.warn('[SyncResults] sync_state write failed:', error.message);
 }
 

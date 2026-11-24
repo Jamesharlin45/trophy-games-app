@@ -25,9 +25,10 @@ export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
     // Defaults keep today's look: Dark mode + Pitch Green.
     const [theme, setThemeState] = useState<ThemeType>('dark');
     const [accent, setAccentState] = useState<AccentType>('pitchGreen');
-    const [isLoaded, setIsLoaded] = useState(false);
 
     useEffect(() => {
+        // Apply a saved theme on start — children render immediately with the
+        // system scheme so there is no flicker while it loads.
         const loadTheme = async () => {
             try {
                 const savedTheme = await AsyncStorage.getItem('user-theme');
@@ -40,8 +41,6 @@ export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
                 }
             } catch (e) {
                 console.warn(e);
-            } finally {
-                setIsLoaded(true);
             }
         };
         loadTheme();
@@ -74,8 +73,6 @@ export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
         textSecondary: (isDark ? dark : light).textSecondary,
         onSurface: (isDark ? dark : light).onSurface,
     };
-
-    if (!isLoaded) return null;
 
     return (
         <ThemeContext.Provider value={{ theme, accent, isDark, themeColors, toggleTheme, setTheme, setAccent }}>

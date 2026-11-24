@@ -23,7 +23,7 @@ export async function GET(request: Request) {
     }
 
     try {
-        return NextResponse.json(await getAll(db, limit, { excludeUnpublishedPicks: true }));
+        return NextResponse.json(await getAll(db, limit, { excludeUnpublishedPicks: true, excludeVoid: true }));
     } catch (error) {
         console.error('[API App Matches All] Error:', error);
         return NextResponse.json({ error: 'Failed to load matches' }, { status: 500 });

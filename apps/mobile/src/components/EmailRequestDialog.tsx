@@ -1,7 +1,8 @@
 /**
  * EmailRequestDialog — AppDialog-based email capture for both manual token
  * requests and restored purchases. The address is validated locally before the
- * caller submits it to the server.
+ * caller submits it to the server; on success the caller stores it so it
+ * prefills next time.
  */
 
 import { useEffect, useState } from 'react';
@@ -10,7 +11,10 @@ import { Mail } from 'lucide-react-native';
 import { AppDialog } from './AppDialog';
 import { useTheme } from '../context/ThemeContext';
 import { typography } from '../theme/typography';
+import { safeString } from '../utils/safeData';
 import i18n from '../locales';
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export interface EmailSubmitResult {
     ok: boolean;
@@ -21,16 +25,16 @@ export interface EmailRequestDialogProps {
     visible: boolean;
     title: string;
     subtitle?: string;
-    /** Shown below the input, e.g. "We will email your token when it is approved". */
+    /** Shown below the input, e.g. "Your code will be emailed when approved". */
     note: string;
     submitLabel?: string;
+    /** Prefilled address, e.g. from AsyncStorage. */
+    prefillEmail?: string;
     onSubmit: (email: string) => Promise<EmailSubmitResult>;
     /** Called after a successful submit, before the dialog closes. */
     onSubmitted?: () => void;
     onClose: () => void;
 }
-
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function EmailRequestDialog({
     visible,
@@ -38,22 +42,22 @@ export function EmailRequestDialog({
     subtitle,
     note,
     submitLabel,
+    prefillEmail,
     onSubmit,
     onSubmitted,
     onClose,
 }: EmailRequestDialogProps) {
     const { themeColors } = useTheme();
     const styles = getStyles();
-    const [email, setEmail] = useState('');
+    const [email, setEmail] = useState(safeString(prefillEmail));
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
 
     useEffect(() => {
-        if (!visible) return;
-        setEmail('');
+        setEmail(safeString(prefillEmail));
         setError(null);
         setBusy(false);
-    }, [visible]);
+    }, [visible, prefillEmail]);
 
     const handleSubmit = async () => {
         const address = email.trim();

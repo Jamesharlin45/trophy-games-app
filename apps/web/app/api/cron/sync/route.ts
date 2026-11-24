@@ -49,6 +49,7 @@ export async function GET(req: Request) {
                 skipped: 0,
                 syncedAt: null,
                 errors: [],
+                remaining: null,
                 error: error instanceof Error ? error.message : String(error),
             });
         }

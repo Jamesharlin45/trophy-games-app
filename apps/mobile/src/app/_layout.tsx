@@ -1,3 +1,4 @@
+import '../lib/crashReporter';
 import { useEffect, useState, useCallback } from 'react';
 import { View, TouchableOpacity, StyleSheet, Text, Platform, Image } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -18,12 +19,17 @@ import { DialogProvider } from '../context/DialogContext';
 import { LanguageProvider } from '../context/LanguageContext';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 import { useApiQuery } from '../hooks/useLiveQuery';
+import { useRestorePurchases } from '../hooks/useRestorePurchases';
+import { getDeviceId } from '../utils/deviceId';
 import { api } from '../api/client';
 import SplashAnim from '../components/SplashAnim';
 import { AppErrorBoundary } from '../components/AppErrorBoundary';
 import { installGlobalErrorHandler, setCurrentRoute } from '../lib/errorDiagnostics';
 
-SplashScreen.preventAutoHideAsync();
+SplashScreen.preventAutoHideAsync().catch(() => {
+    // Splash prevention is best-effort — a failure only means the splash may
+    // auto-hide later; the app must not crash on startup because of it.
+});
 
 // Global JS error handler: stores the last uncaught error (message, stack,
 // route, timestamp — no personal data) in AsyncStorage for the Settings
@@ -78,6 +84,9 @@ function AppContent() {
     const insets = useSafeAreaInsets();
     const styles = getStyles(themeColors);
 
+    // Restore Google Play subscriptions once, as soon as the app starts.
+    useRestorePurchases();
+
     const [deviceId, setDeviceId] = useState<string | null>(null);
 
     useEffect(() => {
@@ -87,16 +96,11 @@ function AppContent() {
     }, [username, isUserLoading]);
 
     useEffect(() => {
-        const getDeviceId = async () => {
-            try {
-                const Application = await import('expo-application');
-                const id = Application.applicationId + '_' + (Application.nativeApplicationVersion || 'v1');
-                setDeviceId(id);
-            } catch (e) {
-                console.error('Failed to get deviceId:', e);
-            }
-        };
-        void getDeviceId();
+        let cancelled = false;
+        void getDeviceId()
+            .then((id) => { if (!cancelled) setDeviceId(id); })
+            .catch(() => {});
+        return () => { cancelled = true; };
     }, []);
 
     const { data: alerts } = useApiQuery(
@@ -230,6 +234,24 @@ function getStyles(themeColors: ThemeColors) {
     return StyleSheet.create({
         container: {
             flex: 1,
+        },
+        errorContainer: {
+            flex: 1,
+            justifyContent: 'center',
+            alignItems: 'center',
+            backgroundColor: themeColors.background,
+            padding: 24,
+        },
+        errorTitle: {
+            color: themeColors.error,
+            fontSize: 18,
+            fontWeight: '700',
+            marginBottom: 12,
+        },
+        errorText: {
+            color: themeColors.textMuted,
+            fontSize: 14,
+            textAlign: 'center',
         },
         themeToggle: {
             padding: 12,

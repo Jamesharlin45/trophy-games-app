@@ -96,8 +96,9 @@ export function DatePickerStrip({
                                 borderColor: isSelected ? themeColors.accent : themeColors.border,
                                 borderWidth: 1,
                                 shadowColor: themeColors.shadow,
-                                shadowOpacity: 0,
-                                shadowRadius: 0,
+                                shadowOffset: isSelected ? { width: 0, height: 4 } : { width: 0, height: 0 },
+                                shadowOpacity: isSelected ? 0.4 : 0,
+                                shadowRadius: isSelected ? 12 : 0,
                             },
                         ]}
                     >

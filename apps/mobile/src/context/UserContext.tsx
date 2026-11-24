@@ -1,9 +1,9 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Application from 'expo-application';
 import { router } from 'expo-router';
 import { api } from '../api/client';
 import { useApiQuery } from '../hooks/useLiveQuery';
+import { getDeviceId } from '../utils/deviceId';
 import { CacheManager } from '../utils/cache';
 
 const USERNAME_KEY = '@trophy_games_username';
@@ -31,10 +31,18 @@ const UserContext = createContext<UserContextType>({
 export function UserProvider({ children }: { children: React.ReactNode }) {
   const [username, setUsernameState] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [deviceId, setDeviceId] = useState<string | null>(null);
 
-  const deviceId = `${Application.applicationId}-${Application.nativeApplicationVersion}`;
+  useEffect(() => {
+    let cancelled = false;
+    void getDeviceId().then((id) => {
+      if (!cancelled) setDeviceId(id);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
   const { data: remoteUser, loaded } = useApiQuery(
-    () => api.users.byDevice(deviceId),
+    () => api.users.byDevice(deviceId ?? ''),
     [deviceId],
   );
 
@@ -87,10 +95,8 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     // Mark first so no concurrent render can re-sync the username from the
     // server while the local data is being cleared.
     await AsyncStorage.setItem(SIGNED_OUT_KEY, 'true');
-    await AsyncStorage.removeItem(USERNAME_KEY);
     await CacheManager.clear();
-
-    setUsernameState(null);
+    await setUsername(null);
     setIsLoading(false);
     router.replace('/onboarding');
   }, []);

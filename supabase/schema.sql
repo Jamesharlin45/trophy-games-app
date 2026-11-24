@@ -124,6 +124,7 @@ CREATE TABLE membership_requests (
     device_id text NOT NULL,
     username text NULL,
     type text NOT NULL CHECK (type IN ('vip', 'paid')),
+    email text NULL, -- requested contact email (mobile request flow)
     status text NOT NULL CHECK (status IN ('pending', 'approved', 'rejected')),
     requested_at text NOT NULL,
     resolved_at text NULL,

@@ -1,185 +1,229 @@
+/**
+ * Server-side fixture sync: pull today's + the next 2 days' fixtures from
+ * API-Football (the same fetch as the admin "Load from fixtures" flow —
+ * lib/api-football.ts `fetchFixturesDetailed`) and upsert them into the
+ * Supabase `matches` table by `external_id` (`fixture-<api id>`).
+ *
+ * New rows: tier 'unassigned', status Scheduled, is_history false, score ''.
+ * They are plain DB rows, so they never fire alerts or push notifications.
+ * Existing rows: only kickoff, status and score are updated — tier, odds,
+ * aiPrediction, result and isTrending are never touched.
+ */
+
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { fetchFixtures, type ApiFootballFixture } from './api-football';
-import { getById, utcMatchDate } from './db/matches';
-import type { DbMatch } from './db/types';
+import { fetchFixturesDetailed, type ApiFootballFixture } from './api-football';
+import { createDb } from './db/client';
+import type { MatchRow } from './db/types';
 
-/** Sync window: syncFixtures runs at most once per date within this period
- * (state is kept in the fixture_sync_log table). */
-export const SYNC_MIN_INTERVAL_MS = 3 * 60 * 60 * 1000;
-
-export interface SyncFixturesResult {
-    date: string;
-    /** Fixtures the API returned for the date (0 when throttled). */
+export interface FixturesSyncSummary {
+    /** The date range this run covers (today + the next days). */
+    date: string | null;
+    /** Fixtures the API returned for the dates we fetched. */
     fetched: number;
     /** New af-* rows stored. */
     inserted: number;
-    /** Stored af-* rows refreshed from the API. */
+    /** Updated rows (kickoff/status/score). */
     updated: number;
-    /** Rows left untouched: published, analysed, or manually edited. */
+    /** API fixtures deliberately not written (duplicates/missing ids). */
     skipped: number;
-    /** ISO timestamp of this run; null when throttled (nothing done). */
+    /** ISO timestamp of this run; null when the sync was throttled. */
     syncedAt: string | null;
     /** Errors from upserts / the sync-state write. */
     errors: string[];
-    /** Set by callers when the sync itself threw (throttle bypassed). */
-    error?: string;
+    /** The API's x-ratelimit-requests-remaining value after the last
+     * fetch, when the API sent a header. */
+    remaining: number | null;
 }
 
-/** True for women/youth/reserve competitions — never synced to the app. */
-function isEligible(fixture: ApiFootballFixture): boolean {
-    const leagueName = `${fixture.league.name} ${fixture.league.country}`.toLowerCase();
-    if (/women|youth|reserve/.test(leagueName)) return false;
-    if (/\bu\d{2}\b/i.test(leagueName)) return false;
-    return true;
+/** Backwards-compatible alias used by the cron/admin routes. */
+export type SyncFixturesResult = FixturesSyncSummary;
+
+/** Stop syncing when fewer than this many requests remain. */
+const MIN_REQUESTS_REMAINING = 10;
+/** Fetch today + the next 2 days (UTC). */
+const SYNC_DAYS = 3;
+
+function utcDate(daysFromNow: number): string {
+    const now = new Date();
+    return new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + daysFromNow),
+    ).toISOString().slice(0, 10);
 }
 
-/** detail fields the mobile app reads back (logos, country). */
-function buildDetails(fixture: ApiFootballFixture): Record<string, unknown> {
-    const details: Record<string, unknown> = {};
-    if (fixture.league.logo) details.leagueLogo = fixture.league.logo;
-    if (fixture.homeTeam.logo) details.homeTeamLogo = fixture.homeTeam.logo;
-    if (fixture.awayTeam.logo) details.awayTeamLogo = fixture.awayTeam.logo;
-    if (fixture.league.country) details.country = fixture.league.country;
-    return details;
+function externalIdFor(fixture: ApiFootballFixture): string {
+    return `fixture-${fixture.id}`;
 }
 
-/** Diff check for manual edits: a stored value counts as a manual edit only
- * when the fresh API value exists AND differs from what is stored. */
-function differs(stored: unknown, fresh: unknown): boolean {
-    if (typeof fresh !== 'string' || fresh === '') return false;
-    if (stored === undefined || stored === null) return false;
-    return stored !== fresh;
+/** API status → app status. 'NS' (not started) maps to 'Scheduled' to match
+ * the vocabulary used by manual matches; other statuses pass through. */
+function statusForSync(status: string): string {
+    const trimmed = status.trim();
+    return trimmed === '' || trimmed === 'NS' ? 'Scheduled' : trimmed;
 }
 
-/** True when the stored row was manually edited — admin changes to the team
- * names, league, kickoff, match_date or the synced details differ from the
- * fresh API values, so we never overwrite them. */
-function isManualEdit(existing: DbMatch, fixture: ApiFootballFixture): boolean {
-    if (differs(existing.homeTeam, fixture.homeTeam.name)) return true;
-    if (differs(existing.awayTeam, fixture.awayTeam.name)) return true;
-    if (differs(existing.league, fixture.league.name)) return true;
-    if (differs(existing.timestamp, fixture.date)) return true;
-    const freshDate = utcMatchDate(fixture.date);
-    if (differs(existing.matchDate, freshDate)) return true;
-    for (const [key, value] of Object.entries(buildDetails(fixture))) {
-        if (differs(existing.details?.[key], value)) return true;
+/** Row shape for the INSERT of a new match (the `matches` table: external_id,
+ * home_team, away_team, league, kickoff, score, status + the sync-owned
+ * tier/is_history/match_date). */
+interface NewMatchRow {
+    external_id: string;
+    home_team: string;
+    away_team: string;
+    league: string;
+    kickoff: string;
+    score: string;
+    status: string;
+    tier: 'unassigned';
+    is_history: false;
+    match_date: string | null;
+}
+
+function newMatchRow(fixture: ApiFootballFixture): NewMatchRow {
+    const date = fixture.date.trim();
+    return {
+        external_id: externalIdFor(fixture),
+        home_team: fixture.homeTeam.name.trim(),
+        away_team: fixture.awayTeam.name.trim(),
+        league: fixture.league.name.trim(),
+        kickoff: date,
+        score: '',
+        status: statusForSync(fixture.status),
+        tier: 'unassigned',
+        is_history: false,
+        match_date: date.length >= 10 ? date.slice(0, 10) : null,
+    };
+}
+
+function chunk<T>(items: T[], size: number): T[][] {
+    const out: T[][] = [];
+    for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+    return out;
+}
+
+async function insertNewRows(db: SupabaseClient, rows: NewMatchRow[]): Promise<number> {
+    if (rows.length === 0) return 0;
+    let inserted = 0;
+    for (const batch of chunk(rows, 500)) {
+        const { error } = await db.from('matches').insert(batch);
+        if (error) throw new Error(`Failed to insert fixtures: ${error.message}`);
+        inserted += batch.length;
     }
-    return false;
+    return inserted;
 }
 
-/** Last sync time for a date from the fixture_sync_log table; true when a
- * sync ran within SYNC_MIN_INTERVAL_MS. Read failures are treated as "never
- * synced" (the table may not exist yet — see supabase/fixture_sync_log.sql). */
-async function recentlySynced(db: SupabaseClient, date: string): Promise<boolean> {
-    const { data, error } = await db
-        .from('fixture_sync_log')
-        .select('last_synced_at')
-        .eq('date', date)
-        .limit(1);
-    if (error) {
-        console.warn('[SyncFixtures] fixture_sync_log read failed:', error.message);
-        return false;
+/** Stamp the singleton `sync_state` row (used by the admin Matches page to
+ * decide whether to auto-sync on open). Returns errors instead of throwing so
+ * callers can still report the sync summary. */
+async function stampLastSyncedAt(db: SupabaseClient): Promise<string[]> {
+    const errors: string[] = [];
+    const { error } = await db
+        .from('sync_state')
+        .upsert({ id: 1, last_synced_at: new Date().toISOString() });
+    if (error) errors.push(`Failed to store last_synced_at: ${error.message}`);
+    return errors;
+}
+
+/** When was the last fixture sync (the singleton `sync_state` row)? */
+export async function readLastSyncedAt(): Promise<string | null> {
+    const db = createDb();
+    if (!db) return null;
+    const { data } = await db.from('sync_state').select('last_synced_at').eq('id', 1).limit(1);
+    const row = (data ?? [])[0] as { last_synced_at?: string } | undefined;
+    return row?.last_synced_at ?? null;
+}
+
+export async function syncFixtures(
+    dbArg?: SupabaseClient,
+    _date?: string,
+): Promise<FixturesSyncSummary> {
+    const db = dbArg ?? createDb();
+    if (!db) {
+        throw new Error('Supabase not configured (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)');
     }
-    const row = data?.[0];
-    if (!row) return false;
-    const last = new Date(String(row.last_synced_at)).getTime();
-    return Number.isFinite(last) && Date.now() - last < SYNC_MIN_INTERVAL_MS;
-}
-
-/** Record the sync time (best effort; failures don't fail the sync). */
-async function recordSync(db: SupabaseClient, date: string, syncedAt: string): Promise<void> {
-    const { error } = await db.from('fixture_sync_log').upsert({ date, last_synced_at: syncedAt });
-    if (error) console.warn('[SyncFixtures] Failed to record sync time:', error.message);
-}
-
-/**
- * Sync one date's fixtures into the matches table, "fixtures first" style:
- * every non-women/youth/reserve fixture is stored as a row with
- * external_id `af-<id>`, tier 'unassigned', status 'Scheduled', kickoff,
- * league, teams, logos and country (in details) and is_history false.
- *
- * Idempotent: rows that already have a tier other than 'unassigned', an
- * ai_prediction, or manual edits are never overwritten; repeated calls are
- * no-ops (throttled to once per date per 3 hours via fixture_sync_log).
- *
- * Fetches at most one fixtures request per call (the cached API-Football
- * helper) and skips nothing that the API still returns for the date.
- */
-export async function syncFixtures(db: SupabaseClient, date: string): Promise<SyncFixturesResult> {
-    if (await recentlySynced(db, date)) {
-        return { date, fetched: 0, inserted: 0, updated: 0, skipped: 0, syncedAt: null, errors: [] };
-    }
-
-    // 1 request: the date's fixtures (cached per date by the API helper).
-    const allFixtures = await fetchFixtures(date);
-    const eligible = allFixtures.filter(isEligible);
 
     let inserted = 0;
     let updated = 0;
     let skipped = 0;
+    let fetched = 0;
+    let remaining: number | null = null;
     const errors: string[] = [];
 
-    for (const fixture of eligible) {
-        const externalId = `af-${fixture.id}`;
-        const details = buildDetails(fixture);
-        const existing = await getById(db, externalId);
+    for (let offset = 0; offset < SYNC_DAYS; offset += 1) {
+        const date = utcDate(offset);
+        const result = await fetchFixturesDetailed(date);
+        remaining = result.rateLimitRemaining;
+        const allFixtures = result.fixtures;
+        fetched += allFixtures.length;
 
-        if (existing) {
-            // Never overwrite published tiers, analysed rows (ai_prediction)
-            // or manually edited rows.
-            const published = existing.matchType !== undefined && existing.matchType !== 'unassigned';
-            if (published || existing.aiPrediction) {
+        // Budget guard: stop syncing once the API is nearly out of requests.
+        // There is deliberately no retry loop.
+        if (remaining !== null && remaining < MIN_REQUESTS_REMAINING) break;
+        if (allFixtures.length === 0) continue;
+
+        const externalIds = allFixtures
+            .map((fixture) => externalIdFor(fixture))
+            .filter((id) => id !== '');
+
+        // Existing rows keyed by external_id (the row id is needed for updates).
+        const existingById = new Map<string, MatchRow>();
+        for (const batch of chunk(externalIds, 500)) {
+            const { data } = await db
+                .from('matches')
+                .select('id, external_id')
+                .in('external_id', batch);
+            for (const row of data ?? []) {
+                const externalId = row?.external_id;
+                if (typeof externalId === 'string' && row?.id != null) {
+                    existingById.set(externalId, row as MatchRow);
+                }
+            }
+        }
+
+        // Insert new ones (tier 'unassigned', status Scheduled, ...).
+        const seen = new Set<string>();
+        const newRows: NewMatchRow[] = [];
+        for (const fixture of allFixtures) {
+            const externalId = externalIdFor(fixture);
+            if (externalId === '' || seen.has(externalId)) {
                 skipped += 1;
                 continue;
             }
-            if (isManualEdit(existing, fixture)) {
-                skipped += 1;
-                continue;
-            }
+            seen.add(externalId);
+            if (existingById.has(externalId)) continue;
+            newRows.push(newMatchRow(fixture));
+        }
+        inserted += await insertNewRows(db, newRows);
+
+        // Update kickoff/status/score of matches we already know. Tier, odds,
+        // aiPrediction, result and isTrending are intentionally untouched.
+        for (const fixture of allFixtures) {
+            const externalId = externalIdFor(fixture);
+            const dbRow = externalId === '' ? undefined : existingById.get(externalId);
+            if (!dbRow) continue;
             const { error } = await db
                 .from('matches')
                 .update({
-                    home_team: fixture.homeTeam.name,
-                    away_team: fixture.awayTeam.name,
-                    league: fixture.league.name,
                     kickoff: fixture.date,
-                    match_date: utcMatchDate(fixture.date),
-                    details: { ...(existing.details ?? {}), ...details },
+                    status: statusForSync(fixture.status),
+                    score: '',
                 })
-                .eq('id', existing._id);
+                .eq('id', dbRow.id);
             if (error) {
-                errors.push(`update ${externalId}: ${error.message}`);
+                errors.push(`Failed to update fixture ${externalId}: ${error.message}`);
                 continue;
             }
             updated += 1;
-            continue;
         }
-
-        const { error } = await db.from('matches').insert({
-            external_id: externalId,
-            home_team: fixture.homeTeam.name,
-            away_team: fixture.awayTeam.name,
-            league: fixture.league.name,
-            kickoff: fixture.date,
-            status: 'Scheduled',
-            score: '0-0',
-            match_date: utcMatchDate(fixture.date),
-            tier: 'unassigned',
-            trending: null,
-            odds: null,
-            ai_prediction: null,
-            is_history: false,
-            details: Object.keys(details).length > 0 ? details : null,
-        });
-        if (error) {
-            errors.push(`insert ${externalId}: ${error.message}`);
-            continue;
-        }
-        inserted += 1;
     }
 
-    const syncedAt = new Date().toISOString();
-    await recordSync(db, date, syncedAt);
-
-    return { date, fetched: allFixtures.length, inserted, updated, skipped, syncedAt, errors };
+    errors.push(...(await stampLastSyncedAt(db)));
+    return {
+        date: utcDate(0),
+        fetched,
+        inserted,
+        updated,
+        skipped,
+        syncedAt: new Date().toISOString(),
+        errors,
+        remaining,
+    };
 }

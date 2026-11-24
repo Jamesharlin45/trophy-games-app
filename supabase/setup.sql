@@ -307,6 +307,7 @@ CREATE INDEX IF NOT EXISTS analysis_results_by_analysis_type ON analysis_results
 ALTER TABLE analysis_results ENABLE ROW LEVEL SECURITY;
 
 -- ---------------------------------------------------------------------------
+-- ---------------------------------------------------------------------------
 -- email_outbox
 -- ---------------------------------------------------------------------------
 -- Token-email outbox. Rows are created by POST /api/app/purchases/set-email
@@ -342,3 +343,19 @@ CREATE INDEX IF NOT EXISTS email_outbox_by_token ON email_outbox (token);
 -- no policies, and no privileges granted to PUBLIC / anon / authenticated.
 ALTER TABLE email_outbox ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON email_outbox FROM PUBLIC, anon, authenticated;
+
+-- ---------------------------------------------------------------------------
+-- sync_state — the singleton `sync_state` row records the last fixture-sync
+-- timestamp. Written by apps/web's fixture sync (lib/sync-fixtures.ts) and
+-- read by the admin Matches page to decide whether to auto-sync on open.
+-- `results_synced_at` is the results-sync marker (see /api/cron/sync-results).
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS sync_state (
+    id integer PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    last_synced_at timestamptz NOT NULL,
+    results_synced_at timestamptz NULL
+);
+
+-- Access rules (same as the other tables: RLS enabled, no policies).
+ALTER TABLE sync_state ENABLE ROW LEVEL SECURITY;

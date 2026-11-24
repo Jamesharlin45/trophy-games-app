@@ -7,6 +7,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useState, useEffect } from 'react';
 import { api } from '../api/client';
 import { useScreenQuery } from '../hooks/useLiveQuery';
+import { getDeviceId } from '../utils/deviceId';
+import { safeString, safeDateTime } from '../utils/safeData';
 import i18n from '../locales';
 
 export default function AlertsScreen() {
@@ -16,16 +18,11 @@ export default function AlertsScreen() {
     const [deviceId, setDeviceId] = useState<string | null>(null);
 
     useEffect(() => {
-        const getDeviceId = async () => {
-            try {
-                const Application = await import('expo-application');
-                const id = Application.applicationId + '_' + (Application.nativeApplicationVersion || 'v1');
-                setDeviceId(id);
-            } catch (e) {
-                console.error('Failed to get deviceId:', e);
-            }
-        };
-        getDeviceId();
+        let cancelled = false;
+        void getDeviceId()
+            .then((id) => { if (!cancelled) setDeviceId(id); })
+            .catch(() => {});
+        return () => { cancelled = true; };
     }, []);
 
     const { data: alerts, refetch } = useScreenQuery(
@@ -71,12 +68,13 @@ export default function AlertsScreen() {
                 {alerts && alerts.length > 0 ? (
                     <FlatList
                         data={alerts}
-                        keyExtractor={item => item._id}
+                        keyExtractor={item => safeString(item._id) || safeString(item.createdAt) || 'alert'}
                         renderItem={({ item }) => {
+                            const alertId = safeString(item._id);
                             const isRead = (item.readBy ?? []).includes(deviceId || "unknown");
                             return (
                                 <TouchableOpacity
-                                    onPress={() => handleMarkRead(item._id)}
+                                    onPress={() => alertId && handleMarkRead(alertId)}
                                     activeOpacity={0.7}
                                     style={[
                                         styles.alertCard,
@@ -89,12 +87,12 @@ export default function AlertsScreen() {
                                     ]}
                                 >
                                     <View style={styles.alertHeader}>
-                                        <Text style={[styles.alertTitle, { color: themeColors.text }]}>{item.title}</Text>
+                                        <Text style={[styles.alertTitle, { color: themeColors.text }]}>{safeString(item.title)}</Text>
                                         {!isRead && <View style={[styles.unreadDot, { backgroundColor: themeColors.accent }]} />}
                                     </View>
-                                    <Text style={[styles.alertBody, { color: themeColors.mutedText }]}>{item.body}</Text>
+                                    <Text style={[styles.alertBody, { color: themeColors.mutedText }]}>{safeString(item.body)}</Text>
                                     <Text style={[styles.alertTime, { color: themeColors.mutedText }]}>
-                                        {new Date(item.createdAt).toLocaleDateString()}
+                                        {safeDateTime(item.createdAt, '')}
                                     </Text>
                                 </TouchableOpacity>
                             );

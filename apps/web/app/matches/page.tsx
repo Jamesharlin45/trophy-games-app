@@ -11,11 +11,11 @@ import { leagueTier, rankOrInfinity } from '@/lib/trending';
 
 // Win probability implied by the bookmaker odds (from the API), normalised to
 // remove the margin so the three outcomes sum to ~100%.
-function impliedProbabilities(odds?: { home?: string; draw?: string; away?: string }) {
+function impliedProbabilities(odds?: { home?: number; draw?: number; away?: number }) {
     if (!odds) return null;
-    const h = parseFloat(odds.home || '');
-    const d = parseFloat(odds.draw || '');
-    const a = parseFloat(odds.away || '');
+    const h = odds.home ?? 0;
+    const d = odds.draw ?? 0;
+    const a = odds.away ?? 0;
     if (!(h > 1)) return null;
     const ih = 1 / h;
     const id = d > 1 ? 1 / d : 0;
@@ -54,6 +54,13 @@ export default function MatchesPage() {
     const [matches, setMatches] = useState<MatchData[]>([]);
     const [loading, setLoading] = useState(true);
     const [updatingId, setUpdatingId] = useState<string | null>(null);
+    // Fixture sync state: "Refresh fixtures" and the auto-sync-on-open path
+    // both run the same server function (syncFixtures); lastSynced feeds the
+    // "Last synced …" label.
+    const [lastSynced, setLastSynced] = useState<string | null>(null);
+    const [syncing, setSyncing] = useState(false);
+    const [errorMsg, setErrorMsg] = useState<string | null>(null);
+    const [deletingId, setDeletingId] = useState<string | null>(null);
 
     // Stored unpublished fixtures for the selected date ("Fetched fixtures
     // (not published)" section): rows with external_id starting 'af-' and
@@ -141,10 +148,51 @@ export default function MatchesPage() {
         await fetchMatches();
     };
 
-    // Tag a proxy match as free/paid/vip. Sends the full match so Convex can
-    // upsert it (matches originate from the FootyStats proxy, not Convex).
-    const [errorMsg, setErrorMsg] = useState<string | null>(null);
-    const [deletingId, setDeletingId] = useState<string | null>(null);
+    // "Refresh fixtures" — runs the same syncFixtures server function as the
+    // cron and the auto-sync path, then refreshes the list from the database.
+    const runFixturesSync = useCallback(async () => {
+        if (syncing) return;
+        setSyncing(true);
+        try {
+            const res = await fetch('/api/admin/sync-fixtures');
+            const data = (await res.json()) as {
+                error?: string;
+                lastSyncedAt?: string | null;
+            };
+            if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+            if (data.lastSyncedAt) setLastSynced(data.lastSyncedAt);
+            await fetchMatches();
+        } catch (error) {
+            setErrorMsg(error instanceof Error ? error.message : 'Fixture sync failed');
+        } finally {
+            setSyncing(false);
+        }
+    }, [syncing]);
+
+    // Load the last fixture sync time; when the Matches page opens and the
+    // last sync is older than 3 hours (or never ran), run syncFixtures in the
+    // background — the list refreshes when it finishes.
+    useEffect(() => {
+        let cancelled = false;
+        async function loadLastSynced() {
+            let lastSyncedAt: string | null = null;
+            try {
+                const res = await fetch('/api/admin/sync-status');
+                const data = (await res.json()) as { lastSyncedAt?: string | null };
+                lastSyncedAt = data.lastSyncedAt ?? null;
+            } catch (error) {
+                console.error('Failed to read last sync time:', error);
+            }
+            if (cancelled) return;
+            setLastSynced(lastSyncedAt);
+            if (!lastSyncedAt || Date.now() - Date.parse(lastSyncedAt) >= 3 * 60 * 60 * 1000) {
+                // Background auto-sync, once per page open (no retry loop).
+                queueMicrotask(() => { void runFixturesSync(); });
+            }
+        }
+        void loadLastSynced();
+        return () => { cancelled = true; };
+    }, [runFixturesSync]);
 
     const handleDeleteMatch = async (matchId: string) => {
         if (!confirm('Are you sure you want to delete this match?')) return;
@@ -542,30 +590,38 @@ export default function MatchesPage() {
                         <RefreshCw size={16} className={syncingResults ? 'animate-spin' : undefined} />
                         {syncingResults ? 'Syncing...' : 'Refresh results'}
                     </button>
-                    <button
-                        onClick={() => setIsManualModalOpen(true)}
-                        className="flex items-center justify-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-colors text-sm shadow-sm"
-                    >
-                        <PlusCircle size={16} />
-                        Manual Match
-                    </button>
-                    <button
-                        onClick={() => {
-                            setManualModalOpenPicker(true);
-                            setIsManualModalOpen(true);
-                        }}
-                        className="flex items-center justify-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition-colors text-sm shadow-sm"
-                    >
-                        <Flag size={16} />
-                        Add from fixtures
-                    </button>
-                    <button
-                        onClick={handleRefresh}
-                        className="flex items-center justify-center gap-1 px-4 py-2 bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 font-bold rounded-xl transition-colors text-sm"
-                    >
-                        <RefreshCw size={16} />
-                        Refresh
-                    </button>
+                    <div className="flex gap-2 items-center">
+                        <button
+                            onClick={() => setIsManualModalOpen(true)}
+                            className="flex items-center justify-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-colors text-sm shadow-sm"
+                        >
+                            <PlusCircle size={16} />
+                            Manual Match
+                        </button>
+                        <button
+                            onClick={() => {
+                                setManualModalOpenPicker(true);
+                                setIsManualModalOpen(true);
+                            }}
+                            className="flex items-center justify-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition-colors text-sm shadow-sm"
+                        >
+                            <Flag size={16} />
+                            Add from fixtures
+                        </button>
+                        <button
+                            onClick={() => void runFixturesSync()}
+                            disabled={syncing}
+                            className="flex items-center justify-center gap-1 px-4 py-2 bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 font-bold rounded-xl transition-colors text-sm disabled:opacity-50"
+                        >
+                            <RefreshCw size={16} />
+                            {syncing ? 'Syncing…' : 'Refresh fixtures'}
+                        </button>
+                        {lastSynced && (
+                            <span className="text-xs text-zinc-500 dark:text-zinc-400 whitespace-nowrap">
+                                Last synced {new Date(lastSynced).toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                        )}
+                    </div>
                 </div>
             </div>
 

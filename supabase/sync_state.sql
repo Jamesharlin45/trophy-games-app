@@ -1,21 +1,25 @@
 -- supabase/sync_state.sql
 --
--- Table for the results-sync throttle: syncResults (lib/sync-results.ts)
--- records the last run in sync_state.results_synced_at and returns early when
--- it is younger than RESULTS_SYNC_MIN_INTERVAL_MS (3 hours). The `matches`
--- table itself already exists (supabase/setup.sql).
+-- Production shape of the singleton `sync_state` row:
+--   id integer PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+--   last_synced_at timestamptz NOT NULL
+-- plus the nullable `results_synced_at` column used as the results-sync
+-- throttle marker by apps/web/lib/sync-results.ts (fixtures sync writes
+-- last_synced_at, lib/sync-fixtures.ts).
 --
--- Run this once in the Supabase SQL Editor (paste and run). Not run by the
--- repo. The ALTER statement below keeps this file safe to re-run.
+-- All statements are idempotent (CREATE/ALTER ... IF NOT EXISTS): safe to run
+-- against an existing database. This file never drops anything.
 
 CREATE TABLE IF NOT EXISTS sync_state (
-    id text PRIMARY KEY,
+    id integer PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    last_synced_at timestamptz NOT NULL,
     results_synced_at timestamptz NULL
 );
 
--- Access rules (same pattern as the other tables): deny by default, the
--- service_role key is the only non-owner that can use the table.
+-- Access rules (same as the other tables): deny by default, the service_role
+-- key is the only non-owner that can use the table.
 ALTER TABLE sync_state ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON sync_state FROM PUBLIC, anon, authenticated;
 
+-- Add the nullable column to databases created before it existed.
 ALTER TABLE sync_state ADD COLUMN IF NOT EXISTS results_synced_at timestamptz;

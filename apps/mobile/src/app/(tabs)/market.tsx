@@ -10,12 +10,13 @@ import { useDialog } from '../../context/DialogContext';
 import { typography } from '../../theme/typography';
 import { SUBSCRIPTION_PRODUCTS, getTierForProduct } from '@trophy-games/shared/subscriptions';
 import { useIap, ProductSubscription } from '../../hooks/useIap';
+import { api } from '../../api/client';
+import { useScreenQuery } from '../../hooks/useLiveQuery';
+import { getDeviceId } from '../../utils/deviceId';
+import { withErrorBoundary } from '../../components/ScreenErrorBoundary';
 import { useNoConnectionDialog } from '../../hooks/useNoConnectionDialog';
 import { purchaseFlow } from '../../utils/purchaseFlow';
 import { planTitleFor } from '../../utils/planTitle';
-import * as Application from 'expo-application';
-import { api } from '../../api/client';
-import { useScreenQuery } from '../../hooks/useLiveQuery';
 import { NeonButton } from '../../components/neon/NeonButton';
 import { onColor, readableAccent } from '../../components/neon/tokens';
 import { EmailTokenModal } from '../../components/EmailTokenModal';
@@ -23,7 +24,7 @@ import i18n, { tArray } from '../../locales';
 
 type MemberStatus = 'none' | 'pending' | 'approved' | 'active' | 'loading';
 
-export default function MembershipStoreScreen() {
+function MembershipStoreScreen() {
     const { themeColors, isDark } = useTheme();
     const styles = getStyles(themeColors, isDark);
     const accent = readableAccent(themeColors);
@@ -104,8 +105,9 @@ export default function MembershipStoreScreen() {
 
     // Get device ID on mount
     useEffect(() => {
-        const id = Application.applicationId + '_' + (Application.nativeApplicationVersion || 'v1');
-        setDeviceId(id);
+        let cancelled = false;
+        void getDeviceId().then((id) => { if (!cancelled) setDeviceId(id); }).catch(() => {});
+        return () => { cancelled = true; };
     }, []);
 
     // Membership status for each tier.
@@ -840,3 +842,5 @@ function getStyles(themeColors: ThemeColors, isDark = false) {
     emailBannerClose: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
     });
 }
+
+export default withErrorBoundary(MembershipStoreScreen);

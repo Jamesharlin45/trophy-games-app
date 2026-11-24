@@ -12,6 +12,8 @@ import { typography } from '../../theme/typography';
 import { api } from '../../api/client';
 import type { ApiMatch, HistoryResponse, HistoryResult } from '../../api/client';
 import { useScreenQuery } from '../../hooks/useLiveQuery';
+import { safeString, safeDateKey } from '../../utils/safeData';
+import { withErrorBoundary } from '../../components/ScreenErrorBoundary';
 import { useMembershipAccess } from '../../hooks/useMembershipAccess';
 import i18n from '../../locales';
 
@@ -80,7 +82,7 @@ function resultPill(result: HistoryResult | NonNullable<ApiMatch['result']>): { 
     return { label: i18n.t('wins.resultPending'), tone: 'warning' };
 }
 
-export default function WinsScreen() {
+function WinsScreen() {
     const { themeColors } = useTheme();
     const styles = getStyles(themeColors);
     const accent = readableAccent(themeColors);
@@ -104,20 +106,23 @@ export default function WinsScreen() {
     // Finished matches for the selected date only.
     const dayMatches = useMemo(() => {
         return matches.filter(match => {
-            const matchDate = match.matchDate || match.timestamp?.split('T')[0];
+            const matchDate = safeDateKey(match.matchDate) || safeDateKey(match.timestamp);
             return matchDate === selectedDate;
         });
     }, [matches, selectedDate]);
 
     const uniqueLeagues = useMemo(() => {
         const counts = new Map<string, number>();
-        for (const m of dayMatches) counts.set(m.league, (counts.get(m.league) || 0) + 1);
+        for (const m of dayMatches) {
+            const leagueName = safeString(m.league);
+            counts.set(leagueName, (counts.get(leagueName) || 0) + 1);
+        }
         const leagues = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([name]) => name);
         return ['All', ...leagues];
     }, [dayMatches]);
 
     const filteredMatches = useMemo(() => {
-        return dayMatches.filter(match => selectedLeague === 'All' || match.league === selectedLeague);
+        return dayMatches.filter(match => selectedLeague === 'All' || safeString(match.league) === selectedLeague);
     }, [dayMatches, selectedLeague]);
 
     const onRefresh = useCallback(async () => {
@@ -320,3 +325,5 @@ function getStyles(themeColors: ThemeColors) {
         emptySubtext: { ...typography.emptySubtext, textAlign: 'center', paddingHorizontal: 36 },
     });
 }
+
+export default withErrorBoundary(WinsScreen);

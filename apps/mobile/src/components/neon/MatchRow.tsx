@@ -70,9 +70,9 @@ function oddsLine(match: ApiMatch): { label: string; value: string }[] {
     const odds = match.odds;
     const pairs: { label: string; value: string }[] = [];
     if (!odds) return pairs;
-    if (odds.home) pairs.push({ label: '1', value: odds.home });
-    if (odds.draw) pairs.push({ label: 'X', value: odds.draw });
-    if (odds.away) pairs.push({ label: '2', value: odds.away });
+    if (odds.home) pairs.push({ label: '1', value: String(odds.home) });
+    if (odds.draw) pairs.push({ label: 'X', value: String(odds.draw) });
+    if (odds.away) pairs.push({ label: '2', value: String(odds.away) });
     return pairs;
 }
 

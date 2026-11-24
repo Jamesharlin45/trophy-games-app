@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
-import * as Application from 'expo-application';
 import { User } from 'lucide-react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useUser } from '../context/UserContext';
 import { useDialog } from '../context/DialogContext';
 import { api } from '../api/client';
+import { getDeviceId } from '../utils/deviceId';
 import i18n from '../locales';
 
 type ThemeColors = ReturnType<typeof useTheme>['themeColors'];
@@ -48,10 +48,6 @@ export default function OnboardingScreen() {
     };
   }, [username]);
 
-  const getDeviceId = () => {
-    return `${Application.applicationId}-${Application.nativeApplicationVersion}`;
-  };
-
   const handleContinue = async () => {
     const trimmed = username.trim();
     if (trimmed.length < 3) {
@@ -68,7 +64,7 @@ export default function OnboardingScreen() {
       setLoading(true);
       setError('');
 
-      const deviceId = getDeviceId();
+      const deviceId = await getDeviceId();
       const result = await api.users.register(trimmed, deviceId);
 
       if (result.success) {

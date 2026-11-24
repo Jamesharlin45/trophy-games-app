@@ -1,8 +1,10 @@
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, TextInput, Alert, KeyboardAvoidingView, Platform } from 'react-native';
-import { DollarSign, Zap, CheckCircle2, Clock, Send, Key } from 'lucide-react-native';
+import { DollarSign, Zap, CheckCircle2, Clock, Send, Key, MessageCircle } from 'lucide-react-native';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { MatchSectionList } from '../../components/neon/MatchSectionList';
 import { DatePickerStrip } from '../../components/DatePickerStrip';
+import { EmailRequestDialog, type EmailSubmitResult } from '../../components/EmailRequestDialog';
+import { RequestSentDialog } from '../../components/RequestSentDialog';
 import { SkeletonList } from '../../components/Skeleton';
 import { NeonButton } from '../../components/neon/NeonButton';
 import { onColor, readableAccent } from '../../components/neon/tokens';
@@ -13,8 +15,12 @@ import { useDialog } from '../../context/DialogContext';
 import { typography } from '../../theme/typography';
 import { api } from '../../api/client';
 import { useScreenQuery } from '../../hooks/useLiveQuery';
+import { safeString } from '../../utils/safeData';
+import { getDeviceId } from '../../utils/deviceId';
+import { getRequestEmail, saveRequestEmail } from '../../utils/requestEmail';
+import { joinTelegram } from '../../lib/telegram';
+import { withErrorBoundary } from '../../components/ScreenErrorBoundary';
 import { useRouter } from 'expo-router';
-import * as Application from 'expo-application';
 import i18n, { tArray } from '../../locales';
 
 type MemberStatus = 'none' | 'pending' | 'approved' | 'rejected' | 'active' | 'loading';
@@ -22,7 +28,10 @@ type MemberStatus = 'none' | 'pending' | 'approved' | 'rejected' | 'active' | 'l
 const toTitleCase = (str: string) =>
     str.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
 
-export default function PaidTipsScreen() {
+const isAlreadyPendingReason = (reason: string | undefined): boolean =>
+    typeof reason === 'string' && reason.toLowerCase().includes('already pending');
+
+function PaidTipsScreen() {
     const { themeColors } = useTheme();
     const styles = getStyles(themeColors);
     const accent = readableAccent(themeColors);
@@ -36,12 +45,17 @@ export default function PaidTipsScreen() {
     const [requesting, setRequesting] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
     const [deviceId, setDeviceId] = useState('');
+    const [emailDialogVisible, setEmailDialogVisible] = useState(false);
+    const [sentDialogVisible, setSentDialogVisible] = useState(false);
+    const [savedEmail, setSavedEmail] = useState('');
     const { username } = useUser();
     const { showEmailRequest } = useDialog();
 
     useEffect(() => {
-        const id = Application.applicationId + '_' + (Application.nativeApplicationVersion || 'v1');
-        setDeviceId(id);
+        let cancelled = false;
+        void getDeviceId().then((id) => { if (!cancelled) setDeviceId(id); }).catch(() => {});
+        void getRequestEmail().then((email) => { if (!cancelled) setSavedEmail(email); }).catch(() => {});
+        return () => { cancelled = true; };
     }, []);
 
     const {
@@ -82,13 +96,14 @@ export default function PaidTipsScreen() {
     }, []);
 
     const uniqueLeagues = useMemo(() => {
-        const leagues = Array.from(new Set(matches.map((m) => m.league))).sort();
+        const leagues = Array.from(new Set(matches.map(m => safeString(m.league)))).sort();
         return ['All', ...leagues];
     }, [matches]);
 
     const filteredMatches = useMemo(() => {
-        return matches.filter((match) => {
-            const leagueMatch = selectedLeague === 'All' || match.league === selectedLeague;
+        return matches.filter(match => {
+            const league = safeString(match.league);
+            const leagueMatch = selectedLeague === 'All' || league === selectedLeague;
             return leagueMatch;
         });
     }, [matches, selectedLeague]);
@@ -98,6 +113,30 @@ export default function PaidTipsScreen() {
         await Promise.all([refetchMembership(), refetchMatches()]);
         setRefreshing(false);
     }, [refetchMembership, refetchMatches]);
+
+    const handleEmailSubmit = async (email: string): Promise<EmailSubmitResult> => {
+        if (!deviceId) {
+            return { ok: false, error: 'Device not ready. Please try again.' };
+        }
+        try {
+            const result = await api.tokens.createMembershipRequest(deviceId, 'paid', username || undefined, email);
+            if (result.success) {
+                await saveRequestEmail(email);
+                setEmailDialogVisible(false);
+                setSentDialogVisible(true);
+                await refetchMembership();
+                return { ok: true };
+            }
+            const reason = safeString(result.reason);
+            if (isAlreadyPendingReason(reason || undefined)) {
+                return { ok: false, error: 'You already have a Premium request pending.' };
+            }
+            return { ok: false, error: reason || 'Failed to send request. Please try again.' };
+        } catch (e) {
+            const message = e instanceof Error && e.message ? e.message : 'Failed to send request. Please try again.';
+            return { ok: false, error: message };
+        }
+    };
 
     /** Submit the request with the address collected by the email dialog. */
     const submitMembershipRequest = async (email: string) => {
@@ -167,6 +206,7 @@ export default function PaidTipsScreen() {
 
     if (memberStatus === 'none' || memberStatus === 'pending' || memberStatus === 'approved' || memberStatus === 'rejected') {
         return (
+            <>
             <KeyboardAvoidingView
                 style={[styles.container, { backgroundColor: themeColors.background }]}
                 behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -230,14 +270,23 @@ export default function PaidTipsScreen() {
                     </NeonButton>
 
                     {!enteringToken ? (
-                        <TouchableOpacity
-                            style={[styles.secondaryBtn, { borderColor: themeColors.border }]}
-                            onPress={() => setEnteringToken(true)}
-                            accessibilityRole="button"
-                        >
-                            <Key size={13} color={themeColors.mutedText} />
-                            <Text style={[styles.secondaryBtnText, { color: themeColors.mutedText }]}>{i18n.t('paid.tokenBtn')}</Text>
-                        </TouchableOpacity>
+                        <View style={styles.tokenRow}>
+                            <TouchableOpacity
+                                style={[styles.secondaryBtn, { borderColor: themeColors.border, flex: 1 }]}
+                                onPress={() => setEnteringToken(true)}
+                            >
+                                <Key size={13} color={themeColors.textMuted} />
+                                <Text style={[styles.secondaryBtnText, { color: themeColors.textMuted }]}>I HAVE A TOKEN</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.telegramBtn, { borderColor: themeColors.border }]}
+                                onPress={() => { void joinTelegram(); }}
+                                accessibilityRole="button"
+                            >
+                                <MessageCircle size={14} color={themeColors.textMuted} />
+                                <Text style={[styles.telegramText, { color: themeColors.textMuted }]}>TELEGRAM</Text>
+                            </TouchableOpacity>
+                        </View>
                     ) : (
                         <View style={[styles.tokenInputCard, { backgroundColor: themeColors.surface, borderColor: themeColors.border }]}>
                             <Text style={[styles.tokenInputLabel, { color: themeColors.mutedText }]}>{i18n.t('paid.tokenLabel')}</Text>
@@ -275,6 +324,17 @@ export default function PaidTipsScreen() {
                     )}
                 </ScrollView>
             </KeyboardAvoidingView>
+            <EmailRequestDialog
+                visible={emailDialogVisible}
+                title="Premium Membership Request"
+                note="We will email your paid-access code when the request is approved."
+                submitLabel="Send Request"
+                prefillEmail={savedEmail}
+                onSubmit={handleEmailSubmit}
+                onClose={() => setEmailDialogVisible(false)}
+            />
+            <RequestSentDialog visible={sentDialogVisible} onClose={() => setSentDialogVisible(false)} />
+            </>
         );
     }
 
@@ -366,6 +426,18 @@ function getStyles(themeColors: ThemeColors) {
     tokenInputLabel: { ...typography.tokenLabel },
     tokenInput: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, ...typography.tokenInput },
     tokenBtnRow: { flexDirection: 'row', gap: 10 },
+    tokenRow: { flexDirection: 'row', gap: 10 },
+    telegramBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        paddingHorizontal: 12,
+        paddingVertical: 13,
+        borderRadius: 14,
+        borderWidth: 1,
+    },
+    telegramText: { ...typography.secondaryBtn },
     cancelBtn: { paddingHorizontal: 16, paddingVertical: 14, borderRadius: 12, justifyContent: 'center', minHeight: 48 },
     cancelBtnText: { ...typography.cancelBtn },
     activeBanner: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 16, paddingVertical: 8, borderBottomWidth: 1, justifyContent: 'center' },
@@ -388,3 +460,5 @@ function getStyles(themeColors: ThemeColors) {
     emptySubtext: { ...typography.emptySubtext, textAlign: 'center', paddingHorizontal: 36 },
     });
 }
+
+export default withErrorBoundary(PaidTipsScreen);

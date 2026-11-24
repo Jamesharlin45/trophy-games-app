@@ -774,6 +774,47 @@ function buildExtraRows(match: MatchViewModel, themeColors: ThemeColors, accentI
     const homeXg = xgOf(match.homeXg);
     const awayXg = xgOf(match.awayXg);
 
+    // Standings and TV stations (kept from the other branch's version).
+    const homeStanding = toFiniteNumber(match.homeStanding);
+    const awayStanding = toFiniteNumber(match.awayStanding);
+    if (homeStanding !== null || awayStanding !== null) {
+        rows.push({
+            key: 'standings',
+            name: 'medal-outline',
+            label: textFor('matchDetail.standings', 'Standings'),
+            content: (
+                <View style={styles.h2hRow}>
+                    {homeStanding !== null && (
+                        <View style={styles.h2hStat}>
+                            <Text style={[styles.h2hVal, { color: accentInk }]}>#{homeStanding}</Text>
+                            <Text style={[styles.h2hLabel, { color: muted }]}>{match.homeTeam}</Text>
+                        </View>
+                    )}
+                    {awayStanding !== null && (
+                        <View style={styles.h2hStat}>
+                            <Text style={[styles.h2hVal, { color: onText }]}>#{awayStanding}</Text>
+                            <Text style={[styles.h2hLabel, { color: muted }]}>{match.awayTeam}</Text>
+                        </View>
+                    )}
+                </View>
+            ),
+        });
+    }
+
+    const tvStations = Array.isArray(match.tvStations) ? match.tvStations : [];
+    if (tvStations.length > 0) {
+        rows.push({
+            key: 'tv',
+            name: 'tv-outline',
+            label: textFor('matchDetail.tv', 'TV'),
+            content: (
+                <View style={styles.h2hRow}>
+                    <Text style={[styles.h2hVal, { color: accentInk }]}>{tvStations.join(', ')}</Text>
+                </View>
+            ),
+        });
+    }
+
     if (potentials.length > 0) {
         rows.push({
             key: 'potentials',
