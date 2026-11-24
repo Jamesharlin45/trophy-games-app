@@ -1,16 +1,18 @@
 /**
- * EmailRequestDialog — email capture for the VIP/Premium membership request
- * flow. The address is validated before submitting; on success the caller
- * stores it so it prefills next time.
+ * EmailRequestDialog — AppDialog-based email capture for both manual token
+ * requests and restored purchases. The address is validated locally before the
+ * caller submits it to the server; on success the caller stores it so it
+ * prefills next time.
  */
 
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Modal, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Mail } from 'lucide-react-native';
+import { AppDialog } from './AppDialog';
 import { useTheme } from '../context/ThemeContext';
-import type { ThemeColors } from '../theme/colors';
 import { typography } from '../theme/typography';
 import { safeString } from '../utils/safeData';
+import i18n from '../locales';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -29,6 +31,7 @@ export interface EmailRequestDialogProps {
     /** Prefilled address, e.g. from AsyncStorage. */
     prefillEmail?: string;
     onSubmit: (email: string) => Promise<EmailSubmitResult>;
+    /** Called after a successful submit, before the dialog closes. */
     onSubmitted?: () => void;
     onClose: () => void;
 }
@@ -45,130 +48,141 @@ export function EmailRequestDialog({
     onClose,
 }: EmailRequestDialogProps) {
     const { themeColors } = useTheme();
-    const styles = getStyles(themeColors);
+    const styles = getStyles();
     const [email, setEmail] = useState(safeString(prefillEmail));
-    const [error, setError] = useState('');
+    const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
 
     useEffect(() => {
         setEmail(safeString(prefillEmail));
-        setError('');
+        setError(null);
         setBusy(false);
     }, [visible, prefillEmail]);
 
     const handleSubmit = async () => {
         const address = email.trim();
         if (!EMAIL_PATTERN.test(address)) {
-            setError('Please enter a valid email address.');
+            setError(i18n.t('emailRequest.invalid'));
             return;
         }
         setBusy(true);
-        setError('');
+        setError(null);
         try {
             const result = await onSubmit(address);
             if (!result.ok) {
-                setError(result.error || 'Failed to send the request. Please try again.');
+                setError(result.error || i18n.t('emailRequest.failed'));
                 return;
             }
             onSubmitted?.();
             onClose();
         } catch {
-            setError('Failed to send the request. Please try again.');
+            setError(i18n.t('emailRequest.failed'));
         } finally {
             setBusy(false);
         }
     };
 
     return (
-        <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-            <View style={styles.backdrop}>
-                <View style={styles.card}>
-                    <View style={styles.header}>
-                        <Mail size={20} color={themeColors.primary} />
-                        <Text style={[styles.title, { color: themeColors.text }]}>{title}</Text>
-                    </View>
-                    {subtitle && (
-                        <Text style={[styles.subtitle, { color: themeColors.textMuted }]}>{subtitle}</Text>
-                    )}
-                    <View style={styles.inputWrap}>
-                        <TextInput
-                            style={[styles.input, { color: themeColors.text }]}
-                            placeholder="you@example.com"
-                            placeholderTextColor={themeColors.textMuted}
-                            value={email}
-                            onChangeText={setEmail}
-                            autoCapitalize="none"
-                            autoCorrect={false}
-                            keyboardType="email-address"
-                        />
-                        {error ? <Text style={[styles.errorText, { color: themeColors.error }]}>{error}</Text> : null}
-                    </View>
-                    <Text style={[styles.note, { color: themeColors.textMuted }]}>{note}</Text>
-                    <View style={styles.actions}>
-                        <TouchableOpacity style={[styles.submitBtn, { backgroundColor: themeColors.primary }]} onPress={() => void handleSubmit()} disabled={busy}>
-                            {busy ? (
-                                <ActivityIndicator color="#fff" size="small" />
-                            ) : (
-                                <Text style={styles.submitText}>{submitLabel ?? 'Send Request'}</Text>
-                            )}
-                        </TouchableOpacity>
-                        <TouchableOpacity style={[styles.cancelBtn, { borderColor: themeColors.border }]} onPress={onClose} disabled={busy}>
-                            <Text style={styles.cancelText}>Cancel</Text>
-                        </TouchableOpacity>
-                    </View>
+        <AppDialog
+            visible={visible}
+            onClose={onClose}
+            title={title}
+            subtitle={subtitle}
+            dismissOnBackdrop={!busy}
+            showClose={!busy}
+            testID="email-request-dialog"
+            footer={
+                <View style={styles.actions}>
+                    <TouchableOpacity
+                        style={[styles.button, { backgroundColor: themeColors.accent }]}
+                        onPress={() => void handleSubmit()}
+                        disabled={busy}
+                        accessibilityRole="button"
+                    >
+                        {busy ? (
+                            <ActivityIndicator color={themeColors.accentText} size="small" />
+                        ) : (
+                            <Text style={[styles.buttonText, { color: themeColors.accentText }]}>
+                                {submitLabel ?? i18n.t('emailRequest.submit')}
+                            </Text>
+                        )}
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[styles.button, styles.secondaryButton, { borderColor: themeColors.border }]}
+                        onPress={onClose}
+                        disabled={busy}
+                        accessibilityRole="button"
+                    >
+                        <Text style={[styles.buttonText, { color: themeColors.text }]}>
+                            {i18n.t('common.cancel')}
+                        </Text>
+                    </TouchableOpacity>
                 </View>
+            }
+        >
+            <View style={styles.inputWrap}>
+                <Mail size={18} color={themeColors.accent} />
+                <TextInput
+                    style={[styles.input, { color: themeColors.text, borderColor: themeColors.border, backgroundColor: themeColors.surfaceElevated }]}
+                    value={email}
+                    onChangeText={setEmail}
+                    placeholder={i18n.t('emailRequest.placeholder')}
+                    placeholderTextColor={themeColors.mutedText}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    editable={!busy}
+                    accessibilityLabel={i18n.t('emailRequest.placeholder')}
+                />
             </View>
-        </Modal>
+            <Text style={[styles.note, { color: themeColors.mutedText }]}>{note}</Text>
+            {error ? <Text style={[styles.error, { color: themeColors.danger }]}>{error}</Text> : null}
+        </AppDialog>
     );
 }
 
-function getStyles(themeColors: ThemeColors) {
+function getStyles() {
     return StyleSheet.create({
-        backdrop: {
-            flex: 1,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            justifyContent: 'center',
+        inputWrap: {
+            flexDirection: 'row',
             alignItems: 'center',
-            padding: 24,
+            gap: 10,
         },
-        card: {
-            backgroundColor: themeColors.cardBg,
-            borderRadius: 16,
-            padding: 20,
-            width: '100%',
-            maxWidth: 380,
+        input: {
+            flex: 1,
+            height: 48,
+            borderRadius: 12,
+            borderWidth: 1,
+            paddingHorizontal: 12,
+            fontSize: 15,
+        },
+        note: {
+            ...typography.medium,
+            fontSize: 12,
+            textAlign: 'center',
+        },
+        error: {
+            ...typography.medium,
+            fontSize: 12,
+            textAlign: 'center',
+        },
+        actions: {
             gap: 8,
         },
-        header: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-        title: { ...typography.gateTitle, fontSize: 16 },
-        subtitle: { fontSize: 13, textAlign: 'center' },
-        inputWrap: {
-            borderWidth: 1,
-            borderRadius: 12,
-            borderColor: themeColors.border,
-            paddingHorizontal: 14,
-            paddingVertical: 12,
-        },
-        input: { ...typography.tokenInput },
-        errorText: { ...typography.pendingText },
-        note: { fontSize: 11, textAlign: 'center', marginTop: 4 },
-        actions: { flexDirection: 'row', gap: 10, marginTop: 8 },
-        submitBtn: {
-            flex: 1,
-            paddingVertical: 14,
-            borderRadius: 12,
+        button: {
+            height: 48,
+            borderRadius: 14,
             alignItems: 'center',
             justifyContent: 'center',
         },
-        submitText: { color: '#fff', ...typography.primaryBtn },
-        cancelBtn: {
-            flex: 1,
-            paddingVertical: 14,
-            borderRadius: 12,
-            alignItems: 'center',
-            justifyContent: 'center',
+        secondaryButton: {
             borderWidth: 1,
+            backgroundColor: 'transparent',
         },
-        cancelText: { ...typography.primaryBtn },
+        buttonText: {
+            ...typography.primaryBtn,
+        },
     });
 }
+
+export default EmailRequestDialog;

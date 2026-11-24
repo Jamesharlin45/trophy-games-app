@@ -91,24 +91,21 @@ export function DatePickerStrip({
                             {
                                 width: itemWidth,
                                 backgroundColor: isSelected
-                                    ? themeColors.primary
-                                    : themeColors.cardBgSecondary,
-                                borderColor: isSelected
-                                    ? themeColors.primary
-                                    : 'transparent',
-                                borderWidth: isSelected ? 1 : 0,
-                                shadowColor: isSelected ? themeColors.primary : themeColors.text,
+                                    ? themeColors.accent
+                                    : themeColors.surfaceAlt,
+                                borderColor: isSelected ? themeColors.accent : themeColors.border,
+                                borderWidth: 1,
+                                shadowColor: themeColors.shadow,
                                 shadowOffset: isSelected ? { width: 0, height: 4 } : { width: 0, height: 0 },
                                 shadowOpacity: isSelected ? 0.4 : 0,
                                 shadowRadius: isSelected ? 12 : 0,
-                                elevation: isSelected ? 4 : 0,
                             },
                         ]}
                     >
                         <Text
                             style={[
                                 styles.dayText,
-                                { color: isSelected ? themeColors.background : themeColors.textMuted },
+                                { color: isSelected ? themeColors.onAccent : themeColors.textSecondary },
                             ]}
                         >
                             {String(label || '')}
@@ -116,7 +113,7 @@ export function DatePickerStrip({
                         <Text
                             style={[
                                 styles.numText,
-                                { color: isSelected ? themeColors.background : themeColors.text },
+                                { color: isSelected ? themeColors.onAccent : themeColors.text },
                             ]}
                         >
                             {String(dayNum || '')}

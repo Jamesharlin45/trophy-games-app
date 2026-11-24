@@ -36,6 +36,18 @@ function parseScore(score: string | null | undefined): { homeScore?: number; awa
     return out;
 }
 
+/** Derive the match_date range-filter value (YYYY-MM-DD, UTC) from a kickoff
+ * timestamp — the same format the Daily/Weekly range filter reads. */
+export function utcMatchDate(timestamp: string): string {
+    const t = timestamp.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+    // ISO strings with an explicit offset are converted to the UTC date;
+    // offset-less kickoffs are treated as UTC.
+    const parsed = /[Zz]$|[+-]\d{2}:?\d{2}$/.test(t) ? new Date(t) : new Date(`${t}Z`);
+    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+    return t.split('T')[0];
+}
+
 function mapMatch(row: MatchRow): DbMatch {
     // Rich detail fields (homeForm, potentials, h2h, ...) live in `details`
     // (no dedicated columns) and are mirrored at the top level of the
@@ -124,11 +136,36 @@ export function sanitizeProxyMatch(m: Record<string, unknown>): ProxyMatchInput 
 // Queries (ports of packages/backend/convex/matches.ts)
 // ---------------------------------------------------------------------------
 
+/** Extra query options used by the mobile app endpoints. */
+export interface AppMatchQueryOptions {
+    /** Hide AI picks that are still unpublished: rows with tier 'unassigned'
+     * and an external id starting 'af-'. Every other row is unaffected. */
+    excludeUnpublishedPicks?: boolean;
+}
+
+/**
+ * PostgREST filter that keeps every row except unpublished AI picks
+ * (tier = 'unassigned' AND external_id LIKE 'af-%'). NULL tier / external id
+ * rows are kept, and so is every other tier.
+ */
+const EXCLUDE_UNPUBLISHED_PICKS_FILTER =
+    'tier.is.null,tier.neq.unassigned,external_id.is.null,not.and(tier.eq.unassigned,external_id.like.af-*)';
+
+function isUnpublishedPick(row: MatchRow): boolean {
+    return row.tier === 'unassigned' && typeof row.external_id === 'string' && row.external_id.startsWith('af-');
+}
+
 /** api.matches.getAll — newest first, capped at `limit`. */
-export async function getAll(db: SupabaseClient, limit = 100): Promise<DbMatch[]> {
-    const { data } = await db
-        .from('matches')
-        .select('*')
+export async function getAll(
+    db: SupabaseClient,
+    limit = 100,
+    options?: AppMatchQueryOptions,
+): Promise<DbMatch[]> {
+    const base = db.from('matches').select('*');
+    const query = options?.excludeUnpublishedPicks
+        ? base.or(EXCLUDE_UNPUBLISHED_PICKS_FILTER)
+        : base;
+    const { data } = await query
         .order('kickoff', { ascending: false })
         .limit(limit);
     return mapMatches((data ?? []) as MatchRow[]);
@@ -136,20 +173,37 @@ export async function getAll(db: SupabaseClient, limit = 100): Promise<DbMatch[]
 
 /** api.matches.getById — external id first, then the row id as fallback
  * (mirrors the Convex by_match_id index + ctx.db.get fallback). */
-export async function getById(db: SupabaseClient, matchId: string): Promise<DbMatch | null> {
+export async function getById(
+    db: SupabaseClient,
+    matchId: string,
+    options?: AppMatchQueryOptions,
+): Promise<DbMatch | null> {
     const { data } = await db.from('matches').select('*').eq('external_id', matchId).limit(1);
-    if (data && data.length > 0) return mapMatch(data[0] as MatchRow);
+    if (data && data.length > 0) {
+        const row = data[0] as MatchRow;
+        if (options?.excludeUnpublishedPicks && isUnpublishedPick(row)) return null;
+        return mapMatch(row);
+    }
     const byRowId = await db.from('matches').select('*').eq('id', matchId).limit(1);
-    if (byRowId.data && byRowId.data.length > 0) return mapMatch(byRowId.data[0] as MatchRow);
+    if (byRowId.data && byRowId.data.length > 0) {
+        const row = byRowId.data[0] as MatchRow;
+        if (options?.excludeUnpublishedPicks && isUnpublishedPick(row)) return null;
+        return mapMatch(row);
+    }
     return null;
 }
 
 /** api.matches.getByDate — matches on a date, newest first, capped at 100. */
-export async function getByDate(db: SupabaseClient, date: string): Promise<DbMatch[]> {
-    const { data } = await db
-        .from('matches')
-        .select('*')
-        .eq('match_date', date)
+export async function getByDate(
+    db: SupabaseClient,
+    date: string,
+    options?: AppMatchQueryOptions,
+): Promise<DbMatch[]> {
+    const base = db.from('matches').select('*').eq('match_date', date);
+    const query = options?.excludeUnpublishedPicks
+        ? base.or(EXCLUDE_UNPUBLISHED_PICKS_FILTER)
+        : base;
+    const { data } = await query
         .order('kickoff', { ascending: false })
         .limit(100);
     return mapMatches((data ?? []) as MatchRow[]);
@@ -162,14 +216,30 @@ export async function getByTypeAndDate(
     matchType: MatchTier,
     date: string,
     limit = 100,
+    options?: AppMatchQueryOptions,
 ): Promise<DbMatch[]> {
+    const base = db.from('matches').select('*').eq('tier', matchType).eq('match_date', date);
+    const query = options?.excludeUnpublishedPicks
+        ? base.or(EXCLUDE_UNPUBLISHED_PICKS_FILTER)
+        : base;
+    const { data } = await query
+        .order('kickoff', { ascending: false })
+        .limit(limit);
+    return mapMatches((data ?? []) as MatchRow[]);
+}
+
+/** Admin-only: stored unpublished fixtures for a date — rows with an
+ * external id starting 'af-' and tier 'unassigned', i.e. exactly the set the
+ * mobile endpoints exclude (see excludeUnpublishedPicks). Newest first. */
+export async function getUnpublishedFixtures(db: SupabaseClient, date: string): Promise<DbMatch[]> {
     const { data } = await db
         .from('matches')
         .select('*')
-        .eq('tier', matchType)
         .eq('match_date', date)
+        .eq('tier', 'unassigned')
+        .like('external_id', 'af-%')
         .order('kickoff', { ascending: false })
-        .limit(limit);
+        .limit(100);
     return mapMatches((data ?? []) as MatchRow[]);
 }
 
@@ -183,6 +253,21 @@ export async function getHistory(db: SupabaseClient, limit = 100): Promise<DbMat
         .order('kickoff', { ascending: false })
         .limit(limit);
     return mapMatches((data ?? []) as MatchRow[]);
+}
+
+/** Mobile history feed: finished matches that carry a published tip — tier
+ * free/vip/paid with an ai_prediction; unpublished picks (tier
+ * 'unassigned' or null) are excluded. Newest first. */
+export async function getPublishedFinishedMatches(db: SupabaseClient): Promise<DbMatch[]> {
+    const { data } = await db
+        .from('matches')
+        .select('*')
+        .or('status.eq.Finished,status.eq.FT,is_history.eq.true')
+        .order('match_date', { ascending: false })
+        .limit(1000);
+    return mapMatches((data ?? []) as MatchRow[]).filter(
+        (m) => (m.matchType === 'free' || m.matchType === 'vip' || m.matchType === 'paid') && Boolean(m.aiPrediction),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -299,7 +384,7 @@ export async function updateMatch(db: SupabaseClient, matchId: string, edits: Ma
 /** api.matches.create — insert a new match (manual matches carry their
  * `manual-*` external id via `external_id`). Returns the external id. */
 export async function createMatch(db: SupabaseClient, match: CreateMatchInput): Promise<string> {
-    const matchDate = match.timestamp ? match.timestamp.split('T')[0] : new Date().toISOString().split('T')[0];
+    const matchDate = match.timestamp ? utcMatchDate(match.timestamp) : new Date().toISOString().slice(0, 10);
     const score =
         match.score ||
         (match.homeScore != null && match.awayScore != null
@@ -473,7 +558,7 @@ export async function enrichMatch(db: SupabaseClient, matchId: string, data: Rec
 export async function saveAll(db: SupabaseClient, matches: MatchData[], leagues: LeagueInfo[] = []): Promise<void> {
     const now = new Date().toISOString();
     for (const m of matches) {
-        const matchDate = m.matchDate || (m.timestamp ? m.timestamp.split('T')[0] : now.split('T')[0]);
+        const matchDate = m.matchDate || (m.timestamp ? utcMatchDate(m.timestamp) : now.slice(0, 10));
         const existing = await getById(db, m.id);
         const updates: Record<string, unknown> = {
             home_team: m.homeTeam,
@@ -551,7 +636,7 @@ export async function setTrending(db: SupabaseClient, matchId: string): Promise<
 /** Port of Convex insertProxyMatch: insert a proxy match (before tagging it)
  * with the given type, without firing any alerts. */
 async function insertProxyMatch(db: SupabaseClient, match: ProxyMatchInput, forcedType?: MatchTier): Promise<DbMatch> {
-    const matchDate = match.timestamp ? match.timestamp.split('T')[0] : new Date().toISOString().split('T')[0];
+    const matchDate = match.timestamp ? utcMatchDate(match.timestamp) : new Date().toISOString().slice(0, 10);
     const score =
         match.score ||
         (match.homeScore != null && match.awayScore != null

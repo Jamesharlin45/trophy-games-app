@@ -32,6 +32,10 @@ export interface MatchData {
         reasoning: string[];
         suggestedBet?: string;
         generatedAt: string;
+        // Added by the web "Run Analysis" rework (per-match DeepSeek result).
+        risk?: 'low' | 'medium' | 'high';
+        sources?: string[];
+        pick?: string;
     };
     odds?: {
         home: string;
@@ -73,7 +77,7 @@ export interface MatchData {
             odds?: { home: string; draw: string; away: string; };
         }[];
     };
-    result?: 'pending' | 'win' | 'lose' | 'draw';
+    result?: 'pending' | 'win' | 'lose' | 'draw' | 'void';
     matchDate?: string; // YYYY-MM-DD for date filtering
     isHistory?: boolean; // manually marked as history by admin
     createdAt?: string;

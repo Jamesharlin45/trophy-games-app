@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { triggerDueEmailsIfDue } from '@/lib/email-opportunistic';
 import { createDb } from '@/lib/db/client';
 import { claimToken } from '@/lib/db/tokens';
 
@@ -10,6 +11,7 @@ function readString(value: unknown): string | undefined {
 
 // Port of the Convex `tokens.claimToken` mutation the mobile app calls.
 export async function POST(request: Request) {
+    triggerDueEmailsIfDue();
     const db = createDb();
     if (!db) {
         return NextResponse.json({ success: false, reason: 'Supabase not configured' }, { status: 500 });

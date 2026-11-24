@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
+import { triggerDueEmailsIfDue } from '@/lib/email-opportunistic';
 import { createDb } from '@/lib/db/client';
 import { requestMembership, type TokenType } from '@/lib/db/tokens';
+import { isValidDeviceId } from '@/lib/device-id';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,6 +17,7 @@ function isTokenType(value: string | undefined): value is TokenType {
 // Port of the Convex `tokens.createMembershipRequest` alias — same mutation
 // as requestMembership, same JSON output.
 export async function POST(request: Request) {
+    triggerDueEmailsIfDue();
     const db = createDb();
     if (!db) {
         return NextResponse.json({ success: false, reason: 'Supabase not configured' }, { status: 500 });
@@ -31,15 +34,19 @@ export async function POST(request: Request) {
     const deviceId = readString(body?.deviceId);
     const username = readString(body?.username);
     const type = readString(body?.type);
-    if (!deviceId || !isTokenType(type)) {
+    const email = readString(body?.email);
+    if (!deviceId || !isTokenType(type) || !isValidDeviceId(deviceId)) {
         return NextResponse.json(
-            { error: 'deviceId is required and type must be one of: vip, paid' },
+            { error: 'valid deviceId and type vip/paid are required' },
             { status: 400 },
         );
     }
+    if (!email) {
+        return NextResponse.json({ error: 'email is required' }, { status: 400 });
+    }
 
     try {
-        return NextResponse.json(await requestMembership(db, { deviceId, username, type }));
+        return NextResponse.json(await requestMembership(db, { deviceId, username, type, email }));
     } catch (error) {
         console.error('[API App Tokens CreateMembershipRequest] Error:', error);
         return NextResponse.json({ error: 'Failed to send request' }, { status: 500 });

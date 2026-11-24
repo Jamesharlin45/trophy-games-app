@@ -54,6 +54,18 @@ export type MatchTier = 'free' | 'paid' | 'vip' | 'unassigned';
 /** A match document as returned by the API (same shape as the old Convex doc). */
 export type ApiMatch = MatchData & { _id?: string };
 
+/** Result vocabulary of GET /api/app/matches/history: won/lost/void/pending. */
+export type HistoryResult = 'won' | 'lost' | 'void' | 'pending';
+
+export interface HistoryResponse {
+    /** Finished matches with a published tip for the selected date. */
+    matches: Array<Omit<ApiMatch, 'result'> & { result?: HistoryResult }>;
+    /** Strike rate (percentage) for the selected date, from the server. */
+    strikeRate: number;
+    /** Strike rate (percentage) for the last 30 days, from the server. */
+    strikeRate30d: number;
+}
+
 export interface ApiUser {
     _id: string;
     username: string;
@@ -111,6 +123,15 @@ export interface ActiveSubscription {
     expiresAt?: string;
     purchaseToken: string;
     transactionId?: string;
+}
+
+export type SetPurchaseEmailResult =
+    | { success: false; reason: string }
+    | { success: true; action: 'inserted' | 'updated' | 'already_sent' };
+
+export interface TeamColorResult {
+    /** Dominant colour of the crest, e.g. "#2A4A2A". */
+    hex: string;
 }
 
 export interface RegisterUserResult {
@@ -211,6 +232,9 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 // ---------------------------------------------------------------------------
 
 export const api = {
+    teamColor: (crestUrl: string) =>
+        request<TeamColorResult>('/team-color', { query: { url: crestUrl } }),
+
     matches: {
         byTypeAndDate: (matchType: MatchTier, date: string, limit?: number) =>
             request<ApiMatch[]>('/matches/by-type-and-date', {
@@ -220,8 +244,8 @@ export const api = {
             request<ApiMatch[]>('/matches/by-date', { query: { date } }),
         all: (limit?: number) =>
             request<ApiMatch[]>('/matches/all', { query: { limit } }),
-        history: (limit?: number) =>
-            request<ApiMatch[]>('/matches/history', { query: { limit } }),
+        history: (limit?: number, date?: string) =>
+            request<HistoryResponse>('/matches/history', { query: { limit, date } }),
         byId: (matchId: string) =>
             request<ApiMatch | null>('/matches/by-id', { query: { matchId } }),
     },
@@ -249,10 +273,15 @@ export const api = {
                 method: 'POST',
                 body: { deviceId, type, username, email },
             }),
-        requestMembership: (deviceId: string, type: 'vip' | 'paid', username?: string) =>
+        requestMembership: (
+            deviceId: string,
+            type: 'vip' | 'paid',
+            username?: string,
+            email?: string,
+        ) =>
             request<MembershipRequestResult>('/tokens/request-membership', {
                 method: 'POST',
-                body: { deviceId, type, username },
+                body: { deviceId, type, username, email },
             }),
         claimToken: (token: string, deviceId: string, username?: string) =>
             request<ClaimTokenResult>('/tokens/claim-token', {
@@ -289,6 +318,11 @@ export const api = {
         getActiveSubscription: (deviceId: string) =>
             request<ActiveSubscription | null>('/purchases/get-active-subscription', {
                 query: { deviceId },
+            }),
+        setEmail: (input: { deviceId: string; purchaseToken: string; email: string }) =>
+            request<SetPurchaseEmailResult>('/purchases/set-email', {
+                method: 'POST',
+                body: input,
             }),
     },
 

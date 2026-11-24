@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { TrendingUp, Timer, Zap, CheckCircle2, AlertCircle, Loader2, Search, Filter, Calendar, Crown, DollarSign, Star, RefreshCw, Flame, PlusCircle, Trash2, Pencil } from 'lucide-react';
+import { TrendingUp, Timer, Zap, CheckCircle2, AlertCircle, Loader2, Search, Filter, Calendar, Crown, DollarSign, Star, RefreshCw, Flame, PlusCircle, Trash2, Pencil, Flag } from 'lucide-react';
 import { MatchData } from '@trophy-games/shared';
 import { MatchDetailModal } from '@/components/MatchDetailModal';
 import { ManualMatchModal } from '@/components/ManualMatchModal';
@@ -55,6 +55,15 @@ export default function MatchesPage() {
     const [loading, setLoading] = useState(true);
     const [updatingId, setUpdatingId] = useState<string | null>(null);
 
+    // Stored unpublished fixtures for the selected date ("Fetched fixtures
+    // (not published)" section): rows with external_id starting 'af-' and
+    // tier 'unassigned' — the set the mobile app excludes.
+    const [unpublishedFixtures, setUnpublishedFixtures] = useState<MatchData[]>([]);
+    const [syncingFixtures, setSyncingFixtures] = useState(false);
+    const [syncMessage, setSyncMessage] = useState<string | null>(null);
+    const [syncingResults, setSyncingResults] = useState(false);
+    const [resultsMessage, setResultsMessage] = useState<string | null>(null);
+
     // Read league prefill from URL (client-side, avoid useSearchParams Suspense issue)
     const getPrefillLeague = () => {
         if (typeof window === 'undefined') return '';
@@ -73,6 +82,9 @@ export default function MatchesPage() {
     const [selectedMatch, setSelectedMatch] = useState<MatchData | null>(null);
     const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
     const [isManualModalOpen, setIsManualModalOpen] = useState(false);
+    // When the manual modal opens via the "Add from fixtures" button, start
+    // with the fixture picker already open inside it.
+    const [manualModalOpenPicker, setManualModalOpenPicker] = useState(false);
     const [editingMatch, setEditingMatch] = useState<MatchData | null>(null);
 
     useEffect(() => {
@@ -107,6 +119,23 @@ export default function MatchesPage() {
         void initialize();
     }, []);
 
+    const fetchUnpublishedFixtures = useCallback(async () => {
+        try {
+            const res = await fetch(`/api/admin/unpublished-fixtures?date=${encodeURIComponent(dateFilter)}`);
+            const data = (await res.json()) as MatchData[];
+            if (Array.isArray(data)) setUnpublishedFixtures(data);
+        } catch (error) {
+            console.error('Failed to fetch unpublished fixtures:', error);
+        }
+    }, [dateFilter]);
+
+    useEffect(() => {
+        async function initialize() {
+            await fetchUnpublishedFixtures();
+        }
+        void initialize();
+    }, [fetchUnpublishedFixtures]);
+
     const handleRefresh = async () => {
         setLoading(true);
         await fetchMatches();
@@ -130,15 +159,15 @@ export default function MatchesPage() {
                 throw new Error(data.error || 'Failed to delete');
             }
             setMatches(prev => prev.filter(m => m.id !== matchId));
-        } catch (err: any) {
-            setErrorMsg(err.message || 'Failed to delete match');
+        } catch (err) {
+            setErrorMsg(err instanceof Error ? err.message : 'Failed to delete match');
         } finally {
             setDeletingId(null);
         }
     };
 
     const updateMatchType = async (matchId: string, matchType: 'free' | 'paid' | 'vip' | 'unassigned') => {
-        const match = matches.find(m => m.id === matchId);
+        const match = matches.find(m => m.id === matchId) ?? unpublishedFixtures.find(m => m.id === matchId);
         setUpdatingId(matchId);
         setErrorMsg(null);
         try {
@@ -154,12 +183,58 @@ export default function MatchesPage() {
             setMatches(prev => prev.map(m =>
                 m.id === matchId ? { ...m, matchType } : m
             ));
-        } catch (e: any) {
+            setUnpublishedFixtures(prev => prev.map(m =>
+                m.id === matchId ? { ...m, matchType } : m
+            ));
+        } catch (e) {
             console.error('Update failed', e);
-            setErrorMsg(e.message || 'Failed to update match type');
+            setErrorMsg(e instanceof Error ? e.message : 'Failed to update match type');
             setTimeout(() => setErrorMsg(null), 4000);
         }
         setUpdatingId(null);
+    };
+
+    const handleSyncFixtures = async () => {
+        setSyncingFixtures(true);
+        setErrorMsg(null);
+        setSyncMessage(null);
+        try {
+            const res = await fetch('/api/admin/sync-fixtures', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ date: dateFilter }),
+            });
+            const data = (await res.json()) as { error?: string; inserted?: number; updated?: number; skipped?: number };
+            if (!res.ok || data.error) {
+                throw new Error(data.error || `HTTP ${res.status}`);
+            }
+            setSyncMessage(`Synced — inserted ${data.inserted ?? 0}, updated ${data.updated ?? 0}, skipped ${data.skipped ?? 0}`);
+            await fetchUnpublishedFixtures();
+            await fetchMatches();
+        } catch (err) {
+            setErrorMsg(err instanceof Error ? err.message : 'Failed to sync fixtures');
+        } finally {
+            setSyncingFixtures(false);
+        }
+    };
+
+    const handleSyncResults = async () => {
+        setSyncingResults(true);
+        setResultsMessage(null);
+        setErrorMsg(null);
+        try {
+            const res = await fetch('/api/admin/sync-results');
+            const data = await res.json();
+            if (!res.ok || data.error) {
+                throw new Error(data.error || `HTTP ${res.status}`);
+            }
+            setResultsMessage(`Results synced — ${data.updated ?? 0} updated, ${data.finished ?? 0} finished, ${data.voided ?? 0} voided`);
+            await fetchMatches();
+        } catch (err) {
+            setErrorMsg(err instanceof Error ? err.message : 'Failed to sync results');
+        } finally {
+            setSyncingResults(false);
+        }
     };
 
     const handleOpenModal = (match: MatchData) => {
@@ -455,13 +530,34 @@ export default function MatchesPage() {
                     <h1 className="text-3xl font-bold text-zinc-900 dark:text-zinc-50 tracking-tight">Matches</h1>
                     <p className="text-zinc-500 dark:text-zinc-400">Manage every match — edit teams, scores, status, result and AI predictions. Changes sync to mobile.</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2 items-center">
+                    {resultsMessage && !syncingResults && (
+                        <span className="text-xs text-emerald-600 dark:text-emerald-400">{resultsMessage}</span>
+                    )}
+                    <button
+                        onClick={() => void handleSyncResults()}
+                        disabled={syncingResults}
+                        className="flex items-center justify-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition-colors text-sm shadow-sm disabled:opacity-50"
+                    >
+                        <RefreshCw size={16} className={syncingResults ? 'animate-spin' : undefined} />
+                        {syncingResults ? 'Syncing...' : 'Refresh results'}
+                    </button>
                     <button
                         onClick={() => setIsManualModalOpen(true)}
                         className="flex items-center justify-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-colors text-sm shadow-sm"
                     >
                         <PlusCircle size={16} />
                         Manual Match
+                    </button>
+                    <button
+                        onClick={() => {
+                            setManualModalOpenPicker(true);
+                            setIsManualModalOpen(true);
+                        }}
+                        className="flex items-center justify-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition-colors text-sm shadow-sm"
+                    >
+                        <Flag size={16} />
+                        Add from fixtures
                     </button>
                     <button
                         onClick={handleRefresh}
@@ -580,6 +676,73 @@ export default function MatchesPage() {
                 </div>
             </div>
 
+            {/* Fetched fixtures (not published) — stored af-* rows that are
+                still tier 'unassigned' (the set the mobile app excludes). */}
+            <section className="space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                        <Flag size={18} className="text-amber-500" />
+                        <h2 className="text-sm font-bold uppercase tracking-wider text-zinc-900 dark:text-zinc-50">Fetched fixtures (not published)</h2>
+                        <span className="text-xs text-zinc-400">{unpublishedFixtures.length}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        {syncMessage && !syncingFixtures && (
+                            <span className="text-xs text-emerald-600 dark:text-emerald-400">{syncMessage}</span>
+                        )}
+                        <button
+                            onClick={() => void handleSyncFixtures()}
+                            disabled={syncingFixtures}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs transition-colors disabled:opacity-50"
+                        >
+                            <RefreshCw size={14} className={syncingFixtures ? 'animate-spin' : undefined} />
+                            {syncingFixtures ? 'Syncing...' : 'Sync fixtures now'}
+                        </button>
+                    </div>
+                </div>
+                <p className="text-xs text-zinc-400">
+                    Stored fixtures fetched from the API that are not published to the app yet (tier &ldquo;unassigned&rdquo;). Set a tier on each to publish it.
+                </p>
+                {unpublishedFixtures.length === 0 ? (
+                    <p className="text-sm text-zinc-400 italic">No stored fixtures are waiting for this date.</p>
+                ) : (
+                    <div className="grid gap-3">
+                        {unpublishedFixtures.map((m) => (
+                            <div key={m.id} className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/50 p-4 space-y-3">
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                    <div className="space-y-0.5">
+                                        <div className="text-sm font-bold text-zinc-900 dark:text-zinc-50">{m.homeTeam} vs {m.awayTeam}</div>
+                                        <div className="text-xs text-zinc-400">{m.league}</div>
+                                        <div className="text-xs text-zinc-400">
+                                            {new Date(m.timestamp).toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                        </div>
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        {(['unassigned', 'free', 'paid', 'vip'] as const).map((type) => (
+                                            <button
+                                                key={type}
+                                                onClick={(e) => { e.stopPropagation(); void updateMatchType(m.id, type); }}
+                                                disabled={updatingId === m.id}
+                                                className={cn(
+                                                    "px-2.5 py-1 rounded-lg text-[10px] font-bold transition",
+                                                    (m.matchType ?? 'unassigned') === type
+                                                        ? type === 'unassigned' ? 'bg-zinc-600 text-white'
+                                                            : type === 'free' ? 'bg-blue-600 text-white'
+                                                            : type === 'paid' ? 'bg-orange-500 text-white'
+                                                            : 'bg-purple-500 text-white'
+                                                        : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                                                )}
+                                            >
+                                                {type === 'unassigned' ? 'None' : type === 'free' ? 'Free' : type === 'paid' ? 'Paid' : 'VIP'}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </section>
+
             {loading ? (
                 <div className="flex flex-col items-center justify-center py-20 text-zinc-500 gap-4">
                     <Loader2 className="animate-spin text-blue-600" size={40} />
@@ -638,7 +801,11 @@ export default function MatchesPage() {
             {/* Manual Match Creation Modal */}
             <ManualMatchModal
                 isOpen={isManualModalOpen}
-                onClose={() => setIsManualModalOpen(false)}
+                openPickerOnStart={manualModalOpenPicker}
+                onClose={() => {
+                    setIsManualModalOpen(false);
+                    setManualModalOpenPicker(false);
+                }}
                 onSuccess={fetchMatches}
             />
 

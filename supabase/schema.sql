@@ -53,7 +53,7 @@ CREATE TABLE matches (
     home_lineup jsonb NULL,
     away_lineup jsonb NULL,
     odds_comparison jsonb NULL,
-    result text NULL CHECK (result IN ('pending', 'win', 'lose', 'draw')),
+    result text NULL CHECK (result IN ('pending', 'win', 'lose', 'draw', 'void')),
     match_date text NULL,
     is_history boolean NULL,
     convex_created_at text NOT NULL, -- doc field createdAt
@@ -236,7 +236,10 @@ CREATE TABLE analysis_results (
     approved_at text NULL,
     approved_by text NULL,
     model text NOT NULL,
-    updated_at text NULL
+    updated_at text NULL,
+    -- Per-match proposals stored while Run Analysis is in progress; matches
+    -- get ai_prediction/tier only when this split is approved.
+    proposals jsonb NULL
 );
 
 CREATE INDEX analysis_results_by_date ON analysis_results ("date");

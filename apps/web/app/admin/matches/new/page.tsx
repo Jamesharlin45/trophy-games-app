@@ -1,13 +1,15 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
     Swords, ArrowLeft, Loader2, CheckCircle2, AlertCircle,
     Star, DollarSign, Crown, Filter, Brain, PlusCircle, ExternalLink,
-    Flame,
+    Flame, Flag,
 } from 'lucide-react';
 import Link from 'next/link';
+import { FixturePicker, toDatetimeLocal } from '@/components/FixturePicker';
+import type { ApiFootballFixture } from '@/lib/api-football';
 
 const MATCH_TYPES = [
     { value: 'unassigned', label: 'Unassigned', icon: Filter, color: 'bg-zinc-500' },
@@ -86,6 +88,21 @@ export default function AddMatchPage() {
 
     const toggleTrending = () => setForm(prev => ({ ...prev, isTrending: !prev.isTrending }));
 
+    const prefillFromFixture = (f: ApiFootballFixture) => {
+        setForm(prev => ({
+            ...prev,
+            homeTeam: f.homeTeam.name.trim(),
+            awayTeam: f.awayTeam.name.trim(),
+            league: f.league.name.trim(),
+            country: f.league.country || prev.country,
+            status: 'Scheduled',
+            timestamp: toDatetimeLocal(f.date),
+            leagueLogo: f.league.logo || '',
+            homeTeamLogo: f.homeTeam.logo || '',
+            awayTeamLogo: f.awayTeam.logo || '',
+        }));
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError(null);
@@ -127,8 +144,8 @@ export default function AddMatchPage() {
             if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
 
             setSuccess(true);
-        } catch (err: any) {
-            setError(err.message || 'Failed to create match');
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to create match');
         } finally {
             setSubmitting(false);
         }
@@ -197,6 +214,17 @@ export default function AddMatchPage() {
                     <span className="text-sm">{error}</span>
                 </div>
             )}
+
+            {/* Pick from fixtures — API-Football real upcoming games */}
+            <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/50 p-5 space-y-4">
+                <h2 className="font-semibold text-zinc-900 dark:text-zinc-100 text-sm uppercase tracking-wider flex items-center gap-2">
+                    <Flag size={16} className="text-blue-600" />
+                    Pick from Fixtures
+                    <span className="text-zinc-400 font-normal normal-case">(real upcoming games from API-Football)</span>
+                </h2>
+                <FixturePicker onSelect={prefillFromFixture} />
+                <p className="text-[10px] text-zinc-400">Tap a fixture to prefill the form — teams, league, and kickoff are filled in. Manual entry still works as before.</p>
+            </section>
 
             <form onSubmit={handleSubmit} className="space-y-6">
                 {/* Teams */}

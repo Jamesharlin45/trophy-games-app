@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { triggerDueEmailsIfDue } from '@/lib/email-opportunistic';
 import { createDb } from '@/lib/db/client';
 import { getByTypeAndDate } from '@/lib/db/matches';
 import type { MatchTier } from '@/lib/db/types';
@@ -12,6 +13,7 @@ function isMatchTier(value: string | null): value is MatchTier {
 }
 
 export async function GET(request: Request) {
+    triggerDueEmailsIfDue();
     const { searchParams } = new URL(request.url);
     const matchType = searchParams.get('matchType');
     const date = searchParams.get('date');
@@ -40,7 +42,9 @@ export async function GET(request: Request) {
     if (!db) return NextResponse.json([]);
 
     try {
-        return NextResponse.json(await getByTypeAndDate(db, matchType, date, limit));
+        return NextResponse.json(await getByTypeAndDate(db, matchType, date, limit, {
+            excludeUnpublishedPicks: matchType === 'unassigned',
+        }));
     } catch (error) {
         console.error('[API App Matches ByTypeAndDate] Error:', error);
         return NextResponse.json({ error: 'Failed to load matches' }, { status: 500 });

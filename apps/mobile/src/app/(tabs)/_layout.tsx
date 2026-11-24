@@ -1,71 +1,72 @@
+import { StyleSheet, View } from 'react-native';
 import { Tabs } from 'expo-router';
-import { Home, DollarSign, Crown, CheckCircle, Store } from 'lucide-react-native';
+import { Ionicons } from '@expo/vector-icons';
+import type { IonName } from '../../components/design/AppTabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors } from '../../theme/colors';
 import { useTheme } from '../../context/ThemeContext';
-import { useLanguage } from '../../context/LanguageContext';
 import i18n from '../../locales';
 
 export default function TabLayout() {
     const { themeColors } = useTheme();
-    const { locale } = useLanguage();
     const insets = useSafeAreaInsets();
+
+    const tabs: { name: string; icon: IonName; key: string }[] = [
+        { name: 'index', icon: 'home-outline', key: 'home' },
+        { name: 'paid', icon: 'cash-outline', key: 'paid' },
+        { name: 'vip', icon: 'medal-outline', key: 'vip' },
+        { name: 'wins', icon: 'checkmark-circle-outline', key: 'analysis' },
+        { name: 'market', icon: 'storefront-outline', key: 'market' },
+    ];
 
     return (
         <Tabs
             screenOptions={{
                 headerShown: false,
-                tabBarActiveTintColor: themeColors.primary,
-                tabBarInactiveTintColor: themeColors.textMuted,
-                tabBarLabelStyle: {
-                    fontSize: 10,
-                    fontWeight: '600',
-                    marginBottom: 5,
-                },
                 tabBarStyle: {
                     backgroundColor: themeColors.background,
                     borderTopColor: themeColors.border,
                     height: 60 + insets.bottom,
-                    paddingTop: 5,
+                    paddingTop: 4,
                     paddingBottom: insets.bottom,
                 },
             }}
         >
-            <Tabs.Screen
-                name="index"
-                options={{
-                    title: i18n.t('tabs.home'),
-                    tabBarIcon: ({ color }) => <Home color={color} size={22} />,
-                }}
-            />
-            <Tabs.Screen
-                name="paid"
-                options={{
-                    title: i18n.t('tabs.paid'),
-                    tabBarIcon: ({ color }) => <DollarSign color={color} size={22} />,
-                }}
-            />
-            <Tabs.Screen
-                name="vip"
-                options={{
-                    title: i18n.t('tabs.vip'),
-                    tabBarIcon: ({ color }) => <Crown color={color} size={22} />,
-                }}
-            />
-            <Tabs.Screen
-                name="wins"
-                options={{
-                    title: i18n.t('tabs.analysis'),
-                    tabBarIcon: ({ color }) => <CheckCircle color={color} size={22} />,
-                }}
-            />
-            <Tabs.Screen
-                name="market"
-                options={{
-                    title: i18n.t('tabs.market'),
-                    tabBarIcon: ({ color }) => <Store color={color} size={22} />,
-                }}
-            />
+            {tabs.map(({ name, icon, key }) => (
+                <Tabs.Screen
+                    key={name}
+                    name={name}
+                    options={{
+                        title: i18n.t(`tabs.${key}`),
+                        tabBarIcon: ({ focused }) => (
+                            <View style={styles.iconWrap}>
+                                <Ionicons
+                                    name={icon}
+                                    size={22}
+                                    color={focused ? themeColors.accent : themeColors.textSecondary}
+                                />
+                                {focused ? (
+                                    <View style={[styles.activeBar, { backgroundColor: themeColors.accent }]} />
+                                ) : null}
+                            </View>
+                        ),
+                    }}
+                />
+            ))}
         </Tabs>
     );
 }
+
+const styles = StyleSheet.create({
+    iconWrap: {
+        width: 44,
+        height: 30,
+        alignItems: 'center',
+        justifyContent: 'flex-start',
+    },
+    activeBar: {
+        height: 3,
+        width: 16,
+        borderRadius: 1.5,
+        marginTop: 3,
+    },
+});
