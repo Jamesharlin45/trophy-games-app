@@ -74,9 +74,17 @@ export function useRestorePurchases(options: UseRestorePurchasesOptions = {}): v
         if (!mod) return;
 
         const run = async () => {
-            const deviceId = await getDeviceId();
             let connected = false;
             try {
+                if (
+                    typeof mod.initConnection !== 'function' ||
+                    typeof mod.getAvailablePurchases !== 'function'
+                ) {
+                    return;
+                }
+
+                const deviceId = await getDeviceId();
+
                 connected = await mod.initConnection();
                 if (!connected) return;
 
@@ -85,11 +93,13 @@ export function useRestorePurchases(options: UseRestorePurchasesOptions = {}): v
                 if (active) return;
 
                 const owned = await mod.getAvailablePurchases();
+                if (!Array.isArray(owned)) return;
                 let restored: RestoredPurchase | null = null;
                 for (const item of owned) {
+                    if (!item || typeof item !== 'object') continue;
                     if (item.purchaseState !== 'purchased') continue;
-                    if (!item.purchaseToken) continue;
-                    if (!ALL_PRODUCT_IDS.includes(item.productId)) continue;
+                    if (typeof item.purchaseToken !== 'string' || !item.purchaseToken) continue;
+                    if (typeof item.productId !== 'string' || !ALL_PRODUCT_IDS.includes(item.productId)) continue;
 
                     try {
                         const result = await api.purchases.recordPurchase({
@@ -123,7 +133,7 @@ export function useRestorePurchases(options: UseRestorePurchasesOptions = {}): v
             } catch {
                 // Billing unavailable, user cancelled the store prompt, etc.
             } finally {
-                if (connected) {
+                if (connected && typeof mod.endConnection === 'function') {
                     try {
                         await mod.endConnection();
                     } catch {

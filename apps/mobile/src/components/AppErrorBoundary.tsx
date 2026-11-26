@@ -44,7 +44,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, AppErrorBoundaryS
         if (error != null) {
             return <FallbackScreen key={resetKey} error={error} onRetry={this.reset} />;
         }
-        return <View key={resetKey}>{this.props.children}</View>;
+        return <View key={resetKey} style={{ flex: 1 }}>{this.props.children}</View>;
     }
 }
 
@@ -61,7 +61,12 @@ function FallbackScreen({ error, onRetry }: { error: unknown; onRetry: () => voi
 
     const copyDetails = async () => {
         const details = formatLastErrorDetails({ message, route: 'unknown', timestamp: Date.now() });
-        if (details) await setStringAsync(details);
+        if (!details) return;
+        try {
+            await setStringAsync(details);
+        } catch {
+            // Clipboard unavailable — the fallback screen stays usable.
+        }
     };
 
     return (

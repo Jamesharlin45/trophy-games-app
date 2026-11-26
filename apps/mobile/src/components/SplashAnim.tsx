@@ -4,7 +4,7 @@
  */
 
 import { StyleSheet, Text, View } from 'react-native';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import Animated, {
     runOnJS,
     useAnimatedStyle,
@@ -19,9 +19,11 @@ import { withAlpha } from './neon/tokens';
 import i18n from '../locales';
 
 export default function SplashAnim({ onDone }: { onDone: () => void }) {
-    const brand = i18n.t('splash.brand');
+    const rawBrand = i18n.t('splash.brand');
+    const brand = typeof rawBrand === 'string' && rawBrand.length > 0 ? rawBrand : 'Trophy Games';
     const { themeColors } = useTheme();
     const reduceMotion = useReducedMotion();
+    const doneRef = useRef(false);
 
     const iconScale = useSharedValue(0.72);
     const glow = useSharedValue(0);
@@ -29,12 +31,22 @@ export default function SplashAnim({ onDone }: { onDone: () => void }) {
     const exit = useSharedValue(1);
 
     useEffect(() => {
+        const finish = () => {
+            if (doneRef.current) return;
+            doneRef.current = true;
+            try {
+                onDone();
+            } catch {
+                // Never let splash teardown keep the app on the splash screen.
+            }
+        };
+
         if (reduceMotion) {
             iconScale.value = 1;
             glow.value = 0.85;
             brandOpacity.value = 1;
             exit.value = 0;
-            onDone();
+            finish();
             return undefined;
         }
 
@@ -42,7 +54,7 @@ export default function SplashAnim({ onDone }: { onDone: () => void }) {
         glow.value = withDelay(80, withTiming(0.85, { duration: 180 }));
         brandOpacity.value = withDelay(100, withTiming(1, { duration: 180 }));
         const timer = setTimeout(() => {
-            exit.value = withTiming(0, { duration: 180 }, () => runOnJS(onDone)());
+            exit.value = withTiming(0, { duration: 180 }, () => runOnJS(finish)());
         }, 500);
         return () => clearTimeout(timer);
     }, [onDone, reduceMotion, iconScale, glow, brandOpacity, exit]);

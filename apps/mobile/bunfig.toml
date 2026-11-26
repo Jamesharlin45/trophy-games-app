@@ -1,0 +1,8 @@
+# Keep Bun's native test runner on the Bun-only tests in src/. The Jest
+# suites in __tests__/ import React Native (Flow-typed) and must run under Jest.
+[test]
+root = "./src"
+
+[install]
+preferOffline = true
+linker = "hoisted"

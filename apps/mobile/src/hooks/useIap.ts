@@ -204,12 +204,21 @@ export function useIap({
         if (connected) {
             setConnectTimedOut(false);
             if (Platform.OS === 'android' && fetchProductsFn) {
-                fetchProductsFn({ skus: ALL_PRODUCT_IDS, type: 'subs' }).catch(
-                    (e: unknown) => console.warn(
-                        '[useIap] fetchProducts failed (SKUs not in Play Console yet?):',
+                try {
+                    void Promise.resolve(
+                        fetchProductsFn({ skus: ALL_PRODUCT_IDS, type: 'subs' }),
+                    ).catch(
+                        (e: unknown) => console.warn(
+                            '[useIap] fetchProducts failed (SKUs not in Play Console yet?):',
+                            e instanceof Error ? e.message : String(e),
+                        ),
+                    );
+                } catch (e) {
+                    console.warn(
+                        '[useIap] fetchProducts threw:',
                         e instanceof Error ? e.message : String(e),
-                    ),
-                );
+                    );
+                }
             }
         }
     }, [connected, fetchProductsFn]);
