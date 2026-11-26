@@ -111,12 +111,23 @@ function RootLayoutContent() {
         registerToken();
     }, [expoPushToken, deviceId]);
 
-    // Configure Android navigation bar to match theme
+    // Keep navigation-bar customization best-effort: some Android builds/devices
+    // do not expose every expo-navigation-bar method, and that must not prevent startup.
     useEffect(() => {
-        if (Platform.OS === 'android') {
-            NavigationBar.setBackgroundColorAsync(themeColors.background).catch(() => {});
-            NavigationBar.setButtonStyleAsync(isDark ? 'light' : 'dark').catch(() => {});
-            NavigationBar.setBorderColorAsync(themeColors.border).catch(() => {});
+        if (Platform.OS !== 'android') return;
+
+        try {
+            if (typeof NavigationBar.setBackgroundColorAsync === 'function') {
+                NavigationBar.setBackgroundColorAsync(themeColors.background).catch(() => {});
+            }
+            if (typeof NavigationBar.setButtonStyleAsync === 'function') {
+                NavigationBar.setButtonStyleAsync(isDark ? 'light' : 'dark').catch(() => {});
+            }
+            if (typeof NavigationBar.setBorderColorAsync === 'function') {
+                NavigationBar.setBorderColorAsync(themeColors.border).catch(() => {});
+            }
+        } catch (error) {
+            console.warn('Unable to configure Android navigation bar:', error);
         }
     }, [isDark, themeColors.background, themeColors.border]);
 
