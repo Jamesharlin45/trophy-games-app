@@ -108,14 +108,30 @@ export async function clearLastError(): Promise<void> {
  * AsyncStorage and shows it in Settings → Diagnostics → "Last error".
  */
 export function installGlobalErrorHandler(): void {
-    ErrorUtils.setGlobalHandler((error) => {
-        void storeLastError(error);
-    });
+    try {
+        const previousHandler = ErrorUtils.getGlobalHandler();
+        ErrorUtils.setGlobalHandler((error, isFatal) => {
+            // Keep the crash reporter (installed earlier) in the chain.
+            try {
+                previousHandler?.(error, isFatal);
+            } catch {
+                // Ignore — diagnostics below still run.
+            }
+            void storeLastError(error);
+        });
+    } catch {
+        // ErrorUtils unavailable (e.g. tests) — diagnostics are optional.
+    }
 }
 
 /** Copy a LastError to the clipboard (message + first 15 stack lines). */
 export async function copyLastError(error: LastError | null): Promise<void> {
     if (!error) return;
     const details = formatLastErrorDetails(error);
-    if (details) await setStringAsync(details);
+    if (!details) return;
+    try {
+        await setStringAsync(details);
+    } catch {
+        // Clipboard unavailable — copying diagnostics is best-effort.
+    }
 }

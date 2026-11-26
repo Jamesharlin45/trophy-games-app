@@ -26,6 +26,24 @@ import SplashAnim from '../components/SplashAnim';
 import { AppErrorBoundary } from '../components/AppErrorBoundary';
 import { installGlobalErrorHandler, setCurrentRoute } from '../lib/errorDiagnostics';
 
+/**
+ * True when the app draws edge-to-edge (the default on Expo SDK 54 / Android
+ * 15+). `react-native-is-edge-to-edge` is installed with expo-navigation-bar;
+ * if it cannot be resolved we assume edge-to-edge, which is the safe choice:
+ * it skips the unsupported background/border calls.
+ */
+function isEdgeToEdgeEnabled(): boolean {
+    try {
+        const edge = require('react-native-is-edge-to-edge') as {
+            isEdgeToEdge?: () => boolean;
+        };
+        if (typeof edge.isEdgeToEdge === 'function') return edge.isEdgeToEdge();
+    } catch {
+        // Optional module unavailable — fall through to the SDK 54 default.
+    }
+    return true;
+}
+
 SplashScreen.preventAutoHideAsync().catch(() => {
     // Splash prevention is best-effort — a failure only means the splash may
     // auto-hide later; the app must not crash on startup because of it.
@@ -48,7 +66,11 @@ export default function RootLayout() {
             <AppThemeProvider>
                 <LanguageProvider>
                     <UserProvider>
-                        <RootLayoutContent />
+                        {/* Also protects the animated splash: a render error
+                            there must not close the app before the first screen. */}
+                        <AppErrorBoundary>
+                            <RootLayoutContent />
+                        </AppErrorBoundary>
                     </UserProvider>
                 </LanguageProvider>
             </AppThemeProvider>
@@ -122,13 +144,69 @@ function AppContent() {
         void registerToken();
     }, [expoPushToken, deviceId]);
 
-    // Configure Android navigation bar to match theme
+    // Keep navigation-bar customization best-effort. Some Android builds do
+    // not expose every expo-navigation-bar method, and edge-to-edge (the
+    // default on Android 15/16) does not support background/border/position
+    // calls at all. None of this may ever prevent the first screen rendering.
     useEffect(() => {
-        if (Platform.OS === 'android') {
-            NavigationBar.setBackgroundColorAsync(themeColors.background).catch(() => {});
-            NavigationBar.setButtonStyleAsync(isDark ? 'light' : 'dark').catch(() => {});
-            NavigationBar.setBorderColorAsync(themeColors.border).catch(() => {});
-        }
+        if (Platform.OS !== 'android') return;
+
+        const navigationBar = NavigationBar as unknown as {
+            setBackgroundColorAsync?: (color: string) => Promise<void>;
+            setBorderColorAsync?: (color: string) => Promise<void>;
+            setButtonStyleAsync?: (style: 'light' | 'dark') => Promise<void>;
+        };
+
+        const callSafely = async (
+            name: string,
+            call: () => Promise<void>,
+        ): Promise<void> => {
+            try {
+                await call();
+            } catch (error) {
+                console.warn(`Unable to configure Android navigation bar (${name}):`, error);
+            }
+        };
+
+        const configure = async (): Promise<void> => {
+            try {
+                const background =
+                    typeof themeColors.background === 'string' && themeColors.background.length > 0
+                        ? themeColors.background
+                        : undefined;
+                const border =
+                    typeof themeColors.border === 'string' && themeColors.border.length > 0
+                        ? themeColors.border
+                        : undefined;
+
+                // Background and border colours are ignored (and can reject)
+                // when edge-to-edge is enabled. SDK 54 enables it by default.
+                if (!isEdgeToEdgeEnabled()) {
+                    if (background && typeof navigationBar.setBackgroundColorAsync === 'function') {
+                        await callSafely('setBackgroundColorAsync', () =>
+                            navigationBar.setBackgroundColorAsync!(background),
+                        );
+                    }
+                    if (border && typeof navigationBar.setBorderColorAsync === 'function') {
+                        await callSafely('setBorderColorAsync', () =>
+                            navigationBar.setBorderColorAsync!(border),
+                        );
+                    }
+                }
+
+                // Button style is the one call that is supported with
+                // edge-to-edge (three-button navigation).
+                if (typeof navigationBar.setButtonStyleAsync === 'function') {
+                    await callSafely('setButtonStyleAsync', () =>
+                        navigationBar.setButtonStyleAsync!(isDark ? 'light' : 'dark'),
+                    );
+                }
+            } catch (error) {
+                console.warn('Unable to configure Android navigation bar:', error);
+            }
+        };
+
+        void configure();
     }, [isDark, themeColors.background, themeColors.border]);
 
     return (

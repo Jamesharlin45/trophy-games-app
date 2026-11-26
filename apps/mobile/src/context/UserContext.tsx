@@ -28,6 +28,20 @@ const UserContext = createContext<UserContextType>({
   logout: async () => {},
 });
 
+/**
+ * Older app versions wrote different shapes into this key (JSON blobs,
+ * objects stringified by a migration, etc.). Only a plain, plausible
+ * username is accepted; anything else falls back to the server value.
+ */
+function normalizeStoredUsername(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 40) return null;
+  if (trimmed === 'null' || trimmed === 'undefined') return null;
+  if (trimmed.startsWith('{') || trimmed.startsWith('[') || trimmed.startsWith('"')) return null;
+  return trimmed;
+}
+
 export function UserProvider({ children }: { children: React.ReactNode }) {
   const [username, setUsernameState] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -57,23 +71,32 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        const stored = await AsyncStorage.getItem(USERNAME_KEY);
+        const stored = normalizeStoredUsername(await AsyncStorage.getItem(USERNAME_KEY));
         if (stored) {
           setUsernameState(stored);
+          if (loaded) setIsLoading(false);
         } else if (loaded) {
           // Fallback: if the account exists on the server but not in local
           // storage, sync it back down (unless the user just signed out).
-          if (remoteUser?.username) {
-            await AsyncStorage.setItem(USERNAME_KEY, remoteUser.username);
-            setUsernameState(remoteUser.username);
+          const remoteUsername = normalizeStoredUsername(remoteUser?.username);
+          if (remoteUsername) {
+            try {
+              await AsyncStorage.setItem(USERNAME_KEY, remoteUsername);
+            } catch {
+              // The server value is still usable for this session.
+            }
+            setUsernameState(remoteUsername);
           } else {
             setUsernameState(null);
           }
+          setIsLoading(false);
         }
       } catch (e) {
+        // Corrupted/unavailable storage must not leave the app stuck on the
+        // loading screen. The server result (when it arrives) still wins.
         console.error('Failed to load username', e);
-      } finally {
         if (loaded) {
+          setUsernameState((current) => current ?? normalizeStoredUsername(remoteUser?.username));
           setIsLoading(false);
         }
       }
@@ -83,23 +106,39 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   const setUsername = useCallback(async (newUsername: string | null) => {
     setUsernameState(newUsername);
-    if (newUsername) {
-      await AsyncStorage.multiRemove([SIGNED_OUT_KEY]);
-      await AsyncStorage.setItem(USERNAME_KEY, newUsername);
-    } else {
-      await AsyncStorage.removeItem(USERNAME_KEY);
+    try {
+      if (newUsername) {
+        await AsyncStorage.multiRemove([SIGNED_OUT_KEY]);
+        await AsyncStorage.setItem(USERNAME_KEY, newUsername);
+      } else {
+        await AsyncStorage.removeItem(USERNAME_KEY);
+      }
+    } catch {
+      // Persisting the username is best-effort; the context already updated.
     }
   }, []);
 
   const logout = useCallback(async () => {
     // Mark first so no concurrent render can re-sync the username from the
     // server while the local data is being cleared.
-    await AsyncStorage.setItem(SIGNED_OUT_KEY, 'true');
-    await CacheManager.clear();
+    try {
+      await AsyncStorage.setItem(SIGNED_OUT_KEY, 'true');
+    } catch {
+      // Continue signing out even if storage is unavailable.
+    }
+    try {
+      await CacheManager.clear();
+    } catch {
+      // Cache clearing is best-effort.
+    }
     await setUsername(null);
     setIsLoading(false);
-    router.replace('/onboarding');
-  }, []);
+    try {
+      router.replace('/onboarding');
+    } catch {
+      // Navigation may not be ready in tests/edge cases.
+    }
+  }, [setUsername]);
 
   return (
     <UserContext.Provider value={{ username, setUsername, isLoading, logout }}>

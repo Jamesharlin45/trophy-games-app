@@ -23,8 +23,14 @@ interface StoredCrash {
 }
 
 function toStoredCrash(error: unknown): StoredCrash {
+    let message = 'Unknown error';
+    try {
+        message = error instanceof Error ? error.message : String(error);
+    } catch {
+        // Exotic values that cannot be stringified still get a safe message.
+    }
     return {
-        message: error instanceof Error ? error.message : String(error),
+        message,
         stack: error instanceof Error ? error.stack ?? null : null,
         time: new Date().toISOString(),
     };
@@ -64,21 +70,30 @@ async function flushStoredCrash(): Promise<void> {
 }
 
 function installCrashReporter(): void {
-    const previousHandler = ErrorUtils.getGlobalHandler();
-    ErrorUtils.setGlobalHandler((error, isFatal) => {
-        // Chain the previous handler first, preserving earlier behavior.
-        previousHandler?.(error, isFatal);
-
-        const crash = toStoredCrash(error);
-        void (async () => {
+    try {
+        const previousHandler = ErrorUtils.getGlobalHandler();
+        ErrorUtils.setGlobalHandler((error, isFatal) => {
+            // Chain the previous handler first, preserving earlier behavior.
+            // A broken earlier handler must not stop crash recording.
             try {
-                await AsyncStorage.setItem(LAST_CRASH_KEY, JSON.stringify(crash));
+                previousHandler?.(error, isFatal);
             } catch {
-                // AsyncStorage unavailable — nothing more to do.
+                // Ignore — reporting below still runs.
             }
-            await sendCrashReport(crash);
-        })();
-    });
+
+            const crash = toStoredCrash(error);
+            void (async () => {
+                try {
+                    await AsyncStorage.setItem(LAST_CRASH_KEY, JSON.stringify(crash));
+                } catch {
+                    // AsyncStorage unavailable — nothing more to do.
+                }
+                await sendCrashReport(crash);
+            })();
+        });
+    } catch {
+        // ErrorUtils unavailable (e.g. tests) — crash reporting is optional.
+    }
 }
 
 installCrashReporter();

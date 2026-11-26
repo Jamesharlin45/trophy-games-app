@@ -13,43 +13,64 @@ const LanguageContext = createContext<LanguageContextType>({
     setLocale: async () => {},
 });
 
+/** Locales bundled in src/locales. Anything else falls back to English. */
+const SUPPORTED_LOCALES = ['en', 'fr', 'es'] as const;
+
+function isSupportedLocale(value: unknown): value is string {
+    return typeof value === 'string' && (SUPPORTED_LOCALES as readonly string[]).includes(value);
+}
+
+function applyLocale(locale: string): string {
+    try {
+        i18n.locale = locale;
+        return locale;
+    } catch {
+        // A broken locale value must never take the app down.
+        try {
+            i18n.locale = 'en';
+        } catch {
+            // Ignore — the default translations are already loaded.
+        }
+        return 'en';
+    }
+}
+
 export function LanguageProvider({ children }: { children: React.ReactNode }) {
     const [locale, setLocaleState] = useState(i18n.locale);
-    const [, setIsLoaded] = useState(false);
 
     useEffect(() => {
         const loadLang = async () => {
             try {
                 const saved = await AsyncStorage.getItem('user-language');
-                if (saved) {
-                    i18n.locale = saved;
-                    setLocaleState(saved);
-                } else {
-                    const deviceLocales = getLocales();
-                    if (deviceLocales.length > 0) {
-                        const deviceLang = deviceLocales[0].languageCode;
-                        if (deviceLang && ['en', 'fr', 'es'].includes(deviceLang)) {
-                            i18n.locale = deviceLang;
-                            setLocaleState(deviceLang);
-                        } else {
-                            i18n.locale = 'en';
-                            setLocaleState('en');
-                        }
-                    }
+                if (isSupportedLocale(saved)) {
+                    setLocaleState(applyLocale(saved));
+                    return;
                 }
+
+                // Missing or corrupted value: follow the device language when
+                // it is one we ship, otherwise English.
+                const deviceLocales = getLocales();
+                const deviceLang = Array.isArray(deviceLocales)
+                    ? deviceLocales[0]?.languageCode
+                    : undefined;
+                setLocaleState(applyLocale(isSupportedLocale(deviceLang) ? deviceLang : 'en'));
             } catch (e) {
-                console.warn(e);
-            } finally {
-                setIsLoaded(true);
+                // expo-localization/storage unavailable → keep English.
+                console.warn('Unable to load language preference:', e);
+                setLocaleState(applyLocale('en'));
             }
         };
-        loadLang();
+        void loadLang();
     }, []);
 
     const setLocale = async (newLocale: string) => {
-        i18n.locale = newLocale;
-        setLocaleState(newLocale);
-        await AsyncStorage.setItem('user-language', newLocale);
+        if (!isSupportedLocale(newLocale)) return;
+        setLocaleState(applyLocale(newLocale));
+        try {
+            await AsyncStorage.setItem('user-language', newLocale);
+        } catch {
+            // The in-memory locale still applies for this session.
+        }
     };
 
     return (

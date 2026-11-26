@@ -1,12 +1,13 @@
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, TextInput, Alert, KeyboardAvoidingView, Platform } from 'react-native';
-import { Crown, Key, CheckCircle2, Clock, Send, MessageCircle } from 'lucide-react-native';
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Crown, Key, CheckCircle2, Clock, MessageCircle } from 'lucide-react-native';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { MatchSectionList } from '../../components/neon/MatchSectionList';
 import { DatePickerStrip } from '../../components/DatePickerStrip';
 import { EmailRequestDialog, type EmailSubmitResult } from '../../components/EmailRequestDialog';
 import { RequestSentDialog } from '../../components/RequestSentDialog';
 import { SkeletonList } from '../../components/Skeleton';
 import { NeonButton } from '../../components/neon/NeonButton';
+import { PlanCard } from '../../components/neon/PlanCard';
 import { readableAccent } from '../../components/neon/tokens';
 import { useTheme } from '../../context/ThemeContext';
 import type { ThemeColors } from '../../theme/colors';
@@ -20,6 +21,10 @@ import { getDeviceId } from '../../utils/deviceId';
 import { getRequestEmail, saveRequestEmail } from '../../utils/requestEmail';
 import { joinTelegram } from '../../lib/telegram';
 import { withErrorBoundary } from '../../components/ScreenErrorBoundary';
+import { useIap } from '../../hooks/useIap';
+import { SUBSCRIPTION_PRODUCTS, getTierForProduct } from '@trophy-games/shared/subscriptions';
+import { purchaseFlow } from '../../utils/purchaseFlow';
+import { planTitleFor } from '../../utils/planTitle';
 import { useRouter } from 'expo-router';
 import i18n, { tArray } from '../../locales';
 
@@ -47,8 +52,10 @@ function VIPTipsScreen() {
     const [emailDialogVisible, setEmailDialogVisible] = useState(false);
     const [sentDialogVisible, setSentDialogVisible] = useState(false);
     const [savedEmail, setSavedEmail] = useState('');
+    const [purchasing, setPurchasing] = useState<string | null>(null);
+    const purchaseRetryRef = useRef<() => void>(() => {});
     const { username } = useUser();
-    const { showEmailRequest } = useDialog();
+    const { showEmailRequest, showPurchaseSuccess, showPurchaseFailed } = useDialog();
 
     useEffect(() => {
         let cancelled = false;
@@ -70,6 +77,79 @@ function VIPTipsScreen() {
     const memberStatus: MemberStatus = membershipLoaded
         ? (membershipStatusData?.status ?? 'none')
         : 'loading';
+
+    // ── Google Play Billing (optional — manual access still works) ──
+    const {
+        products: iapProducts,
+        activeSubscription: iapActiveSub,
+        loading: iapLoading,
+        error: iapError,
+        purchase: iapPurchase,
+    } = useIap({
+        deviceId,
+        onPurchaseSuccess: async (_tier, purchaseToken, productId) => {
+            try {
+                const result = await api.purchases.recordPurchase({
+                    deviceId,
+                    productId,
+                    purchaseToken,
+                });
+                if (result.success) {
+                    const tier = result.alreadyRecorded
+                        ? (getTierForProduct(productId) ?? _tier)
+                        : result.tier;
+                    showPurchaseSuccess({
+                        tier,
+                        planTitle: planTitleFor(productId),
+                        expiresAt: result.alreadyRecorded ? undefined : result.expiresAt,
+                    });
+                    await refetchMembership();
+                } else {
+                    showPurchaseFailed({
+                        message: result.reason || i18n.t('market.purchaseActivateBody'),
+                    });
+                }
+            } catch (e) {
+                showPurchaseFailed({
+                    message: e instanceof Error ? e.message : i18n.t('market.subscribeErrorBody'),
+                });
+            }
+        },
+        onPurchaseError: (message) => {
+            showPurchaseFailed({ message, onRetry: () => purchaseRetryRef.current() });
+        },
+    });
+
+    const vipWeeklyProduct = iapProducts.find(
+        (product) => product.id === SUBSCRIPTION_PRODUCTS.VIP_WEEKLY.productId,
+    );
+    const vipMonthlyProduct = iapProducts.find(
+        (product) => product.id === SUBSCRIPTION_PRODUCTS.VIP_MONTHLY.productId,
+    );
+
+    const handleSubscribe = async (productId: string, tier: 'vip' | 'paid') => {
+        if (!deviceId) return;
+        purchaseRetryRef.current = () => void handleSubscribe(productId, tier);
+        purchaseFlow.setBusy(true);
+        setPurchasing(productId);
+        try {
+            const result = await iapPurchase(productId);
+            if (!result.success && result.reason && !result.reason.toLowerCase().includes('cancel')) {
+                showPurchaseFailed({
+                    message: result.reason,
+                    onRetry: () => purchaseRetryRef.current(),
+                });
+            }
+        } catch (e) {
+            showPurchaseFailed({
+                message: e instanceof Error ? e.message : i18n.t('market.subscribeErrorBody'),
+                onRetry: () => purchaseRetryRef.current(),
+            });
+        } finally {
+            purchaseFlow.setBusy(false);
+            setPurchasing(null);
+        }
+    };
 
     const {
         data: matchesData,
@@ -227,22 +307,49 @@ function VIPTipsScreen() {
                         {i18n.t('vip.subtitle')}
                     </Text>
 
-                    {tArray('vip.features').map((f, i) => (
-                        <View key={i} style={styles.featureRow}>
-                            <CheckCircle2 size={14} color={accent} />
-                            <Text style={[styles.featureText, { color: themeColors.text }]}>{f}</Text>
-                        </View>
-                    ))}
-
-                    {memberStatus === 'none' && !enteringToken && (
-                        <NeonButton style={styles.primaryBtn} onPress={askForEmail} disabled={requesting} accessibilityRole="button">
-                            {requesting ? <Text style={styles.primaryBtnText}>{i18n.t('common.checking')}</Text> : (
-                                <>
-                                    <Send size={16} color={themeColors.accentText} />
-                                    <Text style={styles.primaryBtnText}>{i18n.t('vip.requestBtn')}</Text>
-                                </>
-                            )}
-                        </NeonButton>
+                    {(memberStatus === 'none' || memberStatus === 'rejected') ? (
+                        <>
+                            <PlanCard
+                                tier="vip"
+                                title={i18n.t('market.vipWeeklyTitle')}
+                                subtitle={i18n.t('market.vipWeeklySubtitle')}
+                                features={tArray('vip.features')}
+                                product={vipWeeklyProduct}
+                                status={memberStatus}
+                                isActiveProduct={iapActiveSub?.productId === SUBSCRIPTION_PRODUCTS.VIP_WEEKLY.productId}
+                                priceSuffix="/week"
+                                isLoading={iapLoading}
+                                purchasing={purchasing === SUBSCRIPTION_PRODUCTS.VIP_WEEKLY.productId}
+                                requesting={requesting}
+                                onSubscribe={() => void handleSubscribe(SUBSCRIPTION_PRODUCTS.VIP_WEEKLY.productId, 'vip')}
+                                onRequest={askForEmail}
+                                billingError={iapError}
+                            />
+                            <PlanCard
+                                tier="vip"
+                                title={i18n.t('market.vipMonthlyTitle')}
+                                subtitle={i18n.t('market.vipMonthlySubtitle')}
+                                features={tArray('vip.features')}
+                                product={vipMonthlyProduct}
+                                status={memberStatus}
+                                isActiveProduct={iapActiveSub?.productId === SUBSCRIPTION_PRODUCTS.VIP_MONTHLY.productId}
+                                priceSuffix="/month"
+                                savingsLabel={i18n.t('market.bestValue')}
+                                isLoading={iapLoading}
+                                purchasing={purchasing === SUBSCRIPTION_PRODUCTS.VIP_MONTHLY.productId}
+                                requesting={requesting}
+                                onSubscribe={() => void handleSubscribe(SUBSCRIPTION_PRODUCTS.VIP_MONTHLY.productId, 'vip')}
+                                onRequest={askForEmail}
+                                billingError={iapError}
+                            />
+                        </>
+                    ) : (
+                        tArray('vip.features').map((f, i) => (
+                            <View key={i} style={styles.featureRow}>
+                                <CheckCircle2 size={14} color={accent} />
+                                <Text style={[styles.featureText, { color: themeColors.text }]}>{f}</Text>
+                            </View>
+                        ))
                     )}
 
                     {memberStatus === 'pending' && !enteringToken && (

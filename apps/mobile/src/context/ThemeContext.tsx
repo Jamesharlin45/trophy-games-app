@@ -3,7 +3,7 @@ import { useColorScheme } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { accentTokens, dark, light, type AccentType, type ThemeColors } from '../theme/colors';
 
-type ThemeType = 'light' | 'dark' | 'system';
+export type ThemeType = 'light' | 'dark' | 'system';
 
 interface ThemeContextType {
     theme: ThemeType;
@@ -20,6 +20,15 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 const VALID_THEMES: readonly ThemeType[] = ['light', 'dark', 'system'];
 const VALID_ACCENTS: readonly AccentType[] = ['pitchGreen', 'gold', 'oceanBlue', 'royalPurple'];
 
+/** Only persist strings we recognise; storage failures never reach the UI. */
+async function persist(key: string, value: string): Promise<void> {
+    try {
+        await AsyncStorage.setItem(key, value);
+    } catch {
+        // Preferences are best-effort; the in-memory choice still applies.
+    }
+}
+
 export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
     const systemColorScheme = useColorScheme();
     // Defaults keep today's look: Dark mode + Pitch Green.
@@ -32,46 +41,51 @@ export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
         const loadTheme = async () => {
             try {
                 const savedTheme = await AsyncStorage.getItem('user-theme');
-                if (savedTheme && VALID_THEMES.includes(savedTheme as ThemeType)) {
+                if (typeof savedTheme === 'string' && VALID_THEMES.includes(savedTheme as ThemeType)) {
                     setThemeState(savedTheme as ThemeType);
                 }
                 const savedAccent = await AsyncStorage.getItem('user-accent');
-                if (savedAccent && VALID_ACCENTS.includes(savedAccent as AccentType)) {
+                if (typeof savedAccent === 'string' && VALID_ACCENTS.includes(savedAccent as AccentType)) {
                     setAccentState(savedAccent as AccentType);
                 }
             } catch (e) {
-                console.warn(e);
+                // Corrupted or unavailable storage → keep the defaults.
+                console.warn('Unable to load theme preferences:', e);
             }
         };
-        loadTheme();
+        void loadTheme();
     }, []);
 
-    const toggleTheme = async () => {
+    const toggleTheme = () => {
         const newTheme = theme === 'dark' ? 'light' : 'dark';
         setThemeState(newTheme);
-        await AsyncStorage.setItem('user-theme', newTheme);
+        void persist('user-theme', newTheme);
     };
 
-    const setTheme = async (newTheme: ThemeType) => {
+    const setTheme = (newTheme: ThemeType) => {
+        if (!VALID_THEMES.includes(newTheme)) return;
         setThemeState(newTheme);
-        await AsyncStorage.setItem('user-theme', newTheme);
+        void persist('user-theme', newTheme);
     };
 
-    const setAccent = async (newAccent: AccentType) => {
+    const setAccent = (newAccent: AccentType) => {
+        if (!VALID_ACCENTS.includes(newAccent)) return;
         setAccentState(newAccent);
-        await AsyncStorage.setItem('user-accent', newAccent);
+        void persist('user-accent', newAccent);
     };
 
     const isDark = theme === 'system' ? systemColorScheme === 'dark' : theme === 'dark';
-    const selected = accentTokens[accent];
+    // Never index a missing/renamed accent token: fall back to the default.
+    const selected = accentTokens[accent] ?? accentTokens.pitchGreen;
+    const base = isDark ? dark : light;
     const themeColors: ThemeColors = {
-        ...(isDark ? dark : light),
+        ...base,
         accent: selected.accent,
         onAccent: selected.onAccent,
         accentText: selected.onAccent,
-        surfaceAlt: (isDark ? dark : light).surfaceAlt,
-        textSecondary: (isDark ? dark : light).textSecondary,
-        onSurface: (isDark ? dark : light).onSurface,
+        surfaceAlt: base.surfaceAlt,
+        textSecondary: base.textSecondary,
+        onSurface: base.onSurface,
     };
 
     return (
