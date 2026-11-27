@@ -12,8 +12,7 @@ import type { DependencyList } from 'react';
 import { AppState } from 'react-native';
 import type { AppStateStatus } from 'react-native';
 import { useFocusEffect } from 'expo-router';
-import { toApiError } from '../api/client';
-import type { ApiError } from '../api/client';
+import { ApiError, toApiError } from '../api/client';
 
 export interface LiveQueryOptions {
     /** When false the query is not run (used for conditional queries). */
@@ -31,6 +30,14 @@ export interface LiveQueryResult<T> {
     loaded: boolean;
     refetch: () => Promise<void>;
 }
+
+/**
+ * A screen may never leave its skeleton if the network promise never settles
+ * (dead connection, hanging proxy, native fetch that ignores AbortController).
+ * After this long we surface an error state with Retry instead. The HTTP layer
+ * itself has a longer timeout; this is the UI's no-blank guarantee.
+ */
+export const QUERY_TIMEOUT_MS = 8000;
 
 interface InternalOptions extends LiveQueryOptions {
     /**
@@ -75,8 +82,16 @@ export function useApiQuery<T>(
         const requestId = requestIdRef.current + 1;
         requestIdRef.current = requestId;
 
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        const timeoutPromise = new Promise<never>((_resolve, reject) => {
+            timeout = setTimeout(
+                () => reject(new ApiError('Request timed out', 'timeout')),
+                QUERY_TIMEOUT_MS,
+            );
+        });
+
         try {
-            const result = await fetcherRef.current();
+            const result = await Promise.race([fetcherRef.current(), timeoutPromise]);
             if (!mountedRef.current || requestId !== requestIdRef.current) return;
             setData(result);
             setError(null);
@@ -84,6 +99,7 @@ export function useApiQuery<T>(
             if (!mountedRef.current || requestId !== requestIdRef.current) return;
             setError(toApiError(caught));
         } finally {
+            if (timeout !== undefined) clearTimeout(timeout);
             if (mountedRef.current && requestId === requestIdRef.current) {
                 setLoading(false);
                 setLoaded(true);

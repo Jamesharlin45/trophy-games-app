@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -9,6 +9,16 @@ import { accents, type AccentType } from '../theme/colors';
 import i18n, { tArray } from '../locales';
 import { AppButton } from '../components/design/AppButton';
 import { clearLastError, copyLastError, readLastError, formatLastErrorDetails, type LastError } from '../lib/errorDiagnostics';
+import {
+    copyConnectionDiagnostics,
+    deviceCode,
+    formatConnectionDiagnostics,
+    getConnectionDiagnostics,
+    type ConnectionDiagnostics,
+} from '../lib/connectionDiagnostics';
+import * as Application from 'expo-application';
+import { getDeviceId } from '../utils/deviceId';
+import { useFocusEffect } from 'expo-router';
 
 const MODE_OPTIONS = [
     { mode: 'light', Icon: 'sunny-outline', labelKey: 'settings.light' as const },
@@ -35,6 +45,22 @@ export default function SettingsScreen() {
     const handleCopyError = () => {
         void copyLastError(lastError);
     };
+
+    // Diagnostics → "Connection and data": host only, no query strings/keys.
+    const [connection, setConnection] = useState<ConnectionDiagnostics>(getConnectionDiagnostics());
+    const [supportCode, setSupportCode] = useState('TG-0000-0000');
+    useFocusEffect(useCallback(() => {
+        setConnection(getConnectionDiagnostics());
+        void getDeviceId().then((id) => setSupportCode(deviceCode(id))).catch(() => {});
+    }, []));
+
+    const nativeBuildNumber = (Application as unknown as { nativeBuildNumber?: string | number }).nativeBuildNumber;
+    const connectionText = formatConnectionDiagnostics(connection, {
+        version: Application.nativeApplicationVersion || 'unknown',
+        build: String(nativeBuildNumber ?? '0'),
+        deviceCode: supportCode,
+    });
+    const handleCopyConnection = () => { void copyConnectionDiagnostics(connectionText); };
 
     const languages = tArray<{ code: string; name: string }>('settings.languages');
 
@@ -150,6 +176,23 @@ export default function SettingsScreen() {
                 <Ionicons name="send-outline" size={20} color={themeColors.accent} />
                 <Text style={[styles.btnText, { color: themeColors.onSurface }]}>{i18n.t('settings.telegram')}</Text>
             </TouchableOpacity>
+
+            {/* Diagnostics — connection and data snapshot (host only, never a
+                full URL, query string or key). Kept in memory; not sent. */}
+            <View style={[styles.section, { backgroundColor: themeColors.surfaceAlt }]}>
+                <View style={styles.sectionHeader}>
+                    <Ionicons name="wifi-outline" size={20} color={themeColors.accent} />
+                    <Text style={[styles.sectionTitle, { color: themeColors.onSurface }]}>
+                        {i18n.t('settings.connectionData')}
+                    </Text>
+                </View>
+                <Text style={[styles.diagText, { color: themeColors.onSurface }]} numberOfLines={12}>
+                    {connectionText}
+                </Text>
+                <AppButton variant="outline" onPress={handleCopyConnection} style={styles.diagBtn}>
+                    {i18n.t('settings.copyConnection')}
+                </AppButton>
+            </View>
 
             {/* Diagnostics — last uncaught error (message, stack, route, timestamp).
                 Stored in AsyncStorage, never sent anywhere. */}

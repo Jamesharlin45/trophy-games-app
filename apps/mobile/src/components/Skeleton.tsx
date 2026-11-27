@@ -68,7 +68,7 @@ export function SkeletonMatchCard({ style }: SkeletonMatchCardProps) {
 
 export function SkeletonList({ count = 8, style }: { count?: number; style?: StyleProp<ViewStyle> }) {
     return (
-        <View style={style}>
+        <View testID="skeleton-list" style={style}>
             {Array.from({ length: count }).map((_, i) => (
                 <SkeletonMatchCard key={i} />
             ))}
