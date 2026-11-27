@@ -7,11 +7,13 @@
  */
 
 import type { MatchData } from '@trophy-games/shared';
+import { recordApiRequest, setApiHost } from '../lib/connectionDiagnostics';
 
 const RAW_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? '';
 
 /** Normalised API origin, e.g. https://trophy-games-app.vercel.app */
 export const API_BASE_URL = RAW_BASE_URL.replace(/\/+$/, '');
+setApiHost(API_BASE_URL);
 
 export const isApiConfigured = API_BASE_URL.length > 0;
 
@@ -217,6 +219,10 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
             );
         }
     }
+
+    // Diagnostics stores the host (set above), path, status and match count —
+    // never the full URL, query string or any credentials.
+    recordApiRequest({ path: `${API_PREFIX}${path}`, status: response.status, body });
 
     if (!response.ok) {
         const message =

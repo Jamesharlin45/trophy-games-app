@@ -21,6 +21,7 @@ import { getDeviceId } from '../../utils/deviceId';
 import { getRequestEmail, saveRequestEmail } from '../../utils/requestEmail';
 import { joinTelegram } from '../../lib/telegram';
 import { withErrorBoundary } from '../../components/ScreenErrorBoundary';
+import { ScreenErrorState } from '../../components/ScreenErrorState';
 import { useIap } from '../../hooks/useIap';
 import { SUBSCRIPTION_PRODUCTS, getTierForProduct } from '@trophy-games/shared/subscriptions';
 import { purchaseFlow } from '../../utils/purchaseFlow';
@@ -66,6 +67,7 @@ function VIPTipsScreen() {
 
     const {
         data: membershipStatusData,
+        error: membershipError,
         loaded: membershipLoaded,
         refetch: refetchMembership,
     } = useScreenQuery(
@@ -153,6 +155,7 @@ function VIPTipsScreen() {
 
     const {
         data: matchesData,
+        error: matchesError,
         loading: matchesLoading,
         refetch: refetchMatches,
     } = useScreenQuery(
@@ -274,6 +277,18 @@ function VIPTipsScreen() {
         }
         setVerifyingToken(false);
     };
+
+    // ---- Gate: membership request failed (or timed out) ----
+    if (membershipError) {
+        return (
+            <View style={[styles.container, { backgroundColor: themeColors.background }]}>
+                <ScreenErrorState
+                    message={membershipError.message}
+                    onRetry={() => void refetchMembership()}
+                />
+            </View>
+        );
+    }
 
     // ---- Gate: loading membership ----
     if (memberStatus === 'loading') {
@@ -443,6 +458,14 @@ function VIPTipsScreen() {
             />
             <RequestSentDialog visible={sentDialogVisible} onClose={() => setSentDialogVisible(false)} />
             </>
+        );
+    }
+
+    if (matchesError) {
+        return (
+            <View style={[styles.container, { backgroundColor: themeColors.background }]}>
+                <ScreenErrorState message={matchesError.message} onRetry={() => void refetchMatches()} />
+            </View>
         );
     }
 

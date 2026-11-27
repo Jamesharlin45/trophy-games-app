@@ -20,6 +20,7 @@
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
+import { QUERY_TIMEOUT_MS } from '../../hooks/useLiveQuery';
 import { useCallback, useMemo, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import type { ReactNode } from 'react';
@@ -101,6 +102,21 @@ type MatchViewModel = Omit<
 type Risk = ReturnType<typeof riskOf>;
 type Odds13 = NormalizedOdds13;
 
+/** A hanging by-id request must become an error/Retry, never a permanent skeleton. */
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+        return await Promise.race([
+            promise,
+            new Promise<never>((_resolve, reject) => {
+                timer = setTimeout(() => reject(new Error(`Request timed out: ${label}`)), ms);
+            }),
+        ]);
+    } finally {
+        if (timer !== undefined) clearTimeout(timer);
+    }
+}
+
 function MatchDetailScreenInner() {
     const { id, matchData } = useLocalSearchParams();
     const router = useRouter();
@@ -139,7 +155,11 @@ function MatchDetailScreenInner() {
             // 2. The API record gives the overlay (matchType, scores, status).
             let merged: MatchViewModel | null = base;
             try {
-                const remoteMatch = await api.matches.byId(id as string);
+                const remoteMatch = await withTimeout(
+                    api.matches.byId(id as string),
+                    QUERY_TIMEOUT_MS,
+                    '/api/app/matches/by-id',
+                );
                 if (remoteMatch) {
                     const patch = Object.fromEntries(
                         Object.entries(remoteMatch).filter(([, v]) => v !== undefined && v !== ''),

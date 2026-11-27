@@ -21,6 +21,7 @@ import { getDeviceId } from '../../utils/deviceId';
 import { getRequestEmail, saveRequestEmail } from '../../utils/requestEmail';
 import { joinTelegram } from '../../lib/telegram';
 import { withErrorBoundary } from '../../components/ScreenErrorBoundary';
+import { ScreenErrorState } from '../../components/ScreenErrorState';
 import { useIap } from '../../hooks/useIap';
 import { SUBSCRIPTION_PRODUCTS, getTierForProduct } from '@trophy-games/shared/subscriptions';
 import { purchaseFlow } from '../../utils/purchaseFlow';
@@ -67,6 +68,7 @@ function PaidTipsScreen() {
 
     const {
         data: membershipStatusData,
+        error: membershipError,
         loaded: membershipLoaded,
         refetch: refetchMembership,
     } = useScreenQuery(
@@ -151,6 +153,7 @@ function PaidTipsScreen() {
 
     const {
         data: matchesData,
+        error: matchesError,
         loading: matchesLoading,
         refetch: refetchMatches,
     } = useScreenQuery(
@@ -272,6 +275,17 @@ function PaidTipsScreen() {
         }
         setVerifyingToken(false);
     };
+
+    if (membershipError) {
+        return (
+            <View style={[styles.container, { backgroundColor: themeColors.background }]}>
+                <ScreenErrorState
+                    message={membershipError.message}
+                    onRetry={() => void refetchMembership()}
+                />
+            </View>
+        );
+    }
 
     if (memberStatus === 'loading') {
         return (
@@ -420,6 +434,14 @@ function PaidTipsScreen() {
             />
             <RequestSentDialog visible={sentDialogVisible} onClose={() => setSentDialogVisible(false)} />
             </>
+        );
+    }
+
+    if (matchesError) {
+        return (
+            <View style={[styles.container, { backgroundColor: themeColors.background }]}>
+                <ScreenErrorState message={matchesError.message} onRetry={() => void refetchMatches()} />
+            </View>
         );
     }
 

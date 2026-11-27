@@ -9,6 +9,7 @@ import { Component } from 'react';
 import type { ComponentType, ReactNode } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
+import { storeLastError } from '../lib/errorDiagnostics';
 
 interface ScreenErrorBoundaryProps {
     children: ReactNode;
@@ -29,6 +30,8 @@ class ScreenErrorBoundary extends Component<ScreenErrorBoundaryProps, ScreenErro
 
     componentDidCatch(error: unknown): void {
         console.error('[ScreenErrorBoundary]', error);
+        // Diagnostics must show boundary errors too, not only global JS crashes.
+        void storeLastError(error);
     }
 
     reset = (): void => {
@@ -40,7 +43,10 @@ class ScreenErrorBoundary extends Component<ScreenErrorBoundaryProps, ScreenErro
         if (error !== null) {
             return <ErrorFallback key={resetKey} onRetry={this.reset} error={error} />;
         }
-        return <View key={resetKey}>{this.props.children}</View>;
+        // Every tab root is `flex: 1`. Without a bounded parent React Native
+        // gives that child zero height in a release build, so the screen is
+        // mounted but completely blank. This View is the missing bound.
+        return <View key={resetKey} style={styles.boundary}>{this.props.children}</View>;
     }
 }
 
@@ -83,6 +89,9 @@ export function withErrorBoundary<P extends object>(Component: ComponentType<P>)
 export { ScreenErrorBoundary };
 
 const styles = StyleSheet.create({
+    boundary: {
+        flex: 1,
+    },
     container: {
         flex: 1,
         justifyContent: 'center',

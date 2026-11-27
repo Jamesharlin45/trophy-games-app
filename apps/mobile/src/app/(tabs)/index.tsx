@@ -13,6 +13,7 @@ import { api } from '../../api/client';
 import { useScreenQuery } from '../../hooks/useLiveQuery';
 import { safeString } from '../../utils/safeData';
 import { withErrorBoundary } from '../../components/ScreenErrorBoundary';
+import { ScreenErrorState } from '../../components/ScreenErrorState';
 import { useNoConnectionDialog } from '../../hooks/useNoConnectionDialog';
 import { useMembershipAccess } from '../../hooks/useMembershipAccess';
 
@@ -93,6 +94,17 @@ function FreeTipsScreen() {
         }
         return d;
     }, []);
+
+    if (error && !loading) {
+        return (
+            <View style={[styles.container, { backgroundColor: themeColors.background }]}>
+                <ScreenErrorState
+                    message={error.message}
+                    onRetry={() => { connection.arm(); void refetch(); }}
+                />
+            </View>
+        );
+    }
 
     return (
         <View style={[styles.container, { backgroundColor: themeColors.background }]}>

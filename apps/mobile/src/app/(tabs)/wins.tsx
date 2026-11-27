@@ -14,6 +14,7 @@ import type { ApiMatch, HistoryResponse, HistoryResult } from '../../api/client'
 import { useScreenQuery } from '../../hooks/useLiveQuery';
 import { safeString, safeDateKey } from '../../utils/safeData';
 import { withErrorBoundary } from '../../components/ScreenErrorBoundary';
+import { ScreenErrorState } from '../../components/ScreenErrorState';
 import { useMembershipAccess } from '../../hooks/useMembershipAccess';
 import i18n from '../../locales';
 
@@ -94,6 +95,7 @@ function WinsScreen() {
 
     const {
         data: historyData,
+        error,
         loading,
         refetch,
     } = useScreenQuery(() => api.matches.history(200, selectedDate), [selectedDate], { pollMs: 60000 });
@@ -135,6 +137,14 @@ function WinsScreen() {
     const totalCount = dayMatches.length;
     const strikeRate = history.strikeRate ?? 0;
     const strikeRate30d = history.strikeRate30d ?? 0;
+
+    if (error && !loading) {
+        return (
+            <View style={[styles.container, { backgroundColor: themeColors.background }]}>
+                <ScreenErrorState message={error.message} onRetry={() => void refetch()} />
+            </View>
+        );
+    }
 
     return (
         <View style={[styles.container, { backgroundColor: themeColors.background }]}>

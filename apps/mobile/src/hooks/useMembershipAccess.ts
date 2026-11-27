@@ -3,6 +3,7 @@ import * as Application from 'expo-application';
 import { api } from '../api/client';
 import { useScreenQuery } from './useLiveQuery';
 import { useUser } from '../context/UserContext';
+import { recordMembershipStatus } from '../lib/connectionDiagnostics';
 
 export interface MembershipAccess {
     paid: boolean;
@@ -32,6 +33,11 @@ export function useMembershipAccess(): MembershipAccess {
         [deviceId, username],
         { enabled: Boolean(deviceId), pollMs: 60000 },
     );
+
+    useEffect(() => {
+        if (paidLoaded) recordMembershipStatus('paid', paidStatus?.status);
+        if (vipLoaded) recordMembershipStatus('vip', vipStatus?.status);
+    }, [paidLoaded, paidStatus?.status, vipLoaded, vipStatus?.status]);
 
     return useMemo(() => {
         const loading = !deviceId || !paidLoaded || !vipLoaded;
