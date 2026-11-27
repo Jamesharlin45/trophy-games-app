@@ -7,13 +7,12 @@
  * a large score with FT).
  *
  * History rule: FINISHED matches (status FT/AET/PEN or a result of win,
- * lose, draw or void) show pick, confidence, reasoning and sources for ALL
+ * lose, draw or void) show pick, reasoning and sources for ALL
  * tiers — never "Unlock with VIP" or "Prediction locked".
  *
  * Tabs: Overview, Prediction (lock icon when locked), and Form/H2H or Stats
- * only if data exists. Prediction tab: pick, suggested bet, confidence
- * (ProgressBar), risk pill (Low/Medium/High, hidden when unknown), reasons as
- * check rows, sources as small tappable domain chips. When locked: placeholder
+ * only if data exists. Prediction tab: pick, suggested bet, reasons as check
+ * rows, sources as small tappable domain chips. When locked: placeholder
  * bars plus one unlock card linking to the Store.
  */
 
@@ -72,14 +71,12 @@ import {
     normalizeLineups,
     normalizePotentials,
     normalizeStats,
-    parseConfidence,
     parseOdds,
     pickTextFrom,
     reasoningLines as reasoningLinesOf,
     formString,
     impliedProbabilities,
     normalizedOdds,
-    riskOf,
     sourceUrls,
     parseTimestamp,
     scoreText,
@@ -99,7 +96,6 @@ type MatchViewModel = Omit<
         ai_prediction?: { sources?: string[] };
     };
 
-type Risk = ReturnType<typeof riskOf>;
 type Odds13 = NormalizedOdds13;
 
 /** A hanging by-id request must become an error/Retry, never a permanent skeleton. */
@@ -287,8 +283,6 @@ function MatchDetailScreenInner() {
     const ai = match.aiPrediction ?? null;
     const pickText = pickTextFrom(ai);
     const hasPrediction = pickText !== undefined;
-    const confidence = parseConfidence(ai?.confidence);
-    const risk = riskOf(ai);
     const reasoningList = reasoningLinesOf(ai);
 
     const scoreDisplay = scoreText(match.homeScore, match.awayScore);
@@ -413,8 +407,6 @@ function MatchDetailScreenInner() {
                         accessLoading={access.loading}
                         hasPrediction={hasPrediction}
                         pickText={pickText}
-                        confidence={confidence}
-                        risk={risk}
                         reasoningLines={reasoningList}
                         sourceList={sourceList}
                         lockTier={match.matchType === 'vip' ? 'vip' : 'paid'}
@@ -436,8 +428,8 @@ function MatchDetailScreenInner() {
 }
 
 // ---------------------------------------------------------------------------
-// Overview tab (reference B: pick, suggested bet, confidence bar + %, risk,
-// reasons as check rows, sources as tappable chips)
+// Overview tab (reference B: pick, suggested bet, reasons as check rows,
+// sources as tappable chips)
 // ---------------------------------------------------------------------------
 
 function OverviewContent({
@@ -446,8 +438,6 @@ function OverviewContent({
     accessLoading,
     hasPrediction,
     pickText,
-    confidence,
-    risk,
     reasoningLines,
     sourceList,
     lockTier,
@@ -459,8 +449,6 @@ function OverviewContent({
     accessLoading: boolean;
     hasPrediction: boolean;
     pickText: string | undefined;
-    confidence: number | undefined;
-    risk: Risk;
     reasoningLines: string[];
     sourceList: { key: string; domain: string; url: string }[];
     lockTier: string;
@@ -508,8 +496,6 @@ function OverviewContent({
         <View style={styles.overviewContent}>
             <PickCard
                 pickText={pickText}
-                confidence={confidence}
-                risk={risk}
                 suggestedBet={match.aiPrediction?.suggestedBet}
                 oddValues={oddValues}
             />
@@ -658,23 +644,16 @@ function LockedPickCard({ lockTier, onUnlock }: { lockTier: string; onUnlock: ()
 
 function PickCard({
     pickText,
-    confidence,
-    risk,
     suggestedBet,
     oddValues,
 }: {
     pickText: string | undefined;
-    confidence: number | undefined;
-    risk: Risk;
     suggestedBet?: string;
     oddValues: { label: string; value?: string }[];
 }) {
     const { themeColors } = useTheme();
     const styles = getStyles(themeColors);
     const accentInk = readableAccent(themeColors);
-
-    const riskTone = risk === 'low' ? 'success' : risk === 'medium' ? 'warning' : risk === 'high' ? 'danger' : 'neutral';
-    const riskLabel = risk ? textFor(`risk.${risk}`, risk) : '';
 
     return (
         <Card style={styles.card} accessibilityLabel={textFor('matchDetail.pick', 'Pick')}>
@@ -684,26 +663,6 @@ function PickCard({
             </Text>
             {suggestedBet ? (
                 <Pill label={`${textFor('matchDetail.suggestedBet', 'Suggested bet')}: ${suggestedBet}`} tone="accent" />
-            ) : null}
-
-            <View style={styles.confidenceWrap}>
-                <Text style={[styles.fieldLabel, { color: themeColors.textSecondary }]}>{textFor('matchDetail.confidence', 'Confidence')}</Text>
-                <ProgressBar
-                    value={confidence ?? 0}
-                    height={8}
-                    radius={4}
-                    accessibilityLabel={textFor('matchDetail.confidence', 'Confidence')}
-                />
-                <Text style={[styles.pctText, { color: themeColors.onSurface }]}>
-                    {confidence !== undefined ? `${Math.round(confidence)}%` : '—'}
-                </Text>
-            </View>
-
-            {riskLabel ? (
-                <View style={styles.riskRow}>
-                    <Text style={[styles.fieldLabel, { color: themeColors.textSecondary }]}>{textFor('matchDetail.risk', 'Risk')}</Text>
-                    <Pill label={riskLabel} tone={riskTone} />
-                </View>
             ) : null}
 
             <View style={styles.oddsRow}>
@@ -1310,10 +1269,7 @@ function getStyles(themeColors: ThemeColors) {
         pickValue: { fontSize: 17, fontWeight: '800', lineHeight: 24 },
         oddsRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
         oddsStaticVal: { fontSize: 14, fontWeight: '800', minWidth: 40, fontVariant: ['tabular-nums'] },
-        confidenceWrap: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-        fieldLabel: { fontSize: 13, fontWeight: '600' },
         pctText: { fontSize: 13, fontWeight: '700', minWidth: 44, textAlign: 'right', fontVariant: ['tabular-nums'] },
-        riskRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
         marketLabels: { flexDirection: 'row', justifyContent: 'space-between', gap: 8, marginTop: 4 },
         marketLabel: { fontSize: 12, fontWeight: '700', fontVariant: ['tabular-nums'] },
 

@@ -219,13 +219,6 @@ export default {
         light: 'Light',
         dark: 'Dark',
         system: 'System',
-        diagnostics: 'Diagnostics',
-        connectionData: 'Connection and data',
-        copyConnection: 'Copy connection details',
-        lastError: 'Last error',
-        noError: 'No errors recorded.',
-        copyLastError: 'Copy last error',
-        clearError: 'Clear',
         languages: [
             { code: 'en', name: 'English' },
             { code: 'fr', name: 'Français' },
@@ -247,8 +240,6 @@ export default {
         soon: 'Soon',
         more: 'More',
         pick: 'Pick',
-        confidence: 'Confidence',
-        risk: 'Risk',
         odds: 'Odds',
         unlockVip: 'Unlock with VIP',
         unlockPremium: 'Unlock with Premium',
@@ -262,8 +253,6 @@ export default {
     },
     matchDetail: {
         pick: 'Pick',
-        confidence: 'Confidence',
-        risk: 'Risk',
         odds: 'Odds',
         reasoning: 'Reasoning',
         sources: 'Sources',
@@ -323,10 +312,5 @@ export default {
         oddsComparison: 'ODDS COMPARISON',
         h2hCard: 'HEAD TO HEAD',
         h2hHistory: 'H2H HISTORY',
-    },
-    risk: {
-        low: 'Low',
-        medium: 'Medium',
-        high: 'High',
     },
 };

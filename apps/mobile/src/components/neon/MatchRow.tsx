@@ -6,11 +6,10 @@
  *  - League as a small secondary label above the two team lines.
  *  - Two team lines: crest (24px) + bold full team name.
  *  - Small odds line (1 3.15  X 3.82  2 2.22) when odds exist.
- *  - Right: AI confidence in accent ("68%" + tiny "AI" label); locked rows
- *    show a lock icon plus one small line, never a big button.
+ *  - Right: locked rows show a lock icon plus one small line, never a big button.
  *  - Finished matches: large score with FT + result badge.
  *
- * History rule: finished matches show the pick/confidence/reasoning/sources
+ * History rule: finished matches show the pick/reasoning/sources
  * for every tier (no "Unlock" text on finished matches).
  */
 
@@ -121,9 +120,6 @@ export function MatchRow({ match, access, footer, onOpen }: MatchRowProps) {
     const locked = !finished && tierBadge.locked;
     const lockTier = match.matchType === 'vip' ? 'vip' : 'paid';
 
-    const ai = match.aiPrediction;
-    const confidence = ai ? Math.min(100, Math.max(0, ai.confidence ?? 0)) : undefined;
-    const showAi = !locked && confidence !== undefined && confidence > 0;
     const showLock = locked;
 
     const statusText = live
@@ -206,14 +202,6 @@ export function MatchRow({ match, access, footer, onOpen }: MatchRowProps) {
                     ) : locked ? null : (
                         tierBadge && <Pill label={tierBadge.label} tone={tierBadge.tone} iconSize={11} />
                     )}
-
-                    {showAi ? (
-                        <View style={styles.aiRow}>
-                            {/* Readable ink: accentInk is for SOLID fills only. */}
-                            <Text style={[styles.pct, { color: themeColors.onSurface }]}>{`${Math.round(confidence)}%`}</Text>
-                            <Text style={[styles.aiTag, { color: themeColors.textSecondary }]}>AI</Text>
-                        </View>
-                    ) : null}
 
                     {showLock ? (
                         <View style={styles.lockRow}>
@@ -308,21 +296,6 @@ function getStyles(themeColors: ThemeColors) {
             fontWeight: '800',
             lineHeight: 19,
             fontVariant: ['tabular-nums'],
-        },
-        aiRow: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 2,
-        },
-        pct: {
-            fontSize: 12,
-            fontWeight: '800',
-            letterSpacing: 0.3,
-        },
-        aiTag: {
-            fontSize: 8,
-            fontWeight: '700',
-            letterSpacing: 0.4,
         },
         lockRow: {
             flexDirection: 'row',

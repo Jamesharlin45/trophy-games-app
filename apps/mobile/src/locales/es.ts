@@ -219,13 +219,6 @@ export default {
         light: 'Claro',
         dark: 'Oscuro',
         system: 'Sistema',
-        diagnostics: 'Diagnóstico',
-        connectionData: 'Conexión y datos',
-        copyConnection: 'Copiar detalles de conexión',
-        lastError: 'Último error',
-        noError: 'No hay errores registrados.',
-        copyLastError: 'Copiar último error',
-        clearError: 'Borrar',
         languages: [
             { code: 'en', name: 'English' },
             { code: 'fr', name: 'Français' },
@@ -242,8 +235,6 @@ export default {
         soon: 'Pronto',
         more: 'Más',
         pick: 'Pronóstico',
-        confidence: 'Confianza',
-        risk: 'Riesgo',
         odds: 'Cuota',
         unlockVip: 'Desbloquear con VIP',
         unlockPremium: 'Desbloquear con Premium',
@@ -257,8 +248,6 @@ export default {
     },
     matchDetail: {
         pick: 'Pronóstico',
-        confidence: 'Confianza',
-        risk: 'Riesgo',
         odds: 'Cuota',
         reasoning: 'Análisis',
         sources: 'Fuentes',
@@ -318,10 +307,5 @@ export default {
         oddsComparison: 'COMPARATIVO DE CUOTAS',
         h2hCard: 'HISTORIAL DIRECTO',
         h2hHistory: 'H2H HISTÓRICO',
-    },
-    risk: {
-        low: 'Bajo',
-        medium: 'Medio',
-        high: 'Alto',
     },
 };

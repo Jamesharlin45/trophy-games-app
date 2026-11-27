@@ -219,13 +219,6 @@ export default {
         light: 'Clair',
         dark: 'Sombre',
         system: 'Système',
-        diagnostics: 'Diagnostics',
-        connectionData: 'Connexion et données',
-        copyConnection: 'Copier les détails de connexion',
-        lastError: 'Dernière erreur',
-        noError: 'Aucune erreur enregistrée.',
-        copyLastError: 'Copier l’erreur',
-        clearError: 'Effacer',
         languages: [
             { code: 'en', name: 'English' },
             { code: 'fr', name: 'Français' },
@@ -242,8 +235,6 @@ export default {
         soon: 'Bientôt',
         more: 'Plus',
         pick: 'Pronostic',
-        confidence: 'Confiance',
-        risk: 'Risque',
         odds: 'Cote',
         unlockVip: 'Débloquer avec VIP',
         unlockPremium: 'Débloquer avec Premium',
@@ -257,8 +248,6 @@ export default {
     },
     matchDetail: {
         pick: 'Pronostic',
-        confidence: 'Confiance',
-        risk: 'Risque',
         odds: 'Cote',
         reasoning: 'Analyse',
         sources: 'Sources',
@@ -318,10 +307,5 @@ export default {
         oddsComparison: 'COMPARATIF DES COTES',
         h2hCard: 'CONFRONTATION DIRECTE',
         h2hHistory: 'H2H HISTORIQUE',
-    },
-    risk: {
-        low: 'Faible',
-        medium: 'Moyen',
-        high: 'Élevé',
     },
 };

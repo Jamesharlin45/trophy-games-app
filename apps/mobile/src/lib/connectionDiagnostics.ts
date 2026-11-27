@@ -1,10 +1,7 @@
 /**
  * In-memory diagnostics for the most recent API request and membership
- * answer. Settings → Diagnostics shows a host only — never a full URL, query
- * string, token, password or API key. Nothing is persisted or transmitted.
+ * answer. Kept out of the UI: nothing is persisted or transmitted.
  */
-
-import { setStringAsync } from 'expo-clipboard';
 
 export interface ConnectionDiagnostics {
     /** Origin host from EXPO_PUBLIC_API_URL, e.g. trophy-games-app.vercel.app. */
@@ -68,42 +65,3 @@ export function recordMembershipStatus(tier: 'vip' | 'paid', status: string | un
     state = { ...state, membershipStatus: next.sort().join(', ') };
 }
 
-export function getConnectionDiagnostics(): ConnectionDiagnostics {
-    return { ...state };
-}
-
-/** Stable, non-reversible support code derived from a device id. */
-export function deviceCode(deviceId: string): string {
-    let hash = 2166136261;
-    for (let i = 0; i < deviceId.length; i++) {
-        hash ^= deviceId.charCodeAt(i);
-        hash = Math.imul(hash, 16777619);
-    }
-    const hex = (hash >>> 0).toString(16).toUpperCase().padStart(8, '0');
-    return `TG-${hex.slice(0, 4)}-${hex.slice(4, 8)}`;
-}
-
-export function formatConnectionDiagnostics(input: ConnectionDiagnostics, extra: {
-    version: string;
-    build: string;
-    deviceCode: string;
-}): string {
-    return [
-        `Host: ${input.host || 'not configured'}`,
-        `Last path: ${input.lastPath}`,
-        `Status: ${input.status ?? 'none'}`,
-        `Time: ${input.at ? new Date(input.at).toLocaleString() : 'none'}`,
-        `Matches: ${input.matchesCount ?? 0}`,
-        `Membership: ${input.membershipStatus}`,
-        `App: ${extra.version} (${extra.build})`,
-        `Device: ${extra.deviceCode}`,
-    ].join('\n');
-}
-
-export async function copyConnectionDiagnostics(text: string): Promise<void> {
-    try {
-        await setStringAsync(text);
-    } catch {
-        // Clipboard is best-effort; never fail the Settings screen.
-    }
-}
