@@ -109,8 +109,8 @@ function run() {
             check(`Badge (${kind}) [${tag}]`, textColor, color);
         }
 
-        // MatchRow — confidence text, scores and live status (on the opaque surface).
-        check(`MatchRow confidence+scores [${tag}]`, tc.onSurface, tc.surface);
+        // MatchRow — scores and live status (on the opaque surface).
+        check(`MatchRow scores [${tag}]`, tc.onSurface, tc.surface);
         check(`MatchRow live status [${tag}]`, tc.onSurface, tc.surface);
         check(`MatchRow timeCol status [${tag}]`, tc.text, tc.surface);
 

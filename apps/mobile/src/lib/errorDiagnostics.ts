@@ -2,14 +2,12 @@
  * Diagnostics storage for the last uncaught error.
  *
  * Written by the global JS error handler (ErrorUtils) and by ErrorBoundary
- * instances. Read by Settings → Diagnostics → "Last error" (copy/clear).
- * Never sent anywhere — AsyncStorage only. The stored payload contains no
- * personal data: message, stack, route, timestamp.
+ * instances. Never sent anywhere — AsyncStorage only. The stored payload
+ * contains no personal data: message, stack, route, timestamp.
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ErrorUtils } from 'react-native';
-import { setStringAsync } from 'expo-clipboard';
 
 export interface LastError {
     message: string;
@@ -95,17 +93,9 @@ export async function readLastError(): Promise<LastError | null> {
     }
 }
 
-export async function clearLastError(): Promise<void> {
-    try {
-        await AsyncStorage.removeItem(STORAGE_KEY);
-    } catch {
-        // Ignore — clearing diagnostics is best-effort.
-    }
-}
-
 /**
  * Install the global JS error handler: stores the last uncaught error in
- * AsyncStorage and shows it in Settings → Diagnostics → "Last error".
+ * AsyncStorage without affecting the app UI.
  */
 export function installGlobalErrorHandler(): void {
     try {
@@ -121,17 +111,5 @@ export function installGlobalErrorHandler(): void {
         });
     } catch {
         // ErrorUtils unavailable (e.g. tests) — diagnostics are optional.
-    }
-}
-
-/** Copy a LastError to the clipboard (message + first 15 stack lines). */
-export async function copyLastError(error: LastError | null): Promise<void> {
-    if (!error) return;
-    const details = formatLastErrorDetails(error);
-    if (!details) return;
-    try {
-        await setStringAsync(details);
-    } catch {
-        // Clipboard unavailable — copying diagnostics is best-effort.
     }
 }

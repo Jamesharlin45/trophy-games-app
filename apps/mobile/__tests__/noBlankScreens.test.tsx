@@ -42,7 +42,6 @@ import Home from '../src/app/(tabs)/index';
 import VIPTipsScreen from '../src/app/(tabs)/vip';
 import WinsScreen from '../src/app/(tabs)/wins';
 import StoreScreen from '../src/app/(tabs)/market';
-import SettingsScreen from '../src/app/settings';
 import MatchScreen from '../src/app/match/[id]';
 import { ThemeProvider } from '../src/context/ThemeContext';
 import { LanguageProvider } from '../src/context/LanguageContext';
@@ -50,7 +49,6 @@ import { UserProvider } from '../src/context/UserContext';
 import { DialogProvider } from '../src/context/DialogContext';
 import { ScreenErrorBoundary } from '../src/components/ScreenErrorBoundary';
 import { readLastError } from '../src/lib/errorDiagnostics';
-import { getConnectionDiagnostics } from '../src/lib/connectionDiagnostics';
 import { env, resetEnv, todayKey } from './helpers/testEnv';
 import { expectTextVisible, expectVisible, findVisibilityProblems } from './helpers/visibility';
 import { FIXTURE_A_UPCOMING_FREE, FIXTURE_D_UPCOMING_VIP_LOCKED, FIXTURE_E_FINISHED } from './helpers/fixtures';
@@ -91,10 +89,6 @@ async function timeoutQueries(screen: { toJSON: () => unknown }) {
 }
 
 const RETRY = i18n.t('common.retry');
-
-function escapeRegExp(value: string): string {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 /**
  * A screen is safe if at least one skeleton, error Retry or piece of content
@@ -308,36 +302,7 @@ describe('press feedback is short, never an entry animation', () => {
     }, 5000);
 });
 
-describe('Diagnostics connection and data block', () => {
-    beforeEach(() => {
-        resetEnv();
-        jest.clearAllMocks();
-        i18n.locale = 'en';
-        env.matchesByType.free = [serverMatch()];
-    });
-
-    it('shows API host (no secrets), last path, status, time, count, membership, version and device code', async () => {
-        const screen = await renderScreen(Home);
-        await waitFor(() => expect(screen.queryByText('Fixture Town')).not.toBeNull(), { timeout: 3000 });
-        const diagnostics = getConnectionDiagnostics();
-        expect(diagnostics.host).toBe(env.apiBaseUrl.replace(/^https?:\/\//, ''));
-        expect(diagnostics.lastPath).toContain('/api/app/matches/by-type-and-date');
-        expect(diagnostics.status).toBe(200);
-        expect(diagnostics.matchesCount).toBe(1);
-        screen.unmount();
-
-        const settings = await renderScreen(SettingsScreen);
-        // The snapshot is one multi-line Text node; match inside that node.
-        expectTextVisible(settings, /Connection and data/);
-        expectTextVisible(settings, new RegExp(`Host: ${escapeRegExp(diagnostics.host)}`));
-        expectTextVisible(settings, /Last path: \/api\/app\/matches\/by-type-and-date/);
-        expectTextVisible(settings, /Status: 200/);
-        expectTextVisible(settings, /Matches: 1/);
-        expectTextVisible(settings, /App: 1\.0\.0 \(42\)/);
-        expectTextVisible(settings, /TG-[A-F0-9]{4}-[A-F0-9]{4}/);
-        expectTextVisible(settings, /Copy connection details/);
-    }, 5000);
-
+describe('Diagnostics error storage', () => {
     it('records render errors from a screen error boundary as Last error', async () => {
         const Bomb = () => { throw new Error('trophy boundary repro'); };
         const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
